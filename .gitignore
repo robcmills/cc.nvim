@@ -1,0 +1,34 @@
+# Lua / LuaRocks
+*.luac
+luac.out
+*.src.rock
+*.rock
+.luarocks/
+lua_modules/
+
+# Neovim / editor artifacts
+*.swp
+*.swo
+*~
+tags
+doc/tags
+
+# Test / coverage
+luacov.*.out
+.busted
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config / secrets
+.env
+.env.*
+*.local
+
+# Editor / tooling
+.vscode/
+.idea/
+.nvim.lua
+.luarc.json
+.luarc.jsonc

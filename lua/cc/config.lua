@@ -1,0 +1,43 @@
+local M = {}
+
+---@class cc.Config
+local defaults = {
+  -- Claude CLI
+  claude_cmd = 'claude',
+  permission_mode = nil, -- nil | 'auto' | 'acceptEdits' | 'plan' | 'bypassPermissions'
+  model = nil, -- nil | 'sonnet' | 'opus' | model string
+  extra_args = {}, -- additional CLI args
+
+  -- Layout
+  layout = 'horizontal', -- 'horizontal' | 'vertical'
+  prompt_height = 10, -- lines for prompt buffer (horizontal layout)
+
+  -- Folding
+  default_fold_level = 1, -- 0=minimal, 1=summaries, 2=inputs, 3=all
+  max_tool_result_lines = 50,
+
+  -- History / resume
+  history_max_records = 200, -- cap records rendered on resume; older collapsed into a notice
+
+  -- Display
+  show_thinking = false,
+  show_cost = true,
+
+  -- Keymaps
+  keymaps = {
+    submit = '<CR>', -- prompt buffer, normal mode
+    interrupt = '<C-c>',
+    clear_prompt = '<C-l>',
+    goto_prompt = 'gp', -- output buffer
+    goto_output = 'go', -- prompt buffer
+  },
+}
+
+M.options = vim.deepcopy(defaults)
+
+---@param opts table?
+function M.setup(opts)
+  M.options = vim.tbl_deep_extend('force', vim.deepcopy(defaults), opts or {})
+end
+
+return M
