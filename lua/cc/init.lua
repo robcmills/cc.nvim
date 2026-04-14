@@ -176,7 +176,7 @@ local function create_instance()
   local id = next_instance_id
   next_instance_id = next_instance_id + 1
 
-  local prompt_name = id == 1 and 'cc-chat' or ('cc-chat-' .. id)
+  local prompt_name = id == 1 and 'cc-nvim' or ('cc-nvim-' .. id)
   local output_name = id == 1 and 'cc-output' or ('cc-output-' .. id)
 
   local inst = {

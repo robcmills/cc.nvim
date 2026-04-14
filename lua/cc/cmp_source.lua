@@ -1,5 +1,5 @@
 -- nvim-cmp source for cc.nvim slash commands.
--- Active only in cc-chat prompt buffers; triggered by '/' at the start of a line.
+-- Active only in cc-nvim prompt buffers; triggered by '/' at the start of a line.
 
 local M = {}
 

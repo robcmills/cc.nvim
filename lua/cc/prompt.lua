@@ -9,7 +9,7 @@ local M = {}
 local Prompt = {}
 Prompt.__index = Prompt
 
-local BUF_NAME_DEFAULT = 'cc-chat'
+local BUF_NAME_DEFAULT = 'cc-nvim'
 
 ---@param buf_name string? override buffer name (for multiple instances)
 function M.new(buf_name)
