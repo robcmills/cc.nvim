@@ -9,12 +9,14 @@ local M = {}
 local Prompt = {}
 Prompt.__index = Prompt
 
-local BUF_NAME = 'cc://prompt'
+local BUF_NAME_DEFAULT = 'cc-chat'
 
-function M.new()
+---@param buf_name string? override buffer name (for multiple instances)
+function M.new(buf_name)
   return setmetatable({
     bufnr = -1,
     winid = nil,
+    buf_name = buf_name or BUF_NAME_DEFAULT,
   }, Prompt)
 end
 
@@ -22,10 +24,11 @@ function Prompt:ensure_buffer()
   if self.bufnr > 0 and vim.api.nvim_buf_is_valid(self.bufnr) then
     return self.bufnr
   end
-  self.bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(self.bufnr, BUF_NAME)
+  self.bufnr = vim.api.nvim_create_buf(true, true)
+  vim.api.nvim_buf_set_name(self.bufnr, self.buf_name)
   vim.bo[self.bufnr].buftype = 'nofile'
   vim.bo[self.bufnr].bufhidden = 'hide'
+  vim.bo[self.bufnr].buflisted = true
   vim.bo[self.bufnr].swapfile = false
   vim.bo[self.bufnr].filetype = 'markdown'
 

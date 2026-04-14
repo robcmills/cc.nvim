@@ -1,5 +1,5 @@
 -- nvim-cmp source for cc.nvim slash commands.
--- Active only in cc://prompt buffers; triggered by '/' at the start of a line.
+-- Active only in cc-chat prompt buffers; triggered by '/' at the start of a line.
 
 local M = {}
 
@@ -10,8 +10,8 @@ end
 function M:get_debug_name() return 'cc_slash' end
 
 function M:is_available()
-  local name = vim.api.nvim_buf_get_name(0)
-  return name:match('cc://prompt$') ~= nil
+  local ok, cc = pcall(require, 'cc')
+  return ok and cc.find_instance(vim.api.nvim_get_current_buf()) ~= nil
 end
 
 function M:get_trigger_characters() return { '/' } end
@@ -33,8 +33,11 @@ function M:complete(params, callback)
   -- Grab the current session's slash_commands, if any.
   local session_cmds = nil
   local ok, cc = pcall(require, 'cc')
-  if ok and cc.__state and cc.__state.session and cc.__state.session.slash_commands then
-    session_cmds = cc.__state.session.slash_commands
+  if ok then
+    local inst = cc.find_instance(vim.api.nvim_get_current_buf())
+    if inst and inst.session and inst.session.slash_commands then
+      session_cmds = inst.session.slash_commands
+    end
   end
 
   local cmds = require('cc.slash').list(session_cmds)

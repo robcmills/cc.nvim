@@ -31,7 +31,7 @@ function M.handle_enter_plan_mode(process, output, request_id, req)
   output:render_notice('Plan Mode')
   local input = req.input or {}
   if input.plan_file_path then
-    pcall(function() require('cc')._set_last_plan_file(input.plan_file_path) end)
+    pcall(function() require('cc')._set_last_plan_file(input.plan_file_path, output.bufnr) end)
   end
   respond_success(process, request_id, {
     behavior = 'allow',
@@ -79,7 +79,7 @@ function M.handle_exit_plan_mode(process, output, request_id, req)
   local plan_text = input.plan or '(no plan content)'
   local plan_file = input.plan_file_path
   if plan_file then
-    pcall(function() require('cc')._set_last_plan_file(plan_file) end)
+    pcall(function() require('cc')._set_last_plan_file(plan_file, output.bufnr) end)
   end
 
   local float_bufnr, float_winid = open_plan_float(plan_text)

@@ -1,5 +1,6 @@
 -- cc.nvim: Claude Code Neovim plugin.
 -- Spawns the `claude` CLI and renders its NDJSON stream into buffers.
+-- Supports multiple simultaneous sessions, each with its own buffers.
 
 local Config = require('cc.config')
 local Process = require('cc.process')
@@ -10,7 +11,11 @@ local Router = require('cc.router')
 
 local M = {}
 
----@class cc.State
+-- ---------------------------------------------------------------------------
+-- Instance management
+-- ---------------------------------------------------------------------------
+
+---@class cc.Instance
 ---@field session cc.Session?
 ---@field process cc.Process?
 ---@field output cc.Output?
@@ -19,109 +24,273 @@ local M = {}
 ---@field output_winid integer?
 ---@field prompt_winid integer?
 ---@field last_session_id string?
-local state = {
-  session = nil,
-  process = nil,
-  output = nil,
-  prompt = nil,
-  router = nil,
-  output_winid = nil,
-  prompt_winid = nil,
-  last_session_id = nil,
-}
+---@field last_plan_file string?
 
---- Public: configure the plugin.
+local instances = {} -- keyed by prompt bufnr
+local next_instance_id = 1
+
+--- Find the instance that owns the given buffer (prompt or output).
+---@param bufnr integer
+---@return cc.Instance?
+local function find_instance(bufnr)
+  if instances[bufnr] then return instances[bufnr] end
+  for _, inst in pairs(instances) do
+    if inst.output and inst.output.bufnr == bufnr then return inst end
+  end
+  return nil
+end
+
+--- Find the instance for the currently active buffer.
+---@return cc.Instance?
+local function get_current_instance()
+  return find_instance(vim.api.nvim_get_current_buf())
+end
+
+--- Public: find instance by buffer number (for integrations like cmp_source).
+M.find_instance = find_instance
+
+-- ---------------------------------------------------------------------------
+-- Public: configure the plugin.
+-- ---------------------------------------------------------------------------
 function M.setup(opts)
   Config.setup(opts)
 end
 
---- Public: returns true if cc.nvim has an active session.
-function M.is_open()
-  return state.process ~= nil and state.process:is_alive()
-end
+-- ---------------------------------------------------------------------------
+-- Buffer-local keymaps (scoped per-instance via closure)
+-- ---------------------------------------------------------------------------
 
---- Set up buffer-local keymaps for the prompt buffer.
-local function setup_prompt_keymaps(bufnr)
+local function setup_prompt_keymaps(inst)
+  local bufnr = inst.prompt.bufnr
   local keys = Config.options.keymaps
   vim.keymap.set('n', keys.submit, function() M.submit() end,
     { buffer = bufnr, silent = true, desc = 'cc.nvim: submit prompt' })
   vim.keymap.set({ 'n', 'i' }, keys.interrupt, function() M.stop() end,
     { buffer = bufnr, silent = true, desc = 'cc.nvim: interrupt' })
   vim.keymap.set('n', keys.clear_prompt, function()
-    if state.prompt then state.prompt:clear() end
+    inst.prompt:clear()
   end, { buffer = bufnr, silent = true, desc = 'cc.nvim: clear prompt' })
   vim.keymap.set('n', keys.goto_output, function()
-    if state.output_winid and vim.api.nvim_win_is_valid(state.output_winid) then
-      vim.api.nvim_set_current_win(state.output_winid)
+    if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
+      vim.api.nvim_set_current_win(inst.output_winid)
     end
   end, { buffer = bufnr, silent = true, desc = 'cc.nvim: goto output' })
 end
 
---- Set up buffer-local keymaps for the output buffer.
-local function setup_output_keymaps(bufnr)
+local function setup_output_keymaps(inst)
+  local bufnr = inst.output.bufnr
   local keys = Config.options.keymaps
   vim.keymap.set('n', keys.goto_prompt, function()
-    if state.prompt_winid and vim.api.nvim_win_is_valid(state.prompt_winid) then
-      vim.api.nvim_set_current_win(state.prompt_winid)
+    if inst.prompt_winid and vim.api.nvim_win_is_valid(inst.prompt_winid) then
+      vim.api.nvim_set_current_win(inst.prompt_winid)
       vim.cmd('startinsert')
     end
   end, { buffer = bufnr, silent = true, desc = 'cc.nvim: goto prompt' })
 end
 
---- Create the horizontal split layout: output on top, prompt on bottom.
-local function create_layout()
-  state.session = Session.new()
-  state.output = Output.new(state.session)
-  state.prompt = Prompt.new()
+-- ---------------------------------------------------------------------------
+-- Buffer sidebar integration autocmds (scoped per-instance)
+-- ---------------------------------------------------------------------------
 
-  local output_buf = state.output:ensure_buffer()
-  local prompt_buf = state.prompt:ensure_buffer()
+local function setup_buffer_autocmds(inst)
+  local output_bufnr = inst.output.bufnr
+  local prompt_bufnr = inst.prompt.bufnr
+  local group = vim.api.nvim_create_augroup('cc.buffer_integration.' .. prompt_bufnr, { clear = true })
 
-  -- Output fills current window.
-  vim.api.nvim_set_current_buf(output_buf)
-  state.output_winid = vim.api.nvim_get_current_win()
-  state.output:set_window(state.output_winid)
+  -- When prompt leaves a window, close the output companion (unless moving to output).
+  vim.api.nvim_create_autocmd('BufWinLeave', {
+    group = group,
+    buffer = prompt_bufnr,
+    callback = function()
+      vim.schedule(function()
+        local cur_buf = vim.api.nvim_get_current_buf()
+        if cur_buf == output_bufnr then return end
+        if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
+          if vim.api.nvim_win_get_buf(inst.output_winid) == output_bufnr then
+            vim.api.nvim_win_close(inst.output_winid, true)
+          end
+        end
+        inst.output_winid = nil
+        inst.prompt_winid = nil
+      end)
+    end,
+  })
 
-  -- Prompt opens below.
-  vim.cmd('belowright ' .. Config.options.prompt_height .. 'split')
+  -- When output leaves a window, close the prompt companion (unless moving to prompt).
+  vim.api.nvim_create_autocmd('BufWinLeave', {
+    group = group,
+    buffer = output_bufnr,
+    callback = function()
+      vim.schedule(function()
+        local cur_buf = vim.api.nvim_get_current_buf()
+        if cur_buf == prompt_bufnr then return end
+        if inst.prompt_winid and vim.api.nvim_win_is_valid(inst.prompt_winid) then
+          if vim.api.nvim_win_get_buf(inst.prompt_winid) == prompt_bufnr then
+            vim.api.nvim_win_close(inst.prompt_winid, true)
+          end
+        end
+        inst.output_winid = nil
+        inst.prompt_winid = nil
+      end)
+    end,
+  })
+
+  -- When prompt enters a window, recreate the output companion above.
+  vim.api.nvim_create_autocmd('BufWinEnter', {
+    group = group,
+    buffer = prompt_bufnr,
+    callback = function()
+      vim.schedule(function()
+        if not inst.process or not inst.process:is_alive() then return end
+        if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
+          return
+        end
+        local prompt_win = nil
+        for _, win in ipairs(vim.api.nvim_list_wins()) do
+          if vim.api.nvim_win_get_buf(win) == prompt_bufnr then
+            prompt_win = win
+            break
+          end
+        end
+        if not prompt_win then return end
+        inst.prompt_winid = prompt_win
+        vim.api.nvim_set_current_win(prompt_win)
+        vim.cmd('aboveleft split')
+        vim.api.nvim_set_current_buf(output_bufnr)
+        inst.output_winid = vim.api.nvim_get_current_win()
+        inst.output:set_window(inst.output_winid)
+        vim.api.nvim_set_current_win(prompt_win)
+        vim.api.nvim_win_set_height(prompt_win, Config.options.prompt_height)
+      end)
+    end,
+  })
+end
+
+-- ---------------------------------------------------------------------------
+-- Instance creation + teardown
+-- ---------------------------------------------------------------------------
+
+--- Create a new instance with layout: output above (companion), prompt below (primary).
+---@return cc.Instance
+local function create_instance()
+  local id = next_instance_id
+  next_instance_id = next_instance_id + 1
+
+  local prompt_name = id == 1 and 'cc-chat' or ('cc-chat-' .. id)
+  local output_name = id == 1 and 'cc-output' or ('cc-output-' .. id)
+
+  local inst = {
+    session = Session.new(),
+    process = nil,
+    output = nil,
+    prompt = nil,
+    router = nil,
+    output_winid = nil,
+    prompt_winid = nil,
+    last_session_id = nil,
+    last_plan_file = nil,
+  }
+
+  inst.output = Output.new(inst.session, output_name)
+  inst.prompt = Prompt.new(prompt_name)
+
+  local output_buf = inst.output:ensure_buffer()
+  local prompt_buf = inst.prompt:ensure_buffer()
+
+  -- Prompt is the primary buffer — it fills current window.
   vim.api.nvim_set_current_buf(prompt_buf)
-  state.prompt_winid = vim.api.nvim_get_current_win()
-  state.prompt:set_window(state.prompt_winid)
+  inst.prompt_winid = vim.api.nvim_get_current_win()
+  inst.prompt:set_window(inst.prompt_winid)
 
-  setup_prompt_keymaps(prompt_buf)
-  setup_output_keymaps(output_buf)
+  -- Output opens above as a companion.
+  vim.cmd('aboveleft split')
+  vim.api.nvim_set_current_buf(output_buf)
+  inst.output_winid = vim.api.nvim_get_current_win()
+  inst.output:set_window(inst.output_winid)
+
+  -- Return focus to prompt and resize it.
+  vim.api.nvim_set_current_win(inst.prompt_winid)
+  vim.api.nvim_win_set_height(inst.prompt_winid, Config.options.prompt_height)
+
+  setup_prompt_keymaps(inst)
+  setup_output_keymaps(inst)
+
+  -- Set up autocmds after layout to avoid double-trigger from initial BufWinEnter.
+  setup_buffer_autocmds(inst)
+
+  -- Register in instances table.
+  instances[prompt_buf] = inst
 
   -- Start in insert mode in prompt buffer for immediate typing.
   vim.cmd('startinsert')
+
+  return inst
 end
 
---- Public: open cc.nvim (spawn process, create buffers, set up layout).
+--- Tear down an instance: kill process, close windows, unlist buffer, remove from table.
+---@param inst cc.Instance
+local function close_instance(inst)
+  if inst.output then
+    inst.output:stop_spinner()
+  end
+  if inst.process then
+    inst.process:close()
+    inst.process = nil
+  end
+  -- Clear per-instance autocmds before closing windows to avoid cascading.
+  if inst.prompt and inst.prompt.bufnr > 0 then
+    pcall(vim.api.nvim_del_augroup_by_name, 'cc.buffer_integration.' .. inst.prompt.bufnr)
+  end
+  if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
+    pcall(vim.api.nvim_win_close, inst.output_winid, true)
+  end
+  if inst.prompt_winid and vim.api.nvim_win_is_valid(inst.prompt_winid) then
+    pcall(vim.api.nvim_win_close, inst.prompt_winid, true)
+  end
+  -- Unlist prompt buffer so it disappears from the sidebar.
+  if inst.prompt and inst.prompt.bufnr > 0 and vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
+    vim.bo[inst.prompt.bufnr].buflisted = false
+    instances[inst.prompt.bufnr] = nil
+  end
+  inst.output_winid = nil
+  inst.prompt_winid = nil
+  inst.session = nil
+  inst.output = nil
+  inst.prompt = nil
+  inst.router = nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Public API
+-- ---------------------------------------------------------------------------
+
+--- Public: returns true if the current buffer belongs to an active session.
+function M.is_open()
+  local inst = get_current_instance()
+  return inst ~= nil and inst.process ~= nil and inst.process:is_alive()
+end
+
+--- Public: open a new cc.nvim session.
 ---@param opts { permission_mode: string? }?
 function M.open(opts)
   opts = opts or {}
-  if M.is_open() then
-    if state.prompt_winid and vim.api.nvim_win_is_valid(state.prompt_winid) then
-      vim.api.nvim_set_current_win(state.prompt_winid)
-    end
-    return
-  end
 
-  create_layout()
+  local inst = create_instance()
 
-  state.router = Router.new({
-    session = state.session,
-    output = state.output,
-    on_session_id = function(id) state.last_session_id = id end,
+  inst.router = Router.new({
+    session = inst.session,
+    output = inst.output,
+    on_session_id = function(id) inst.last_session_id = id end,
   })
 
-  state.process = Process.new({
+  inst.process = Process.new({
     claude_cmd = Config.options.claude_cmd,
     cwd = vim.fn.getcwd(),
     session_id = nil,
     permission_mode = opts.permission_mode or Config.options.permission_mode,
     model = Config.options.model,
     extra_args = Config.options.extra_args,
-    on_message = function(msg) state.router:dispatch(msg) end,
+    on_message = function(msg) inst.router:dispatch(msg) end,
     on_stderr = function(data)
       vim.notify('cc.nvim [stderr]: ' .. data, vim.log.levels.WARN)
     end,
@@ -129,18 +298,18 @@ function M.open(opts)
       if code ~= 0 then
         vim.notify('cc.nvim: claude exited with code ' .. code, vim.log.levels.WARN)
       end
-      if state.output then
-        state.output:render_notice('Session ended')
+      if inst.output then
+        inst.output:render_notice('Session ended')
       end
     end,
   })
 
-  state.router:set_process(state.process)
+  inst.router:set_process(inst.process)
 
-  local ok, err = pcall(function() state.process:spawn() end)
+  local ok, err = pcall(function() inst.process:spawn() end)
   if not ok then
     vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.ERROR)
-    state.process = nil
+    inst.process = nil
   end
 end
 
@@ -156,10 +325,8 @@ function M.resume(session_id)
     vim.notify('cc.nvim: resume requires a session id', vim.log.levels.WARN)
     return
   end
-  if M.is_open() then
-    M.close()
-  end
-  create_layout()
+
+  local inst = create_instance()
 
   -- Pre-render transcript so the UI shows past conversation.
   local history = require('cc.history')
@@ -169,7 +336,6 @@ function M.resume(session_id)
     if e.session_id == session_id then path = e.path; break end
   end
   if not path then
-    -- Also search globally (resume across projects).
     for _, e in ipairs(history.list_all()) do
       if e.session_id == session_id then path = e.path; break end
     end
@@ -182,44 +348,44 @@ function M.resume(session_id)
     local start_idx = 1
     if #records > max then
       start_idx = #records - max + 1
-      state.output:render_notice(string.format(
+      inst.output:render_notice(string.format(
         'earlier history hidden (%d records); showing last %d', start_idx - 1, max))
     end
     for i = start_idx, #records do
-      state.output:render_historical_record(records[i])
+      inst.output:render_historical_record(records[i])
     end
-    state.output:render_notice('resumed ' .. session_id:sub(1, 8))
+    inst.output:render_notice('resumed ' .. session_id:sub(1, 8))
   else
-    state.output:render_notice('resuming ' .. session_id:sub(1, 8) .. ' (no local transcript found)')
+    inst.output:render_notice('resuming ' .. session_id:sub(1, 8) .. ' (no local transcript found)')
   end
 
-  state.router = Router.new({
-    session = state.session,
-    output = state.output,
-    on_session_id = function(id) state.last_session_id = id end,
+  inst.router = Router.new({
+    session = inst.session,
+    output = inst.output,
+    on_session_id = function(id) inst.last_session_id = id end,
   })
-  state.process = Process.new({
+  inst.process = Process.new({
     claude_cmd = Config.options.claude_cmd,
     cwd = vim.fn.getcwd(),
     session_id = session_id,
     permission_mode = Config.options.permission_mode,
     model = Config.options.model,
     extra_args = Config.options.extra_args,
-    on_message = function(msg) state.router:dispatch(msg) end,
+    on_message = function(msg) inst.router:dispatch(msg) end,
     on_stderr = function(data) vim.notify('cc.nvim [stderr]: ' .. data, vim.log.levels.WARN) end,
     on_exit = function(code)
       if code ~= 0 then
         vim.notify('cc.nvim: claude exited with code ' .. code, vim.log.levels.WARN)
       end
-      if state.output then state.output:render_notice('Session ended') end
+      if inst.output then inst.output:render_notice('Session ended') end
     end,
   })
-  state.router:set_process(state.process)
-  state.last_session_id = session_id
-  local ok, err = pcall(function() state.process:spawn() end)
+  inst.router:set_process(inst.process)
+  inst.last_session_id = session_id
+  local ok, err = pcall(function() inst.process:spawn() end)
   if not ok then
     vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.ERROR)
-    state.process = nil
+    inst.process = nil
   end
 end
 
@@ -252,8 +418,9 @@ end
 
 --- Public: open the last seen plan_file_path if any; falls back to picker.
 function M.plan_show()
-  if state.last_plan_file and state.last_plan_file ~= '' then
-    vim.cmd('tabedit ' .. vim.fn.fnameescape(state.last_plan_file))
+  local inst = get_current_instance()
+  if inst and inst.last_plan_file and inst.last_plan_file ~= '' then
+    vim.cmd('tabedit ' .. vim.fn.fnameescape(inst.last_plan_file))
     return
   end
   -- Fallback: search ~/.claude/plans
@@ -274,28 +441,38 @@ end
 
 --- Called by the interactive handlers when we observe a plan_file_path.
 ---@param path string
-function M._set_last_plan_file(path)
-  state.last_plan_file = path
+---@param output_bufnr integer? buffer number to identify the instance
+function M._set_last_plan_file(path, output_bufnr)
+  if output_bufnr then
+    local inst = find_instance(output_bufnr)
+    if inst then inst.last_plan_file = path; return end
+  end
+  -- Fallback: set on any active instance (backwards compat).
+  for _, inst in pairs(instances) do
+    inst.last_plan_file = path
+    return
+  end
 end
 
 --- Public: submit current prompt buffer content to the agent.
 function M.submit()
-  if not M.is_open() then
+  local inst = get_current_instance()
+  if not inst or not inst.process or not inst.process:is_alive() then
     vim.notify('cc.nvim: not open. Run :CcOpen first.', vim.log.levels.WARN)
     return
   end
-  if not state.prompt:has_content() then
+  if not inst.prompt:has_content() then
     return
   end
-  local text = state.prompt:read()
-  state.prompt:clear()
+  local text = inst.prompt:read()
+  inst.prompt:clear()
 
-  state.session:add_user_turn(text)
-  state.output:render_user_turn(text)
+  inst.session:add_user_turn(text)
+  inst.output:render_user_turn(text)
 
-  state.process:write({
+  inst.process:write({
     type = 'user',
-    session_id = state.last_session_id or '',
+    session_id = inst.last_session_id or '',
     message = { role = 'user', content = text },
     parent_tool_use_id = vim.NIL,
   })
@@ -303,41 +480,27 @@ end
 
 --- Public: send SIGINT to interrupt current generation.
 function M.stop()
-  if state.process then
-    state.process:interrupt()
-    if state.output then
-      state.output:render_notice('Interrupted')
+  local inst = get_current_instance()
+  if inst and inst.process then
+    inst.process:interrupt()
+    if inst.output then
+      inst.output:render_notice('Interrupted')
     end
   end
 end
 
---- Public: close cc.nvim (kill process, close windows).
+--- Public: close the current cc.nvim session (kill process, close windows).
 function M.close()
-  if state.output then
-    state.output:stop_spinner()
-  end
-  if state.process then
-    state.process:close()
-    state.process = nil
-  end
-  if state.output_winid and vim.api.nvim_win_is_valid(state.output_winid) then
-    pcall(vim.api.nvim_win_close, state.output_winid, true)
-  end
-  if state.prompt_winid and vim.api.nvim_win_is_valid(state.prompt_winid) then
-    pcall(vim.api.nvim_win_close, state.prompt_winid, true)
-  end
-  state.output_winid = nil
-  state.prompt_winid = nil
-  state.session = nil
-  state.output = nil
-  state.prompt = nil
-  state.router = nil
+  local inst = get_current_instance()
+  if not inst then return end
+  close_instance(inst)
 end
 
---- Public: toggle visibility (close if open, else open).
+--- Public: toggle visibility (close if current buffer is cc, else open new).
 function M.toggle()
-  if M.is_open() then
-    M.close()
+  local inst = get_current_instance()
+  if inst and inst.process and inst.process:is_alive() then
+    close_instance(inst)
   else
     M.open()
   end
@@ -346,19 +509,17 @@ end
 --- Public: set fold level on the output buffer's window.
 ---@param level integer 0..3
 function M.set_fold_level(level)
-  if state.output then
-    state.output:set_fold_level(level)
+  local inst = get_current_instance()
+  if inst and inst.output then
+    inst.output:set_fold_level(level)
   end
 end
-
---- Internal: expose state for integration modules (cmp source, etc).
---- Stable surface: .session (cc.Session), .last_session_id.
-M.__state = state
 
 --- Public: slash commands available in the current session (for completion).
 ---@return string[]?
 function M.get_slash_commands()
-  if state.session then return state.session.slash_commands end
+  local inst = get_current_instance()
+  if inst and inst.session then return inst.session.slash_commands end
   return nil
 end
 

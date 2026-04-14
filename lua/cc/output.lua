@@ -19,7 +19,7 @@
 local M = {}
 
 local NS_CARETS = vim.api.nvim_create_namespace('cc.carets')
-local BUF_NAME = 'cc://output'
+local BUF_NAME_DEFAULT = 'cc-output'
 
 local CARET_OPEN = '▾'
 local CARET_FOLDED = '▸'
@@ -48,11 +48,13 @@ local Output = {}
 Output.__index = Output
 
 ---@param session cc.Session
-function M.new(session)
+---@param buf_name string? override buffer name (for multiple instances)
+function M.new(session, buf_name)
   return setmetatable({
     bufnr = -1,
     winid = nil,
     session = session,
+    buf_name = buf_name or BUF_NAME_DEFAULT,
     streaming_block_type = nil,
     streaming_tool_id = nil,
     spinner = nil, -- cc.Spinner, active during an assistant turn
@@ -65,7 +67,7 @@ function Output:ensure_buffer()
     return self.bufnr
   end
   self.bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(self.bufnr, BUF_NAME)
+  vim.api.nvim_buf_set_name(self.bufnr, self.buf_name)
   vim.bo[self.bufnr].buftype = 'nofile'
   vim.bo[self.bufnr].bufhidden = 'hide'
   vim.bo[self.bufnr].swapfile = false
