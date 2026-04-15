@@ -141,6 +141,7 @@ local function setup_buffer_autocmds(inst)
     buffer = prompt_bufnr,
     callback = function()
       vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(output_bufnr) then return end
         if not inst.process or not inst.process:is_alive() then return end
         if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
           return
@@ -247,10 +248,15 @@ local function close_instance(inst)
   if inst.prompt_winid and vim.api.nvim_win_is_valid(inst.prompt_winid) then
     pcall(vim.api.nvim_win_close, inst.prompt_winid, true)
   end
-  -- Unlist prompt buffer so it disappears from the sidebar.
-  if inst.prompt and inst.prompt.bufnr > 0 and vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
-    vim.bo[inst.prompt.bufnr].buflisted = false
+  -- Unlist buffers so they disappear from the sidebar; always remove from instances table.
+  if inst.prompt and inst.prompt.bufnr > 0 then
+    if vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
+      vim.bo[inst.prompt.bufnr].buflisted = false
+    end
     instances[inst.prompt.bufnr] = nil
+  end
+  if inst.output and inst.output.bufnr and vim.api.nvim_buf_is_valid(inst.output.bufnr) then
+    vim.bo[inst.output.bufnr].buflisted = false
   end
   inst.output_winid = nil
   inst.prompt_winid = nil
