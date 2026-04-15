@@ -58,6 +58,8 @@ function M.new(session, buf_name)
     streaming_block_type = nil,
     streaming_tool_id = nil,
     spinner = nil, -- cc.Spinner, active during an assistant turn
+    last_turn_role = nil, ---@type 'user'|'agent'|nil tracks consecutive turns
+    agent_header_lnum = nil, ---@type integer? header line of current agent fold
   }, Output)
 end
 
@@ -327,10 +329,29 @@ end
 function Output:_append(lines, fold_levels, is_header)
   local bufnr = self:ensure_buffer()
   local state = M._buf_state[bufnr]
-  vim.bo[bufnr].modifiable = true
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   local replace_empty = line_count == 1
     and vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] == ''
+
+  -- Collapse consecutive blank lines: if buffer already ends with a blank
+  -- line, strip leading blanks from the input so we never get double gaps.
+  if not replace_empty and not is_header and #lines > 0 then
+    local last_buf_line = vim.api.nvim_buf_get_lines(bufnr, line_count - 1, line_count, false)[1] or ''
+    if vim.trim(last_buf_line) == '' then
+      while #lines > 0 and vim.trim(lines[1]) == '' do
+        table.remove(lines, 1)
+        if fold_levels and #fold_levels > 0 then
+          table.remove(fold_levels, 1)
+        end
+      end
+    end
+  end
+
+  if #lines == 0 then
+    return line_count
+  end
+
+  vim.bo[bufnr].modifiable = true
   local first_lnum
   if replace_empty then
     first_lnum = 1
@@ -404,6 +425,21 @@ end
 --- Render a user turn header + content.
 ---@param text string
 function Output:render_user_turn(text)
+  local is_continuation = (self.last_turn_role == 'user')
+  self.last_turn_role = 'user'
+
+  if is_continuation then
+    -- Consecutive user turn: append content under the existing fold.
+    local content_lines = { '' }
+    local content_levels = { 1 }
+    for _, l in ipairs(vim.split(text, '\n', { plain = true })) do
+      table.insert(content_lines, '    ' .. l)
+      table.insert(content_levels, 1)
+    end
+    self:_append(content_lines, content_levels, false)
+    return
+  end
+
   local lines = { '' }
   local fold_levels = { 0 }
   -- header line
@@ -429,14 +465,29 @@ end
 --- Start an assistant turn (header only; content streams in).
 ---@return integer header_lnum
 function Output:begin_assistant_turn()
+  local is_continuation = (self.last_turn_role == 'agent')
+  self.last_turn_role = 'agent'
+  self.streaming_block_type = nil
+  self.streaming_tool_id = nil
+
+  if is_continuation and self.agent_header_lnum then
+    -- Consecutive agent turn: skip the header, stay inside existing fold.
+    self:_append({ '' }, { 1 }, false)
+    -- Restart spinner on the original header.
+    if self.spinner then self.spinner:stop() end
+    local Spinner = require('cc.spinner')
+    self.spinner = Spinner.new(self.bufnr, self.agent_header_lnum)
+    self.spinner:start()
+    return self.agent_header_lnum
+  end
+
   local lines = { '', '  Agent:' }
   local fold_levels = { 0, '>1' }
   local first_lnum = self:_append(lines, fold_levels, false)
   local header_lnum = first_lnum + 1
   local state = M._buf_state[self.bufnr]
   state.fold_headers[header_lnum] = true
-  self.streaming_block_type = nil
-  self.streaming_tool_id = nil
+  self.agent_header_lnum = header_lnum
   -- Start spinner on the Agent header.
   if self.spinner then self.spinner:stop() end
   local Spinner = require('cc.spinner')
@@ -676,6 +727,7 @@ end
 --- Render a result line (cost, usage) at the end of a turn.
 ---@param result table
 function Output:render_result(result)
+  self.last_turn_role = nil
   self:stop_spinner()
   local parts = {}
   if result.total_cost_usd then
@@ -696,6 +748,7 @@ end
 
 ---@param text string
 function Output:render_notice(text)
+  self.last_turn_role = nil
   self:_append({ '  ── ' .. text .. ' ──' }, { 0 }, false)
 end
 

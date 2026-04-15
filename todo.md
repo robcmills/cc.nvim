@@ -1,5 +1,8 @@
 
-- [ ] Collapse sequences of consecutive agent turns into a single fold
+- [x] Collapse sequences of consecutive agent turns into a single fold
+- [ ] Add support for session naming
+- [ ] Add config option to show/hide thinking
+- [ ] wrap output
 - [ ] Tighten up poor vertical spacing and multiple consecutive blank lines
 - [ ] Add unique "icons" for each entry and tool (with nerdfont support)
 - [ ] Add themes support for customizing highlight groups, icons, etc.
@@ -8,3 +11,6 @@
 - [ ] Audit all claude code functionality for parity/selection of subset we will support
 - [ ] Autoscroll that can be toggled on/off
 - [ ] Autosize prompt window to fit content (with configurable min/max heights)
+- [ ] Add support for /remote-control
+- [ ] Add statusline
+- [ ] Move thinking spinner to statusline
