@@ -138,13 +138,120 @@ function M.foldexpr(lnum)
   return state.fold_levels[lnum] or 0
 end
 
---- Custom foldtext: when a fold is closed, show the header line verbatim
---- (carets render as extmarks). Append a " ⟨N lines⟩" hint.
+--- Build fold context info table for the foldtext callback.
+---@param bufnr integer
+---@param foldstart integer 1-indexed
+---@param foldend integer 1-indexed
+---@return table
+local function build_fold_info(bufnr, foldstart, foldend)
+  local state = M._buf_state[bufnr]
+  local header = vim.fn.getline(foldstart)
+  local line_count = foldend - foldstart + 1
+
+  -- Detect role from header line content.
+  local role = 'unknown'
+  if header:match('^%s*User:') then
+    role = 'user'
+  elseif header:match('^%s*Agent:') then
+    role = 'agent'
+  elseif header:match('^%s*Tool:') then
+    role = 'tool'
+  elseif header:match('^%s*Output:') or header:match('^%s*Error:') then
+    role = 'result'
+  end
+
+  local info = {
+    role = role,
+    header = header,
+    line_count = line_count,
+    fold_start = foldstart,
+    fold_end = foldend,
+    bufnr = bufnr,
+    tool_count = 0,
+    first_text = nil,
+  }
+
+  -- For user/agent turns, scan content to count tools and find preview text.
+  if state and (role == 'user' or role == 'agent') and foldend > foldstart then
+    local tool_count = 0
+    local last_block_text = nil
+    local prev_was_text = false
+    local fold_lines = vim.fn.getline(foldstart + 1, foldend)
+    for i, line in ipairs(fold_lines) do
+      local lnum = foldstart + i
+      local fl = state.fold_levels[lnum]
+      if fl == '>2' then
+        tool_count = tool_count + 1
+        prev_was_text = false
+      elseif fl == 1 then
+        local trimmed = vim.trim(line)
+        if #trimmed > 0 and not trimmed:match('^∴ thinking:') then
+          if not prev_was_text then
+            last_block_text = trimmed
+          end
+          prev_was_text = true
+        else
+          prev_was_text = false
+        end
+      else
+        prev_was_text = false
+      end
+    end
+    info.tool_count = tool_count
+    info.first_text = last_block_text
+  end
+
+  return info
+end
+
+--- Default fold text function. Exposed as M.default_foldtext for use in
+--- custom foldtext callbacks that want to extend rather than replace it.
+---@param info table fold context from build_fold_info
+---@return string
+function M.default_foldtext(info)
+  if info.role == 'user' then
+    if info.first_text and #info.first_text > 0 then
+      return '▸ User: ' .. info.first_text
+    end
+    return '▸ User:  ⟨' .. info.line_count .. ' lines⟩'
+  elseif info.role == 'agent' then
+    local parts = {}
+    if info.tool_count > 0 then
+      table.insert(parts, '(' .. info.tool_count .. ' tools)')
+    end
+    if info.first_text and #info.first_text > 0 then
+      table.insert(parts, info.first_text)
+    end
+    if #parts > 0 then
+      return '▸ Agent: ' .. table.concat(parts, ' ')
+    end
+    return '▸ Agent:  ⟨' .. info.line_count .. ' lines⟩'
+  elseif info.role == 'tool' then
+    local stripped = info.header:gsub('^%s*', '')
+    return '  ▸ ' .. stripped
+  elseif info.role == 'result' then
+    local stripped = info.header:gsub('^%s*', '')
+    return '      ▸ ' .. stripped .. '  ⟨' .. info.line_count .. ' lines⟩'
+  end
+  -- Fallback for unknown fold types.
+  return info.header .. '  ⟨' .. info.line_count .. ' lines⟩'
+end
+
+--- Custom foldtext: builds context info and delegates to config.foldtext
+--- or the default implementation.
 ---@return string
 function M.foldtext()
-  local line = vim.fn.getline(vim.v.foldstart)
-  local count = vim.v.foldend - vim.v.foldstart + 1
-  return line .. '  ⟨' .. count .. ' lines⟩'
+  local bufnr = vim.api.nvim_get_current_buf()
+  local info = build_fold_info(bufnr, vim.v.foldstart, vim.v.foldend)
+
+  local config = require('cc.config').options
+  if config.foldtext then
+    local ok, result = pcall(config.foldtext, info)
+    if ok and type(result) == 'string' then
+      return result
+    end
+  end
+  return M.default_foldtext(info)
 end
 
 --- Refresh caret extmarks to match current fold state.

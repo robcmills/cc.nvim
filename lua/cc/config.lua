@@ -15,6 +15,7 @@ local defaults = {
   -- Folding
   default_fold_level = 1, -- 0=minimal, 1=summaries, 2=inputs, 3=all
   max_tool_result_lines = 50,
+  foldtext = nil, -- function(info)->string or nil for default; see output.default_foldtext
 
   -- History / resume
   history_max_records = 200, -- cap records rendered on resume; older collapsed into a notice
