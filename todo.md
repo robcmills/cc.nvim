@@ -1,0 +1,10 @@
+
+- [ ] Collapse sequences of consecutive agent turns into a single fold
+- [ ] Tighten up poor vertical spacing and multiple consecutive blank lines
+- [ ] Add unique "icons" for each entry and tool (with nerdfont support)
+- [ ] Add themes support for customizing highlight groups, icons, etc.
+- [ ] Make resume history picker window larger
+- [ ] Todo lists that remain in a fixed position at bottom of output buffer
+- [ ] Audit all claude code functionality for parity/selection of subset we will support
+- [ ] Autoscroll that can be toggled on/off
+- [ ] Autosize prompt window to fit content (with configurable min/max heights)
