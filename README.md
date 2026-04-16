@@ -245,6 +245,130 @@ automatically.
 Pure Lua. Uses `vim.uv.spawn()` for pipe-level control and `vim.schedule()`
 to bridge libuv callbacks to the Neovim main loop.
 
+## Testing
+
+cc.nvim has a test suite built on [mini.test](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-test.md)
+(vendored as a git submodule). Each test spawns a fresh Neovim child process
+for full isolation.
+
+### Running tests
+
+```bash
+./tests/run.sh                        # all 111 specs (minimal config)
+./tests/run.sh output_rendering       # filter by spec file pattern
+./tests/run.sh --config=rob           # run with Rob's full Neovim config
+./tests/run.sh --visual simple_text   # render a fixture, print visual dump
+./tests/run.sh --capture my_feature   # launch nvim with :CcDumpNdjson pre-armed
+```
+
+### Test structure
+
+```
+tests/
+├── run.sh                  # entrypoint — supports --config, --visual, --capture, pattern filter
+├── minimal_init.lua        # clean rtp: only cc.nvim + mini.nvim + $VIMRUNTIME
+├── rob_init.lua            # sources ~/.config/nvim/init.lua (full user config)
+├── helpers.lua             # render_fixture(), replay_streaming(), visual_dump(), assertion helpers
+├── cases/
+│   ├── output_rendering_spec.lua   # user/agent turn headers, text rendering
+│   ├── fold_spec.lua               # fold levels 0-3, :CcFold, foldtext summaries
+│   ├── diff_rendering_spec.lua     # Edit/Write/MultiEdit diffs
+│   ├── highlight_spec.lua          # CcXxx highlight group defaults
+│   ├── caret_spec.lua              # ▾/▸ extmark sync with fold state
+│   ├── interactive_spec.lua        # AskUserQuestion, permissions, MCP elicitation
+│   ├── streaming_spec.lua          # streaming-only types: hooks, tool_progress, api_retry, etc.
+│   ├── history_resume_spec.lua     # :CcResume transcript re-rendering
+│   └── process_integration_spec.lua # full pipeline via fake_claude.sh subprocess
+├── fixtures/
+│   ├── jsonl/              # 17 JSONL fixtures (resume path — curated from real sessions)
+│   ├── ndjson/             # 11 NDJSON fixtures (streaming path — captured via :CcDumpNdjson)
+│   ├── fake_claude.sh      # bash replay script for process-level integration tests
+│   └── fake_claude.lua     # nvim-l replay script (alternative)
+├── CLAUDE_CODE_FEATURES.md # raw Claude Code feature set audit
+└── FEATURE_AUDIT.md        # cross-reference: CC features × cc.nvim coverage × test tiers
+```
+
+### Two fixture paths
+
+Tests exercise two code paths that mirror how the plugin actually works:
+
+- **JSONL (resume path):** `helpers.render_fixture()` loads a `.jsonl` file
+  through `history.read_transcript()` → `output:render_historical_record()`.
+  Tests the final rendered state of a conversation. This is the same path
+  `:CcResume` uses.
+
+- **NDJSON (streaming path):** `helpers.replay_streaming()` feeds a `.ndjson`
+  file through `parser:feed()` → `router:dispatch()` → output rendering. Tests
+  the live streaming code path including streaming-only message types (hook
+  events, `tool_progress`, `result`/cost, `task_started`, `api_retry`, compact
+  notices, plan mode).
+
+### Capturing new fixtures
+
+Use `:CcDumpNdjson <path>` during a live session to tee raw NDJSON bytes from
+the `claude` subprocess to a file. This captures real streaming data for new
+test fixtures:
+
+```bash
+# Interactive capture — opens cc.nvim with dump pre-armed
+./tests/run.sh --capture my_new_feature
+# Have a conversation that exercises the feature, then :qa!
+# Fixture saved to tests/fixtures/ndjson/my_new_feature.ndjson
+```
+
+For JSONL fixtures, extract the relevant segment from a session file at
+`~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`.
+
+### Visual dump mode
+
+For debugging and development, `--visual` renders a fixture and prints an
+annotated dump showing buffer lines, fold levels, highlight groups, and
+extmarks — without running any assertions:
+
+```bash
+./tests/run.sh --visual tool_edit
+```
+
+```
+  1 [fl=1    hl=CcUser       ] ▾ User:
+  2 [fl=     hl=             ]     Fix auth bug
+  3 [fl=1    hl=CcAgent      ] ▾ Agent:
+  4 [fl=     hl=             ]     I'll look into it.
+  5 [fl=2    hl=CcTool       ]   ▸ Tool: Read — src/auth.ts
+      extmark=[('▸ ','CcCaret')]
+```
+
+### Writing tests
+
+Tests use `mini.test` with child-process isolation. A typical test:
+
+```lua
+local helpers = require('tests.helpers')
+local T = MiniTest.new_set()
+
+T['render simple text'] = function()
+  local child = helpers.new_child()
+  helpers.render_fixture(child, 'simple_text')   -- JSONL resume path
+  local lines = helpers.get_buffer_lines(child)
+  MiniTest.expect.equality(lines[1], '▾ User:')
+  child.stop()
+end
+
+T['stream simple text'] = function()
+  local child = helpers.new_child()
+  helpers.replay_streaming(child, 'simple_text')  -- NDJSON streaming path
+  local lines = helpers.get_buffer_lines(child)
+  MiniTest.expect.equality(lines[1], '▾ User:')
+  child.stop()
+end
+
+return T
+```
+
+Available assertion helpers in `tests/helpers.lua`: `get_buffer_lines()`,
+`get_fold_levels()`, `get_extmarks()`, `get_hl_at()`, `get_syn_stack()`,
+`get_session_state()`.
+
 ## Troubleshooting
 
 Run `:checkhealth cc`. It verifies:
