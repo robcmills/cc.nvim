@@ -1,16 +1,28 @@
 
 - [x] Collapse sequences of consecutive agent turns into a single fold
+- [ ] Figure out how to close the agentic loop for visual appearance (how to enable agent to "see" colored output)
+- [ ] Add tests
+- [ ] Identify most complex/fragile code and simplify (requires brainstorming)
+- [ ] Fix broken highlight groups
+- [ ] Enable window config 
+  - [ ] hide line numbers by default
+  - [ ] wrap output by default
 - [ ] Add support for session naming
 - [ ] Add config option to show/hide thinking
-- [ ] wrap output
 - [ ] Tighten up poor vertical spacing and multiple consecutive blank lines
-- [ ] Add unique "icons" for each entry and tool (with nerdfont support)
-- [ ] Add themes support for customizing highlight groups, icons, etc.
+- [ ] Fix poor horizontal spacing and indentation (gaps after carets) (2 spaces not 4)
+- [ ] Add unique "icons" for each entry and tool type (with nerdfont support) (configurable)
+- [ ] Add configurable themes support for customizing highlight groups, icons, etc.
 - [ ] Make resume history picker window larger
-- [ ] Todo lists that remain in a fixed position at bottom of output buffer
+- [ ] Add support for todo lists (requires brainstorming)
 - [ ] Audit all claude code functionality for parity/selection of subset we will support
-- [ ] Autoscroll that can be toggled on/off
+- [ ] Autoscroll that can be toggled on/off (fix vertical scroll/snapping issues)
 - [ ] Autosize prompt window to fit content (with configurable min/max heights)
 - [ ] Add support for /remote-control
-- [ ] Add statusline
-- [ ] Move thinking spinner to statusline
+- [ ] Add statusline (requires brainstorming)
+  - [ ] Show thinking spinner
+  - [ ] Show token count (like claude code)
+  - [ ] Show cost
+  - [ ] Show mode
+  - [ ] Show PR
+  - [ ] Show session name
