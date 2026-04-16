@@ -50,20 +50,30 @@ case "$CONFIG" in
 esac
 
 # --visual mode: render one fixture and print layer-C dump
+# Supports both JSONL (resume path) and NDJSON (streaming path) fixtures.
 if [[ -n "$VISUAL" ]]; then
-  FIXTURE="$SCRIPT_DIR/fixtures/jsonl/$VISUAL.jsonl"
-  if [[ ! -f "$FIXTURE" ]]; then
-    echo "Fixture not found: $FIXTURE"
-    echo "Available:"
+  FIXTURE=""
+  FIXTURE_TYPE=""
+  # Check JSONL first, then NDJSON
+  if [[ -f "$SCRIPT_DIR/fixtures/jsonl/$VISUAL.jsonl" ]]; then
+    FIXTURE="$SCRIPT_DIR/fixtures/jsonl/$VISUAL.jsonl"
+    FIXTURE_TYPE="jsonl"
+  elif [[ -f "$SCRIPT_DIR/fixtures/ndjson/$VISUAL.ndjson" ]]; then
+    FIXTURE="$SCRIPT_DIR/fixtures/ndjson/$VISUAL.ndjson"
+    FIXTURE_TYPE="ndjson"
+  else
+    echo "Fixture not found: $VISUAL"
+    echo "Available JSONL:"
     ls "$SCRIPT_DIR/fixtures/jsonl/"*.jsonl 2>/dev/null | xargs -n1 basename | sed 's/.jsonl//'
+    echo "Available NDJSON:"
+    ls "$SCRIPT_DIR/fixtures/ndjson/"*.ndjson 2>/dev/null | xargs -n1 basename | sed 's/.ndjson//'
     exit 1
   fi
-  echo "=== Visual dump: $VISUAL (config=$CONFIG) ==="
+  echo "=== Visual dump: $VISUAL (type=$FIXTURE_TYPE, config=$CONFIG) ==="
 
   # Write the Lua script to a temp file to avoid quoting issues
   TMPSCRIPT=$(mktemp /tmp/cc_visual_XXXXXX.lua)
   cat > "$TMPSCRIPT" << LUAEOF
-local history = require('cc.history')
 local Output = require('cc.output')
 local Session = require('cc.session')
 local config = require('cc.config')
@@ -72,9 +82,26 @@ local session = Session.new()
 local output = Output.new(session, 'cc-test-output')
 local bufnr = output:ensure_buffer()
 vim.api.nvim_set_current_buf(bufnr)
-local records = history.read_transcript('$FIXTURE')
-for _, rec in ipairs(records) do
-  output:render_historical_record(rec)
+
+local fixture_type = '$FIXTURE_TYPE'
+if fixture_type == 'jsonl' then
+  local history = require('cc.history')
+  local records = history.read_transcript('$FIXTURE')
+  for _, rec in ipairs(records) do
+    output:render_historical_record(rec)
+  end
+elseif fixture_type == 'ndjson' then
+  local Parser = require('cc.parser')
+  local Router = require('cc.router')
+  local router = Router.new({ session = session, output = output })
+  local parser = Parser.new()
+  local lines = vim.fn.readfile('$FIXTURE')
+  for _, line in ipairs(lines) do
+    local messages = parser:feed(line .. '\n')
+    for _, msg in ipairs(messages) do
+      router:dispatch(msg)
+    end
+  end
 end
 local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 local state = require('cc.output')._buf_state[bufnr]

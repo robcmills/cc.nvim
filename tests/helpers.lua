@@ -7,6 +7,7 @@ local MiniTest = require('mini.test')
 M.this_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h')
 M.repo_root = vim.fn.fnamemodify(M.this_dir, ':h')
 M.fixtures_dir = M.this_dir .. '/fixtures/jsonl'
+M.ndjson_fixtures_dir = M.this_dir .. '/fixtures/ndjson'
 
 --- Create a new mini.test child process with cc.nvim loaded.
 --- Uses the same init file as the parent (minimal or rob) unless overridden.
@@ -216,6 +217,66 @@ function M.visual_dump(child)
     _G._test_visual_dump = table.concat(parts, '\n')
   ]==])
   return child.lua_get('_G._test_visual_dump')
+end
+
+--- Feed an NDJSON fixture through parser -> router -> output in the child.
+--- This simulates the live streaming path (process.lua -> parser -> router -> output)
+--- without spawning a subprocess. Tests the full streaming code path.
+---@param child table mini.test child
+---@param fixture_name string e.g. 'simple_text' (without .ndjson)
+---@return integer bufnr
+function M.replay_streaming(child, fixture_name)
+  local fixture_path = M.ndjson_fixtures_dir .. '/' .. fixture_name .. '.ndjson'
+  child.lua(string.format([==[
+    local Parser = require('cc.parser')
+    local Router = require('cc.router')
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    local config = require('cc.config')
+    config.setup({})
+
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-output')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+
+    local router = Router.new({ session = session, output = output })
+    local parser = Parser.new()
+
+    -- Read fixture and feed each line through the streaming pipeline
+    local lines = vim.fn.readfile(%q)
+    for _, line in ipairs(lines) do
+      local messages = parser:feed(line .. '\n')
+      for _, msg in ipairs(messages) do
+        router:dispatch(msg)
+      end
+    end
+
+    _G._test_bufnr = bufnr
+    _G._test_output = output
+    _G._test_session = session
+    _G._test_router = router
+  ]==], fixture_path))
+  return child.lua_get('_G._test_bufnr')
+end
+
+--- Get session state from the child after streaming replay.
+---@param child table
+---@return table session fields
+function M.get_session_state(child)
+  child.lua([==[
+    local s = _G._test_session
+    _G._test_session_state = {
+      id = s.id,
+      model = s.model,
+      cost_usd = s.cost_usd,
+      input_tokens = s.input_tokens,
+      output_tokens = s.output_tokens,
+      is_streaming = s.is_streaming,
+      turn_count = #s.turns,
+    }
+  ]==])
+  return child.lua_get('_G._test_session_state')
 end
 
 return M

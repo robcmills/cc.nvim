@@ -1,0 +1,16 @@
+{"type":"system","subtype":"init","session_id":"test-stream-004","tools":["Bash","Edit"],"model":"claude-sonnet-4-20250514","permissionMode":"auto"}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_06test","role":"assistant","type":"message","model":"claude-sonnet-4-20250514"}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_03test","name":"Edit","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":\"/tmp/test.txt\",\"old_string\":\"foo\",\"new_string\":\"bar\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"hook_started","hook_event_name":"PreToolUse","hook":"lint-check"}
+{"type":"hook_response","hook_event_name":"PreToolUse","hook":"lint-check","elapsed_time_seconds":1.3}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_03test","content":"Edit applied successfully","is_error":false}]}}
+{"type":"hook_started","hook_event_name":"PostToolUse","hook":"format-on-save"}
+{"type":"hook_response","hook_event_name":"PostToolUse","hook":"format-on-save","elapsed_time_seconds":0.8}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_07test","role":"assistant","type":"message","model":"claude-sonnet-4-20250514"}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I've made the edit."}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"result","total_cost_usd":0.004,"usage":{"input_tokens":300,"output_tokens":30}}
