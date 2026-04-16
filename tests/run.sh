@@ -110,7 +110,11 @@ end
 vim.cmd('qa!')
 LUAEOF
 
-  nvim --headless --clean -u "$INIT_FILE" -S "$TMPSCRIPT" 2>/dev/null
+  CLEAN_FLAG=""
+  if [[ "$CONFIG" == "minimal" ]]; then
+    CLEAN_FLAG="--clean"
+  fi
+  nvim --headless $CLEAN_FLAG -u "$INIT_FILE" -S "$TMPSCRIPT" 2>/dev/null
   rm -f "$TMPSCRIPT"
   exit 0
 fi
@@ -126,7 +130,12 @@ else
   FILE_PATTERN=""
 fi
 
-nvim --headless --clean -u "$INIT_FILE" +"lua (function()
+CLEAN_FLAG=""
+if [[ "$CONFIG" == "minimal" ]]; then
+  CLEAN_FLAG="--clean"
+fi
+
+nvim --headless $CLEAN_FLAG -u "$INIT_FILE" +"lua (function()
   local test = require('mini.test')
   local pattern = '$FILE_PATTERN'
   local collect_opts = {

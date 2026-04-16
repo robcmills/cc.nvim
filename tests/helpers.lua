@@ -9,10 +9,11 @@ M.repo_root = vim.fn.fnamemodify(M.this_dir, ':h')
 M.fixtures_dir = M.this_dir .. '/fixtures/jsonl'
 
 --- Create a new mini.test child process with cc.nvim loaded.
----@param init_file? string path to init file (defaults to minimal_init.lua)
+--- Uses the same init file as the parent (minimal or rob) unless overridden.
+---@param init_file? string path to init file
 ---@return table child mini.test child
 function M.new_child(init_file)
-  init_file = init_file or (M.this_dir .. '/minimal_init.lua')
+  init_file = init_file or vim.g.cc_test_init or (M.this_dir .. '/minimal_init.lua')
   local child = MiniTest.new_child_neovim()
   child.restart({ '-u', init_file })
   -- Wait for startup to settle

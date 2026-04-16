@@ -3,7 +3,7 @@
 - [x] Figure out how to close the agentic loop for visual appearance (how to enable agent to "see" colored output)
 - [x] Add tests (mini.test framework, 39 tests, 17 JSONL fixtures from real sessions)
   + [x] with no config (minimal_init.lua — vanilla neovim)
-  + [ ] with my config (rob_init.lua — vertical buffers list, plugins, etc.)
+  + [x] with my config (rob_init.lua — vertical buffers list, plugins, etc.)
   + [ ] streaming NDJSON fixtures (for hook events, tool_progress, cost display)
   + [ ] CI (GitHub Actions)
 - [ ] Identify most complex/fragile code and simplify (requires brainstorming)

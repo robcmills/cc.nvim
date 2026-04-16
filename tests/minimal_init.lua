@@ -22,5 +22,8 @@ vim.o.undofile = false
 vim.o.lines = 30
 vim.o.columns = 100
 
+-- Store which init this is so test helpers can pass it to children
+vim.g.cc_test_init = this_dir .. '/minimal_init.lua'
+
 -- Load mini.test
 require('mini.test').setup()
