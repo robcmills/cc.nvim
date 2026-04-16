@@ -161,6 +161,8 @@ elseif fixture_type == 'ndjson' then
     end
   end
 end
+-- Flush vim.schedule callbacks so refresh_carets runs before we read extmarks
+vim.wait(50, function() return false end)
 local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 local state = require('cc.output')._buf_state[bufnr]
 local fl = state and state.fold_levels or {}
