@@ -5,6 +5,7 @@
 #   ./tests/run.sh                         # Run all specs (minimal config)
 #   ./tests/run.sh output_rendering        # Filter by pattern
 #   ./tests/run.sh --visual simple_text    # Render fixture, dump visual output
+#   ./tests/run.sh --capture my_feature    # Launch nvim with :CcDumpNdjson pre-armed
 #   ./tests/run.sh --config=rob            # Run with Rob's config
 #
 set -euo pipefail
@@ -16,6 +17,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG="minimal"
 PATTERN=""
 VISUAL=""
+CAPTURE=""
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -26,6 +28,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --visual)
       VISUAL="$2"
+      shift 2
+      ;;
+    --capture)
+      CAPTURE="$2"
       shift 2
       ;;
     *)
@@ -48,6 +54,58 @@ case "$CONFIG" in
     exit 1
     ;;
 esac
+
+# --capture mode: launch interactive nvim with :CcDumpNdjson pre-armed.
+# Opens cc.nvim and immediately starts tee-ing NDJSON to the fixture file.
+# The user interacts with the session; on exit, the fixture is saved.
+if [[ -n "$CAPTURE" ]]; then
+  OUTFILE="$SCRIPT_DIR/fixtures/ndjson/$CAPTURE.ndjson"
+  echo "=== Capture mode: $CAPTURE ==="
+  echo "Output will be saved to: $OUTFILE"
+  echo "1. cc.nvim will open automatically"
+  echo "2. NDJSON dump starts when the first message is sent"
+  echo "3. Run :CcDumpNdjson to stop, or just :qa! to exit"
+  echo ""
+
+  TMPSCRIPT=$(mktemp /tmp/cc_capture_XXXXXX.lua)
+  cat > "$TMPSCRIPT" << 'CAPEOF'
+-- Auto-start NDJSON dump when a process spawns.
+local cc = require('cc')
+local original_open = cc.open
+cc.open = function(opts)
+  original_open(opts)
+  -- Schedule the dump start after the process spawns
+  vim.defer_fn(function()
+    local inst = cc._get_instance()
+    if inst and inst.process then
+      inst.process:start_dump(vim.g._cc_capture_outfile)
+      vim.notify('cc.nvim: NDJSON capture active → ' .. vim.g._cc_capture_outfile, vim.log.levels.INFO)
+    end
+  end, 500)
+end
+vim.g._cc_capture_outfile = '$OUTFILE_ESCAPED'
+-- Open cc.nvim on startup
+vim.defer_fn(function() cc.open() end, 200)
+CAPEOF
+  # Escape single quotes in the path for the Lua string
+  OUTFILE_ESCAPED=$(echo "$OUTFILE" | sed "s/'/\\\\'/g")
+  sed -i '' "s|\$OUTFILE_ESCAPED|$OUTFILE_ESCAPED|g" "$TMPSCRIPT"
+
+  CLEAN_FLAG=""
+  if [[ "$CONFIG" == "minimal" ]]; then
+    CLEAN_FLAG="--clean"
+  fi
+  nvim $CLEAN_FLAG -u "$INIT_FILE" -S "$TMPSCRIPT"
+  rm -f "$TMPSCRIPT"
+
+  if [[ -f "$OUTFILE" ]]; then
+    LINES=$(wc -l < "$OUTFILE" | tr -d ' ')
+    echo "=== Captured $LINES lines to $OUTFILE ==="
+  else
+    echo "=== No output captured (file not created) ==="
+  fi
+  exit 0
+fi
 
 # --visual mode: render one fixture and print layer-C dump
 # Supports both JSONL (resume path) and NDJSON (streaming path) fixtures.

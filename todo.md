@@ -1,10 +1,14 @@
 
 - [x] Collapse sequences of consecutive agent turns into a single fold
 - [x] Figure out how to close the agentic loop for visual appearance (how to enable agent to "see" colored output)
-- [x] Add tests (mini.test framework, 39 tests, 17 JSONL fixtures from real sessions)
+- [x] Add tests (mini.test framework, 111 tests, 17 JSONL + 11 NDJSON fixtures)
   + [x] with no config (minimal_init.lua — vanilla neovim)
   + [x] with my config (rob_init.lua — vertical buffers list, plugins, etc.)
-  + [ ] streaming NDJSON fixtures (for hook events, tool_progress, cost display)
+  + [x] streaming NDJSON fixtures (hook events, tool_progress, cost display, subagent tasks, thinking, plan mode)
+  + [x] process-level integration tests (fake_claude.sh → full pipeline)
+  + [x] caret extmark sync tests (▾/▸ on fold headers)
+  + [x] history resume tests (read_transcript, render_historical_record, truncation)
+  + [x] --capture flag for run.sh (interactive NDJSON fixture capture)
   + [ ] CI (GitHub Actions)
 - [ ] Identify most complex/fragile code and simplify (requires brainstorming)
 - [ ] Fix broken highlight groups

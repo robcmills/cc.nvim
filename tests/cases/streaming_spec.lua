@@ -311,6 +311,21 @@ T['compact_notice']['renders text before and after compaction'] = function()
 end
 
 -- ---------------------------------------------------------------------------
+-- Plan mode (streaming-only: EnterPlanMode tool)
+-- ---------------------------------------------------------------------------
+T['plan_mode'] = MiniTest.new_set()
+
+T['plan_mode']['renders thinking block'] = function()
+  helpers.replay_streaming(_G.child, 'plan_mode')
+  assert_any_line_matches(_G.child, '∴ thinking:')
+end
+
+T['plan_mode']['renders EnterPlanMode tool'] = function()
+  helpers.replay_streaming(_G.child, 'plan_mode')
+  assert_any_line_matches(_G.child, 'Tool:.*EnterPlanMode')
+end
+
+-- ---------------------------------------------------------------------------
 -- Fold levels in streaming path
 -- ---------------------------------------------------------------------------
 T['streaming_folds'] = MiniTest.new_set()

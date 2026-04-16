@@ -240,7 +240,12 @@ function M.replay_streaming(child, fixture_name)
     local bufnr = output:ensure_buffer()
     vim.api.nvim_set_current_buf(bufnr)
 
-    local router = Router.new({ session = session, output = output })
+    -- Mock process with no-op write (needed for control_request messages)
+    local mock_process = {
+      write = function() end,
+      is_alive = function() return false end,
+    }
+    local router = Router.new({ session = session, output = output, process = mock_process })
     local parser = Parser.new()
 
     -- Read fixture and feed each line through the streaming pipeline

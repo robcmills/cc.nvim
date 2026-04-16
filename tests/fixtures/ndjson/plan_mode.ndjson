@@ -1,0 +1,9 @@
+{"type":"system","subtype":"init","session_id":"test-stream-011","tools":["EnterPlanMode","ExitPlanMode"],"model":"claude-sonnet-4-20250514","permissionMode":"plan"}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_18test","role":"assistant","type":"message","model":"claude-sonnet-4-20250514"}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Planning the approach..."}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_07test","name":"EnterPlanMode","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"plan_file_path\":\"/tmp/test-plan.md\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":1}}
+{"type":"stream_event","event":{"type":"message_stop"}}
