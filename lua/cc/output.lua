@@ -443,7 +443,7 @@ function Output:render_user_turn(text)
   local lines = { '' }
   local fold_levels = { 0 }
   -- header line
-  table.insert(lines, '  User:')
+  table.insert(lines, 'User:')
   table.insert(fold_levels, '>1')
   local first_lnum = self:_append(lines, fold_levels, false)
   -- header is the 2nd line we inserted
@@ -481,7 +481,7 @@ function Output:begin_assistant_turn()
     return self.agent_header_lnum
   end
 
-  local lines = { '', '  Agent:' }
+  local lines = { '', 'Agent:' }
   local fold_levels = { 0, '>1' }
   local first_lnum = self:_append(lines, fold_levels, false)
   local header_lnum = first_lnum + 1

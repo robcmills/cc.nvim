@@ -40,8 +40,8 @@ function M.apply_buffer_syntax(bufnr)
     pcall(vim.cmd, 'syntax clear CcUser CcAgent CcTool CcOutput CcError CcCost CcNotice CcHook CcPermission CcToolInput CcDiffAdd CcDiffDelete CcDiffHunk')
 
     -- User: / Agent: headers (allow extended content after the colon for folded summaries).
-    vim.cmd([[syntax match CcUser    /^\s\+User:.*$/]])
-    vim.cmd([[syntax match CcAgent   /^\s\+Agent:.*$/]])
+    vim.cmd([[syntax match CcUser    /^User:.*$/]])
+    vim.cmd([[syntax match CcAgent   /^Agent:.*$/]])
 
     -- Tool: header
     vim.cmd([[syntax match CcTool    /^\s\+Tool:.*$/]])

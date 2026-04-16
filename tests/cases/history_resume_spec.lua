@@ -195,7 +195,7 @@ T['resume_folds']['highlights applied on resumed content'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   -- Find the Agent: line and check it has a syntax highlight
   for i, line in ipairs(lines) do
-    if line:match('^%s+Agent:') then
+    if line:match('^%s*Agent:') then
       local stack = helpers.get_syn_stack(_G.child, i, line:find('A'))
       -- Should have CcAgent in the syntax stack
       local found = false
