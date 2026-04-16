@@ -233,7 +233,7 @@ function M.default_foldtext(info)
     return '  ▸ ' .. stripped
   elseif info.role == 'result' then
     local stripped = info.header:gsub('^%s*', '')
-    return '      ▸ ' .. stripped .. '  ⟨' .. info.line_count .. ' lines⟩'
+    return '    ▸ ' .. stripped .. '  ⟨' .. info.line_count .. ' lines⟩'
   end
   -- Fallback for unknown fold types.
   return info.header .. '  ⟨' .. info.line_count .. ' lines⟩'
@@ -338,7 +338,7 @@ function Output:_append(lines, fold_levels, is_header)
   if not replace_empty and not is_header and #lines > 0 then
     local last_buf_line = vim.api.nvim_buf_get_lines(bufnr, line_count - 1, line_count, false)[1] or ''
     if vim.trim(last_buf_line) == '' then
-      while #lines > 0 and vim.trim(lines[1]) == '' do
+      while #lines > 0 and lines[1] == '' do
         table.remove(lines, 1)
         if fold_levels and #fold_levels > 0 then
           table.remove(fold_levels, 1)
@@ -399,7 +399,7 @@ function Output:_append_to_last_line(text)
   if #chunks == 1 then
     vim.api.nvim_buf_set_lines(bufnr, last_row, last_row + 1, false, { last_line .. chunks[1] })
   else
-    local indent = '   '
+    local indent = '  '
     local new_lines = { last_line .. chunks[1] }
     for i = 2, #chunks do
       table.insert(new_lines, indent .. chunks[i])
@@ -433,28 +433,22 @@ function Output:render_user_turn(text)
     local content_lines = { '' }
     local content_levels = { 1 }
     for _, l in ipairs(vim.split(text, '\n', { plain = true })) do
-      table.insert(content_lines, '    ' .. l)
+      table.insert(content_lines, '  ' .. l)
       table.insert(content_levels, 1)
     end
     self:_append(content_lines, content_levels, false)
     return
   end
 
-  local lines = { '' }
-  local fold_levels = { 0 }
-  -- header line
-  table.insert(lines, 'User:')
-  table.insert(fold_levels, '>1')
-  local first_lnum = self:_append(lines, fold_levels, false)
-  -- header is the 2nd line we inserted
-  local header_lnum = first_lnum + 1
-  local state = M._buf_state[self.bufnr]
-  state.fold_headers[header_lnum] = true
+  -- Blank separator (may be collapsed if buffer already ends with blank).
+  self:_append({ '' }, { 0 }, false)
+  -- Header line (is_header skips blank-line collapsing and registers caret).
+  local header_lnum = self:_append({ 'User:' }, { '>1' }, true)
 
   local content_lines = {}
   local content_levels = {}
   for _, l in ipairs(vim.split(text, '\n', { plain = true })) do
-    table.insert(content_lines, '    ' .. l)
+    table.insert(content_lines, '  ' .. l)
     table.insert(content_levels, 1)
   end
   if #content_lines > 0 then
@@ -481,12 +475,10 @@ function Output:begin_assistant_turn()
     return self.agent_header_lnum
   end
 
-  local lines = { '', 'Agent:' }
-  local fold_levels = { 0, '>1' }
-  local first_lnum = self:_append(lines, fold_levels, false)
-  local header_lnum = first_lnum + 1
-  local state = M._buf_state[self.bufnr]
-  state.fold_headers[header_lnum] = true
+  -- Blank separator (may be collapsed if buffer already ends with blank).
+  self:_append({ '' }, { 0 }, false)
+  -- Header line (is_header skips blank-line collapsing and registers caret).
+  local header_lnum = self:_append({ 'Agent:' }, { '>1' }, true)
   self.agent_header_lnum = header_lnum
   -- Start spinner on the Agent header.
   if self.spinner then self.spinner:stop() end
@@ -508,13 +500,13 @@ end
 ---@param block table
 function Output:on_content_block_start(block)
   if block.type == 'text' then
-    self:_append({ '    ' }, { 1 }, false)
+    self:_append({ '  ' }, { 1 }, false)
     self.streaming_block_type = 'text'
   elseif block.type == 'thinking' then
-    self:_append({ '    ∴ thinking:' }, { 1 }, false)
+    self:_append({ '  ∴ thinking:' }, { 1 }, false)
     self.streaming_block_type = 'thinking'
   elseif block.type == 'tool_use' then
-    local header_text = '    Tool: ' .. (block.name or '?')
+    local header_text = '  Tool: ' .. (block.name or '?')
     local header_lnum = self:_append({ header_text }, { '>2' }, true)
     self.streaming_block_type = 'tool_use'
     self.streaming_tool_id = block.id
@@ -569,7 +561,7 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary)
   local bufnr = self.bufnr
   if lnum > vim.api.nvim_buf_line_count(bufnr) then return end
   vim.bo[bufnr].modifiable = true
-  local new_text = '    Tool: ' .. tool_name .. ' — ' .. summary
+  local new_text = '  Tool: ' .. tool_name .. ' — ' .. summary
   vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_text })
   vim.bo[bufnr].modifiable = false
 end
@@ -584,11 +576,11 @@ function Output:_render_tool_input(tool_name, input)
 
   if tool_name == 'Bash' and input.command then
     for _, l in ipairs(vim.split(tostring(input.command), '\n', { plain = true })) do
-      table.insert(lines, '        ' .. l)
+      table.insert(lines, '    ' .. l)
       table.insert(levels, 2)
     end
     if input.description then
-      table.insert(lines, '        # ' .. input.description)
+      table.insert(lines, '    # ' .. input.description)
       table.insert(levels, 2)
     end
   elseif tool_name == 'Edit' then
@@ -614,7 +606,7 @@ function Output:_render_tool_input(tool_name, input)
     local ok, encoded = pcall(vim.json.encode, input)
     if ok and encoded then
       for _, l in ipairs(vim.split(encoded, '\n', { plain = true })) do
-        table.insert(lines, '        ' .. l)
+        table.insert(lines, '    ' .. l)
         table.insert(levels, 2)
       end
     end
@@ -664,7 +656,7 @@ function Output:render_tool_result(tool_use_id, content, is_error)
     truncated = true
   end
 
-  local header_text = '        ' .. (is_error and 'Error:' or 'Output:')
+  local header_text = '    ' .. (is_error and 'Error:' or 'Output:')
   local header_lnum = self:_append({ header_text }, { '>3' }, true)
   meta.result_header_lnum = header_lnum
   meta.full_result = text
@@ -672,11 +664,11 @@ function Output:render_tool_result(tool_use_id, content, is_error)
   local body_lines = {}
   local body_levels = {}
   for _, l in ipairs(display_lines) do
-    table.insert(body_lines, '        ' .. l)
+    table.insert(body_lines, '      ' .. l)
     table.insert(body_levels, 3)
   end
   if truncated then
-    table.insert(body_lines, string.format('        [... %d more lines]', #all_lines - max_lines))
+    table.insert(body_lines, string.format('      [... %d more lines]', #all_lines - max_lines))
     table.insert(body_levels, 3)
   end
   if #body_lines > 0 then
@@ -715,6 +707,8 @@ function M.summarize_tool_input(tool_name, input)
     return input.query or ''
   elseif tool_name == 'TodoWrite' then
     return (input.todos and ('#' .. #input.todos)) or ''
+  elseif tool_name == 'Agent' then
+    return input.description or ''
   end
   local ok, s = pcall(vim.json.encode, input)
   if ok and s then
@@ -756,7 +750,7 @@ end
 ---@param input table?
 function Output:render_permission_request(tool_name, input)
   local summary = M.summarize_tool_input(tool_name, input)
-  local text = '    ⚠ Permission: ' .. tool_name
+  local text = '  ⚠ Permission: ' .. tool_name
   if summary ~= '' then
     text = text .. ' — ' .. summary
   end
@@ -773,7 +767,7 @@ function Output:render_permission_outcome(behavior, tool_name)
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   local last_row = line_count - 1
   vim.api.nvim_buf_set_lines(bufnr, last_row, last_row + 1, false,
-    { '    ' .. icon .. ' ' .. verb .. ': ' .. tool_name })
+    { '  ' .. icon .. ' ' .. verb .. ': ' .. tool_name })
   vim.bo[bufnr].modifiable = false
 end
 
@@ -794,12 +788,12 @@ function Output:render_historical_record(rec)
       if type(block) == 'table' then
         if block.type == 'text' then
           -- Append text paragraph at fold level 1.
-          self:_append({ '    ' }, { 1 }, false)
+          self:_append({ '  ' }, { 1 }, false)
           self:_append_to_last_line(block.text or '')
         elseif block.type == 'thinking' then
           local config = require('cc.config').options
           if config.show_thinking then
-            self:_append({ '    ∴ thinking:' }, { 1 }, false)
+            self:_append({ '  ∴ thinking:' }, { 1 }, false)
             self:_append_to_last_line(block.thinking or '')
           end
         elseif block.type == 'tool_use' then
@@ -824,7 +818,7 @@ function Output:render_hook(hook_name, phase, elapsed_s)
   if elapsed_s then
     suffix = string.format(' (%.1fs)', elapsed_s)
   end
-  local text = string.format('      %s Hook: %s [%s]%s', icon, hook_name, phase, suffix)
+  local text = string.format('    %s Hook: %s [%s]%s', icon, hook_name, phase, suffix)
   self:_append({ text }, { 2 }, false)
 end
 
@@ -832,7 +826,7 @@ end
 ---@param phase string 'started' | 'progress' | 'done'
 ---@param description string
 function Output:render_task(phase, description)
-  local text = string.format('      ⤷ Task %s: %s', phase, description or '')
+  local text = string.format('    ⤷ Task %s: %s', phase, description or '')
   self:_append({ text }, { 2 }, false)
 end
 
