@@ -1,0 +1,3 @@
+[submodule "tests/deps/mini.nvim"]
+	path = tests/deps/mini.nvim
+	url = https://github.com/echasnovski/mini.nvim.git
