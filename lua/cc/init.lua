@@ -529,4 +529,10 @@ function M.get_slash_commands()
   return nil
 end
 
+--- Get the current instance (for dev commands like :CcDumpNdjson).
+---@return cc.Instance?
+function M._get_instance()
+  return get_current_instance()
+end
+
 return M

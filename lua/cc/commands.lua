@@ -49,6 +49,19 @@ function M.create()
   vim.api.nvim_create_user_command('CcHistory', function(opts)
     cc.history(opts.bang)
   end, { bang = true, desc = 'Pick a session to resume (! for all projects)' })
+
+  vim.api.nvim_create_user_command('CcDumpNdjson', function(opts)
+    local inst = cc._get_instance()
+    if not inst or not inst.process then
+      vim.notify('cc.nvim: no active process to dump', vim.log.levels.WARN)
+      return
+    end
+    if opts.args and opts.args ~= '' then
+      inst.process:start_dump(vim.fn.expand(opts.args))
+    else
+      inst.process:stop_dump()
+    end
+  end, { nargs = '?', desc = 'Tee raw NDJSON to file (no arg = stop)' })
 end
 
 return M

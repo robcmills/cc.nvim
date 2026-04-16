@@ -19,6 +19,7 @@ local M = {}
 ---@field on_stderr fun(data: string)?
 ---@field on_exit fun(code: integer, signal: integer)?
 ---@field alive boolean
+---@field _tee_fd userdata? file descriptor for NDJSON dump
 local Process = {}
 Process.__index = Process
 
@@ -95,6 +96,10 @@ function Process:spawn()
       return
     end
     if data then
+      -- Tee raw bytes to dump file if active
+      if self._tee_fd then
+        uv.fs_write(self._tee_fd, data)
+      end
       local messages = self.parser:feed(data)
       if #messages > 0 then
         vim.schedule(function()
@@ -166,6 +171,30 @@ end
 
 function Process:is_alive()
   return self.alive
+end
+
+--- Start tee-ing raw stdout bytes to a file.
+---@param path string
+function Process:start_dump(path)
+  if self._tee_fd then
+    self:stop_dump()
+  end
+  local fd, err = uv.fs_open(path, 'w', 438) -- 0666
+  if not fd then
+    vim.notify('cc.nvim: failed to open dump file: ' .. tostring(err), vim.log.levels.ERROR)
+    return
+  end
+  self._tee_fd = fd
+  vim.notify('cc.nvim: dumping NDJSON to ' .. path, vim.log.levels.INFO)
+end
+
+--- Stop tee-ing and close the dump file.
+function Process:stop_dump()
+  if self._tee_fd then
+    uv.fs_close(self._tee_fd)
+    self._tee_fd = nil
+    vim.notify('cc.nvim: NDJSON dump stopped', vim.log.levels.INFO)
+  end
 end
 
 return M
