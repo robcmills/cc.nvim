@@ -187,8 +187,10 @@ end
 -- ---------------------------------------------------------------------------
 
 --- Create a new instance with layout: output above (companion), prompt below (primary).
+---@param opts { reuse_prompt_winid: integer?, reuse_output_winid: integer? }?
 ---@return cc.Instance
-local function create_instance()
+local function create_instance(opts)
+  opts = opts or {}
   local id = next_instance_id
   next_instance_id = next_instance_id + 1
 
@@ -213,20 +215,39 @@ local function create_instance()
   local output_buf = inst.output:ensure_buffer()
   local prompt_buf = inst.prompt:ensure_buffer()
 
-  -- Prompt is the primary buffer — it fills current window.
-  vim.api.nvim_set_current_buf(prompt_buf)
-  inst.prompt_winid = vim.api.nvim_get_current_win()
-  inst.prompt:set_window(inst.prompt_winid)
+  local reuse_prompt = opts.reuse_prompt_winid
+  local reuse_output = opts.reuse_output_winid
+  if reuse_prompt and not vim.api.nvim_win_is_valid(reuse_prompt) then reuse_prompt = nil end
+  if reuse_output and not vim.api.nvim_win_is_valid(reuse_output) then reuse_output = nil end
 
-  -- Output opens above as a companion.
-  vim.cmd('aboveleft split')
-  vim.api.nvim_set_current_buf(output_buf)
-  inst.output_winid = vim.api.nvim_get_current_win()
-  inst.output:set_window(inst.output_winid)
+  if reuse_prompt and reuse_output then
+    -- Reuse existing windows: swap new buffers into place.
+    vim.api.nvim_win_set_buf(reuse_prompt, prompt_buf)
+    inst.prompt_winid = reuse_prompt
+    inst.prompt:set_window(reuse_prompt)
 
-  -- Return focus to prompt and resize it.
-  vim.api.nvim_set_current_win(inst.prompt_winid)
-  vim.api.nvim_win_set_height(inst.prompt_winid, Config.options.prompt_height)
+    vim.api.nvim_win_set_buf(reuse_output, output_buf)
+    inst.output_winid = reuse_output
+    inst.output:set_window(reuse_output)
+
+    vim.api.nvim_set_current_win(reuse_prompt)
+    vim.api.nvim_win_set_height(reuse_prompt, Config.options.prompt_height)
+  else
+    -- Prompt is the primary buffer — it fills current window.
+    vim.api.nvim_set_current_buf(prompt_buf)
+    inst.prompt_winid = vim.api.nvim_get_current_win()
+    inst.prompt:set_window(inst.prompt_winid)
+
+    -- Output opens above as a companion.
+    vim.cmd('aboveleft split')
+    vim.api.nvim_set_current_buf(output_buf)
+    inst.output_winid = vim.api.nvim_get_current_win()
+    inst.output:set_window(inst.output_winid)
+
+    -- Return focus to prompt and resize it.
+    vim.api.nvim_set_current_win(inst.prompt_winid)
+    vim.api.nvim_win_set_height(inst.prompt_winid, Config.options.prompt_height)
+  end
 
   setup_prompt_keymaps(inst)
   setup_output_keymaps(inst)
@@ -241,6 +262,31 @@ local function create_instance()
   vim.cmd('startinsert')
 
   return inst
+end
+
+--- Tear down an instance's process and buffer state, but leave its windows open
+--- so a replacement instance can swap its new buffers into the same layout.
+---@param inst cc.Instance
+local function teardown_instance_keep_windows(inst)
+  if inst.output then
+    inst.output:stop_spinner()
+  end
+  if inst.process then
+    inst.process:close()
+    inst.process = nil
+  end
+  if inst.prompt and inst.prompt.bufnr > 0 then
+    pcall(vim.api.nvim_del_augroup_by_name, 'cc.buffer_integration.' .. inst.prompt.bufnr)
+  end
+  if inst.prompt and inst.prompt.bufnr > 0 then
+    if vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
+      vim.bo[inst.prompt.bufnr].buflisted = false
+    end
+    instances[inst.prompt.bufnr] = nil
+  end
+  if inst.output and inst.output.bufnr and vim.api.nvim_buf_is_valid(inst.output.bufnr) then
+    vim.bo[inst.output.bufnr].buflisted = false
+  end
 end
 
 --- Tear down an instance: kill process, close windows, unlist buffer, remove from table.
@@ -337,6 +383,61 @@ end
 --- Public: open in plan mode.
 function M.plan()
   M.open({ permission_mode = 'plan' })
+end
+
+--- Public: start a fresh session inside the current windows.
+--- Equivalent to :CcClose + :CcOpen but preserves the existing window layout.
+function M.new_session()
+  local inst = get_current_instance()
+  if not inst then
+    M.open()
+    return
+  end
+
+  local prompt_winid = inst.prompt_winid
+  local output_winid = inst.output_winid
+
+  teardown_instance_keep_windows(inst)
+
+  local new_inst = create_instance({
+    reuse_prompt_winid = prompt_winid,
+    reuse_output_winid = output_winid,
+  })
+
+  new_inst.router = Router.new({
+    session = new_inst.session,
+    output = new_inst.output,
+    on_session_id = function(id) new_inst.last_session_id = id end,
+  })
+
+  new_inst.process = Process.new({
+    claude_cmd = Config.options.claude_cmd,
+    cwd = vim.fn.getcwd(),
+    session_id = nil,
+    permission_mode = Config.options.permission_mode,
+    model = Config.options.model,
+    extra_args = Config.options.extra_args,
+    on_message = function(msg) new_inst.router:dispatch(msg) end,
+    on_stderr = function(data)
+      vim.notify('cc.nvim [stderr]: ' .. data, vim.log.levels.WARN)
+    end,
+    on_exit = function(code)
+      if code ~= 0 then
+        vim.notify('cc.nvim: claude exited with code ' .. code, vim.log.levels.WARN)
+      end
+      if new_inst.output then
+        new_inst.output:render_notice('Session ended')
+      end
+    end,
+  })
+
+  new_inst.router:set_process(new_inst.process)
+
+  local ok, err = pcall(function() new_inst.process:spawn() end)
+  if not ok then
+    vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.ERROR)
+    new_inst.process = nil
+  end
 end
 
 --- Public: resume a specific session by id.

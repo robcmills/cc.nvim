@@ -14,6 +14,9 @@ function M.create()
   vim.api.nvim_create_user_command('CcToggle', function() cc.toggle() end,
     { desc = 'Toggle cc.nvim' })
 
+  vim.api.nvim_create_user_command('CcNew', function() cc.new_session() end,
+    { desc = 'Start a new cc.nvim session in the current windows' })
+
   vim.api.nvim_create_user_command('CcSend', function() cc.submit() end,
     { desc = 'Submit prompt to Claude' })
 
