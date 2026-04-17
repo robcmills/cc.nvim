@@ -162,6 +162,21 @@ local function setup_buffer_autocmds(inst)
         inst.output:set_window(inst.output_winid)
         vim.api.nvim_set_current_win(prompt_win)
         vim.api.nvim_win_set_height(prompt_win, Config.options.prompt_height)
+        -- New windows on an existing buffer start with cursor at line 1,
+        -- which would show the top of a long transcript. Anchor to the
+        -- last line so returning to the session shows the most recent
+        -- output. Schedule so the fix runs after layout settles (split
+        -- + resize + BufWinEnter autocmds all complete first).
+        local output_winid = inst.output_winid
+        vim.schedule(function()
+          if not output_winid or not vim.api.nvim_win_is_valid(output_winid) then return end
+          if vim.api.nvim_win_get_buf(output_winid) ~= output_bufnr then return end
+          pcall(vim.api.nvim_win_call, output_winid, function()
+            local last = vim.api.nvim_buf_line_count(output_bufnr)
+            vim.api.nvim_win_set_cursor(output_winid, { last, 0 })
+            vim.cmd('normal! zb')
+          end)
+        end)
       end)
     end,
   })
