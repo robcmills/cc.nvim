@@ -108,6 +108,18 @@ function Output:_setup_window_opts_for_buffer()
       vim.wo[winid].foldenable = true
       vim.wo[winid].foldtext = "v:lua.require'cc.output'.foldtext()"
       vim.wo[winid].fillchars = 'fold: '
+      -- If the cursor is at the last line, re-anchor the view so topline
+      -- is computed correctly now that the window is focused and folds
+      -- are about to be evaluated. Without this, pre-render done from an
+      -- unfocused window (e.g. :CcResume) can leave the last line at the
+      -- top of the viewport after the user focuses the window. Run
+      -- synchronously so the fix lands before the first redraw and the
+      -- user does not see a flicker of the wrong state.
+      local cursor_row = vim.api.nvim_win_get_cursor(winid)[1]
+      local line_count = vim.api.nvim_buf_line_count(bufnr)
+      if cursor_row >= line_count then
+        pcall(vim.cmd, 'normal! Gzb')
+      end
       vim.schedule(function()
         M.refresh_carets(bufnr)
       end)
@@ -327,6 +339,7 @@ end
 ---@param is_header boolean? whether the FIRST line is a fold header (gets caret)
 ---@return integer first_line_num 1-indexed line of the first new line
 function Output:_append(lines, fold_levels, is_header)
+  local was_following = self:_is_following_tail()
   local bufnr = self:ensure_buffer()
   local state = M._buf_state[bufnr]
   local line_count = vim.api.nvim_buf_line_count(bufnr)
@@ -378,7 +391,9 @@ function Output:_append(lines, fold_levels, is_header)
     state.fold_headers[first_lnum] = true
   end
 
-  self:_scroll_to_end()
+  if was_following then
+    self:_follow_tail()
+  end
   -- Defer caret refresh so the fold engine has evaluated the new lines.
   vim.schedule(function() M.refresh_carets(bufnr) end)
   return first_lnum
@@ -388,6 +403,7 @@ end
 --- embedded \n inherit fold level from the current last line.
 ---@param text string
 function Output:_append_to_last_line(text)
+  local was_following = self:_is_following_tail()
   local bufnr = self:ensure_buffer()
   local state = M._buf_state[bufnr]
   vim.bo[bufnr].modifiable = true
@@ -412,14 +428,41 @@ function Output:_append_to_last_line(text)
     end
   end
   vim.bo[bufnr].modifiable = false
-  self:_scroll_to_end()
+  if was_following then
+    self:_follow_tail()
+  end
 end
 
-function Output:_scroll_to_end()
-  if self.winid and vim.api.nvim_win_is_valid(self.winid) then
-    local line_count = vim.api.nvim_buf_line_count(self.bufnr)
-    pcall(vim.api.nvim_win_set_cursor, self.winid, { line_count, 0 })
+--- Returns true if the user is "following the tail" — i.e. the output
+--- window is showing this buffer and its cursor is on the last line.
+--- Returns true if no window currently shows the buffer (so background
+--- streaming defaults to follow-mode until a window appears).
+function Output:_is_following_tail()
+  if not self.winid or not vim.api.nvim_win_is_valid(self.winid) then
+    return true
   end
+  if vim.api.nvim_win_get_buf(self.winid) ~= self.bufnr then
+    return true
+  end
+  local cursor_row = vim.api.nvim_win_get_cursor(self.winid)[1]
+  local line_count = vim.api.nvim_buf_line_count(self.bufnr)
+  return cursor_row >= line_count
+end
+
+--- Advance cursor to the new last line and keep it in view. Uses
+--- nvim_win_call so topline calc and fold handling run in the target
+--- window's own context (works correctly even when the output window
+--- is not currently focused).
+function Output:_follow_tail()
+  if not self.winid or not vim.api.nvim_win_is_valid(self.winid) then
+    return
+  end
+  if vim.api.nvim_win_get_buf(self.winid) ~= self.bufnr then
+    return
+  end
+  pcall(vim.api.nvim_win_call, self.winid, function()
+    vim.cmd('normal! G')
+  end)
 end
 
 --- Render a user turn header + content.
