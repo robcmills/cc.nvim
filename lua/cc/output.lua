@@ -34,7 +34,7 @@ M._buf_state = {}
 
 ---@class cc.OutputToolBlock
 ---@field bufnr integer
----@field header_lnum integer 1-indexed line number of "▾ Tool: X" line
+---@field header_lnum integer 1-indexed line number of the tool header (e.g. "  ▤ Read: /path")
 ---@field result_header_lnum integer? line where "▾ Output:" was inserted
 ---@field input_rendered boolean
 
@@ -177,9 +177,11 @@ local function build_fold_info(bufnr, foldstart, foldend)
     role = 'user'
   elseif header:match('^%s*Agent:') then
     role = 'agent'
-  elseif header:match('^%s*Tool:') then
-    role = 'tool'
   elseif header:match('^%s*Output:') or header:match('^%s*Error:') then
+    role = 'result'
+  elseif state and state.fold_levels and state.fold_levels[foldstart] == '>2' then
+    role = 'tool'
+  elseif state and state.fold_levels and state.fold_levels[foldstart] == '>3' then
     role = 'result'
   end
 
@@ -625,7 +627,8 @@ function Output:on_content_block_start(block)
       self.streaming_block_type = 'thinking_hidden'
     end
   elseif block.type == 'tool_use' then
-    local header_text = '  Tool: ' .. (block.name or '?')
+    local icon = require('cc.icons').for_tool(block.name or '')
+    local header_text = '  ' .. icon .. ' ' .. (block.name or '?') .. ':'
     local header_lnum = self:_append({ header_text }, { '>2' }, true)
     self.streaming_block_type = 'tool_use'
     self.streaming_tool_id = block.id
@@ -658,7 +661,7 @@ function Output:on_content_block_stop(block)
     -- Append a compact one-liner as tool summary extension
     local summary = M.summarize_tool_input(block.name, block.input)
     if summary and summary ~= '' then
-      -- Update the header line to include the summary: "Tool: Bash — git status"
+      -- Update header to append summary: "  ▶ Bash: git status"
       self:_update_tool_header_summary(meta and meta.header_lnum or nil, block.name, summary)
     end
     -- Render the full input at fold level 2 (multi-line if needed)
@@ -680,7 +683,8 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary)
   local bufnr = self.bufnr
   if lnum > vim.api.nvim_buf_line_count(bufnr) then return end
   vim.bo[bufnr].modifiable = true
-  local new_text = '  Tool: ' .. tool_name .. ' — ' .. summary
+  local icon = require('cc.icons').for_tool(tool_name)
+  local new_text = '  ' .. icon .. ' ' .. tool_name .. ': ' .. summary
   vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_text })
   vim.bo[bufnr].modifiable = false
 end

@@ -100,7 +100,7 @@ T['tool_bash'] = MiniTest.new_set()
 
 T['tool_bash']['renders tool header'] = function()
   helpers.replay_streaming(_G.child, 'tool_bash')
-  assert_any_line_matches(_G.child, 'Tool:.*Bash')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Bash:')
 end
 
 T['tool_bash']['renders tool summary with command'] = function()
@@ -168,7 +168,7 @@ end
 
 T['hook_events']['renders tool and result alongside hooks'] = function()
   helpers.replay_streaming(_G.child, 'hook_events')
-  assert_any_line_matches(_G.child, 'Tool:.*Edit')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Edit:')
   assert_buffer_contains(_G.child, 'Edit applied')
 end
 
@@ -189,7 +189,7 @@ end
 
 T['subagent_tasks']['renders Agent tool'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
-  assert_any_line_matches(_G.child, 'Tool:.*Agent')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Agent:')
 end
 
 T['subagent_tasks']['renders surrounding text blocks'] = function()
@@ -269,12 +269,12 @@ end
 
 T['multi_block']['renders Read tool'] = function()
   helpers.replay_streaming(_G.child, 'multi_block')
-  assert_any_line_matches(_G.child, 'Tool:.*Read')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Read:')
 end
 
 T['multi_block']['renders Bash tool'] = function()
   helpers.replay_streaming(_G.child, 'multi_block')
-  assert_any_line_matches(_G.child, 'Tool:.*Bash')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Bash:')
 end
 
 T['multi_block']['renders tool results'] = function()
@@ -336,7 +336,7 @@ end
 
 T['plan_mode']['renders EnterPlanMode tool'] = function()
   helpers.replay_streaming(_G.child, 'plan_mode')
-  assert_any_line_matches(_G.child, 'Tool:.*EnterPlanMode')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+EnterPlanMode:')
 end
 
 -- ---------------------------------------------------------------------------

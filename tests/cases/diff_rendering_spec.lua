@@ -54,7 +54,7 @@ T['write_diff']['has tool summary'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found = false
   for _, line in ipairs(lines) do
-    if line:match('Tool:.*Write') then found = true; break end
+    if line:match('^%s+%S+%s+Write:') then found = true; break end
   end
   eq(found, true)
 end

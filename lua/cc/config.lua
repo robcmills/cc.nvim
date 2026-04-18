@@ -18,11 +18,16 @@ local defaults = {
   foldtext = nil, -- function(info)->string or nil for default; see output.default_foldtext
 
   -- History / resume
-  history_max_records = 200, -- cap records rendered on resume; older collapsed into a notice
+  history_max_records = 500, -- cap records rendered on resume; older collapsed into a notice
 
   -- Display
   show_thinking = false,
   show_cost = true,
+  tool_icons = {
+    use_nerdfont = nil, -- nil = auto-detect (nvim-web-devicons / mini.icons); true/false to force
+    default = nil, -- icon for unknown tools; nil uses built-in fallback
+    icons = {}, -- per-tool override map, e.g. { Read = '📖', Bash = '$' }
+  },
   line_numbers = {
     output = false, -- show line numbers in the output window
     prompt = false, -- show line numbers in the prompt window

@@ -115,7 +115,7 @@ end
 
 T['pipeline']['tool_bash renders tool and result'] = function()
   spawn_with_fixture(_G.child, 'tool_bash')
-  assert_any_line_matches(_G.child, 'Tool:.*Bash')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Bash:')
   assert_buffer_contains(_G.child, 'file1%.txt')
 end
 
@@ -129,8 +129,8 @@ end
 
 T['pipeline']['multi_block renders multiple tools and text'] = function()
   spawn_with_fixture(_G.child, 'multi_block')
-  assert_any_line_matches(_G.child, 'Tool:.*Read')
-  assert_any_line_matches(_G.child, 'Tool:.*Bash')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Read:')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Bash:')
   assert_buffer_contains(_G.child, 'All done')
 end
 

@@ -21,8 +21,8 @@
 - [ ] Fix broken highlight groups
 - [ ] Support "queued" prompts (submitted while agent is thinking or working)
 - [ ] Enable window config 
-  - [ ] hide line numbers by default
-  - [ ] wrap output by default
+  - [x] hide line numbers by default
+  - [x] wrap output by default
 - [ ] Add support for session naming
 - [x] Add config option to show/hide thinking
 - [x] Tighten up poor vertical spacing and multiple consecutive blank lines

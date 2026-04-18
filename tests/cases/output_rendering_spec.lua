@@ -70,7 +70,7 @@ T['tool_read'] = MiniTest.new_set()
 
 T['tool_read']['renders Read tool summary line'] = function()
   helpers.render_fixture(_G.child, 'tool_read')
-  assert_any_line_matches(_G.child, 'Tool:.*Read')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Read:')
 end
 
 T['tool_edit'] = MiniTest.new_set()
@@ -92,21 +92,21 @@ T['tool_bash'] = MiniTest.new_set()
 
 T['tool_bash']['renders Bash tool summary'] = function()
   helpers.render_fixture(_G.child, 'tool_bash')
-  assert_any_line_matches(_G.child, 'Tool:.*Bash')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Bash:')
 end
 
 T['tool_grep'] = MiniTest.new_set()
 
 T['tool_grep']['renders Grep tool summary'] = function()
   helpers.render_fixture(_G.child, 'tool_grep')
-  assert_any_line_matches(_G.child, 'Tool:.*Grep')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Grep:')
 end
 
 T['tool_write'] = MiniTest.new_set()
 
 T['tool_write']['renders Write tool summary'] = function()
   helpers.render_fixture(_G.child, 'tool_write')
-  assert_any_line_matches(_G.child, 'Tool:.*Write')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Write:')
 end
 
 -- ---------------------------------------------------------------------------
@@ -117,7 +117,8 @@ T['multi_turn'] = MiniTest.new_set()
 T['multi_turn']['renders multiple turns with tools'] = function()
   helpers.render_fixture(_G.child, 'multi_turn')
   assert_any_line_matches(_G.child, 'Agent:')
-  assert_any_line_matches(_G.child, 'Tool:')
+  -- Any tool header: indent + icon + space + Name:
+  assert_any_line_matches(_G.child, '^%s+%S+%s+%u%w*:')
 end
 
 -- ---------------------------------------------------------------------------

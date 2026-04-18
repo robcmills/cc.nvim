@@ -43,8 +43,11 @@ function M.apply_buffer_syntax(bufnr)
     vim.cmd([[syntax match CcUser    /^User:.*$/]])
     vim.cmd([[syntax match CcAgent   /^Agent:.*$/]])
 
-    -- Tool: header
-    vim.cmd([[syntax match CcTool    /^\s\+Tool:.*$/]])
+    -- Tool header: "  <icon> <ToolName>: ..." — icon is one or more non-space
+    -- glyphs, then a name starting with uppercase or the "mcp__" prefix,
+    -- followed immediately by ":". Hook / Permission rules below override
+    -- for lines that also match their own patterns.
+    vim.cmd([[syntax match CcTool    /^\s\+\S\+\s\+\%(\u\w*\|mcp__\w\+\):.*$/]])
 
     -- Output: or Error: sub-headers under tools
     vim.cmd([[syntax match CcOutput  /^\s\+Output:\s*$/]])

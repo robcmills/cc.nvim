@@ -88,7 +88,7 @@ end
 
 T['render_historical']['renders tool_use blocks'] = function()
   helpers.render_fixture(_G.child, 'tool_bash')
-  assert_any_line_matches(_G.child, 'Tool:.*Bash')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Bash:')
 end
 
 T['render_historical']['renders tool_result blocks'] = function()

@@ -40,15 +40,17 @@ end
 --- Returns the output buffer number.
 ---@param child table mini.test child
 ---@param fixture_name string
+---@param opts table? optional cc.config overrides (e.g. { tool_icons = {...} })
 ---@return integer bufnr
-function M.render_fixture(child, fixture_name)
+function M.render_fixture(child, fixture_name, opts)
   local fixture_path = M.fixtures_dir .. '/' .. fixture_name .. '.jsonl'
+  local opts_str = vim.inspect(opts or {})
   child.lua(string.format([==[
     local history = require('cc.history')
     local Output = require('cc.output')
     local Session = require('cc.session')
     local config = require('cc.config')
-    config.setup({})
+    config.setup(%s)
 
     -- Create a session (required by Output.new)
     local session = Session.new()
@@ -69,7 +71,7 @@ function M.render_fixture(child, fixture_name)
     -- Store references for assertions
     _G._test_bufnr = bufnr
     _G._test_output = output
-  ]==], fixture_path))
+  ]==], opts_str, fixture_path))
   return child.lua_get('_G._test_bufnr')
 end
 

@@ -52,17 +52,17 @@ T['highlight_groups']['CcAgent on Agent: line'] = function()
   error('No Agent: line found')
 end
 
-T['highlight_groups']['CcTool on Tool: line'] = function()
+T['highlight_groups']['CcTool on tool header line'] = function()
   helpers.render_fixture(_G.child, 'tool_read')
   local lines = helpers.get_buffer_lines(_G.child)
   for i, line in ipairs(lines) do
-    if line:match('Tool:') then
-      local col = line:find('Tool')
+    local col = line:find('Read:')
+    if col and line:match('^%s+%S+%s+Read:') then
       assert_hl_in_stack(_G.child, i, col, 'CcTool')
       return
     end
   end
-  error('No Tool: line found')
+  error('No Read tool header found')
 end
 
 T['highlight_groups']['CcOutput on Output: line'] = function()

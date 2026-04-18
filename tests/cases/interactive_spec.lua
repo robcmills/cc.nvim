@@ -21,7 +21,7 @@ T['ask_user_question']['renders tool summary'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found = false
   for _, line in ipairs(lines) do
-    if line:match('Tool:.*AskUserQuestion') then found = true; break end
+    if line:match('^%s+%S+%s+AskUserQuestion:') then found = true; break end
   end
   eq(found, true)
 end
@@ -36,7 +36,7 @@ T['plan_mode']['ExitPlanMode renders tool summary'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found = false
   for _, line in ipairs(lines) do
-    if line:match('Tool:.*ExitPlanMode') then found = true; break end
+    if line:match('^%s+%S+%s+ExitPlanMode:') then found = true; break end
   end
   eq(found, true)
 end
@@ -46,7 +46,7 @@ T['plan_mode']['EnterPlanMode renders tool summary'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found = false
   for _, line in ipairs(lines) do
-    if line:match('Tool:.*EnterPlanMode') then found = true; break end
+    if line:match('^%s+%S+%s+EnterPlanMode:') then found = true; break end
   end
   eq(found, true)
 end
@@ -61,7 +61,7 @@ T['subagent']['Agent tool renders summary'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found = false
   for _, line in ipairs(lines) do
-    if line:match('Tool:.*Agent') then found = true; break end
+    if line:match('^%s+%S+%s+Agent:') then found = true; break end
   end
   eq(found, true)
 end
@@ -76,7 +76,7 @@ T['mcp_tools']['chrome tool renders summary'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found = false
   for _, line in ipairs(lines) do
-    if line:match('Tool:.*mcp__claude%-in%-chrome') then found = true; break end
+    if line:match('^%s+%S+%s+mcp__claude%-in%-chrome') then found = true; break end
   end
   eq(found, true)
 end
@@ -86,7 +86,7 @@ T['mcp_tools']['atlassian tool renders summary'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found = false
   for _, line in ipairs(lines) do
-    if line:match('Tool:.*mcp__claude_ai_Atlassian') then found = true; break end
+    if line:match('^%s+%S+%s+mcp__claude_ai_Atlassian') then found = true; break end
   end
   eq(found, true)
 end
@@ -96,7 +96,7 @@ T['mcp_tools']['slack tool renders summary'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found = false
   for _, line in ipairs(lines) do
-    if line:match('Tool:.*mcp__claude_ai_Slack') then found = true; break end
+    if line:match('^%s+%S+%s+mcp__claude_ai_Slack') then found = true; break end
   end
   eq(found, true)
 end
@@ -111,7 +111,7 @@ T['skill']['Skill tool renders summary'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found = false
   for _, line in ipairs(lines) do
-    if line:match('Tool:.*Skill') then found = true; break end
+    if line:match('^%s+%S+%s+Skill:') then found = true; break end
   end
   eq(found, true)
 end
@@ -126,7 +126,7 @@ T['websearch']['WebSearch tool renders summary'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found = false
   for _, line in ipairs(lines) do
-    if line:match('Tool:.*WebSearch') then found = true; break end
+    if line:match('^%s+%S+%s+WebSearch:') then found = true; break end
   end
   eq(found, true)
 end
