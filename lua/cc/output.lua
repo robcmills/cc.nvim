@@ -400,12 +400,75 @@ function Output:_append(lines, fold_levels, is_header)
   end
   vim.bo[bufnr].modifiable = false
 
+  -- Track new fold headers so we can close deep ones later. With
+  -- foldmethod=expr, once the user has manually opened any fold (zo), Vim
+  -- leaves subsequently-created folds in the open state even when foldlevel
+  -- says they should be closed. We can't close them immediately — a fresh
+  -- ">N" header on the last buffer line is a single-line fold that zc
+  -- skips over and closes the enclosing parent instead — so defer the
+  -- close until subsequent appends have given the fold real content.
+  for i = 1, #lines do
+    local lnum = first_lnum + i - 1
+    local fl = state.fold_levels[lnum]
+    if type(fl) == 'string' then
+      local depth = tonumber(fl:match('[>%<]?(%d+)'))
+      if depth and depth > 0 then
+        state.pending_fold_closes = state.pending_fold_closes or {}
+        table.insert(state.pending_fold_closes, { lnum = lnum, depth = depth })
+      end
+    end
+  end
+
   if was_following then
     self:_follow_tail()
   end
   -- Defer caret refresh so the fold engine has evaluated the new lines.
-  vim.schedule(function() M.refresh_carets(bufnr) end)
+  vim.schedule(function()
+    M._flush_pending_fold_closes(bufnr)
+    M.refresh_carets(bufnr)
+  end)
   return first_lnum
+end
+
+--- Close any deferred new fold headers whose depth exceeds foldlevel in
+--- each window showing this buffer. Only closes when the fold has grown
+--- past a single line (so zc targets it, not its parent) or when the
+--- header is known to be complete. Preserves the user's manually-opened
+--- folds (they pre-date this call and aren't in the pending list).
+---@param bufnr integer
+function M._flush_pending_fold_closes(bufnr)
+  local state = M._buf_state[bufnr]
+  if not state or not state.pending_fold_closes then return end
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  local remaining = {}
+  local ready = {}
+  for _, h in ipairs(state.pending_fold_closes) do
+    -- A fold is "ready to close" once at least one line past the header
+    -- exists in the buffer. Until then, the fold is a single line and zc
+    -- would climb to the parent and close it instead.
+    if h.lnum < line_count then
+      table.insert(ready, h)
+    else
+      table.insert(remaining, h)
+    end
+  end
+  state.pending_fold_closes = remaining
+  if #ready == 0 then return end
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(w) == bufnr then
+      local wfl = vim.wo[w].foldlevel
+      vim.api.nvim_win_call(w, function()
+        local view = vim.fn.winsaveview()
+        for _, h in ipairs(ready) do
+          if h.depth > wfl and vim.fn.foldclosed(h.lnum) == -1 then
+            vim.api.nvim_win_set_cursor(w, { h.lnum, 0 })
+            pcall(vim.cmd, 'silent! normal! zc')
+          end
+        end
+        vim.fn.winrestview(view)
+      end)
+    end
+  end
 end
 
 --- Append text to the last line (streaming deltas). New lines spawned by

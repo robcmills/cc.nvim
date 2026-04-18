@@ -171,4 +171,60 @@ T['win_enter']['re-entering window preserves user foldlevel'] = function()
   eq(_G.child.lua_get('_G._foldlevel_after'), 99)
 end
 
+T['manual_open'] = MiniTest.new_set()
+
+-- Regression: with foldmethod=expr, once the user has manually opened a fold
+-- (zo), Vim leaves subsequently-created folds open too. New tool calls
+-- appended after a user-opened fold must still be folded per foldlevel,
+-- and the user's manually-opened fold must stay open.
+T['manual_open']['new tool call is folded after user opens a prior fold'] = function()
+  _G.child.lua([[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    local config = require('cc.config')
+    config.setup({})
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-manual-open')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+    local winid = vim.api.nvim_get_current_win()
+    vim.api.nvim_exec_autocmds('BufWinEnter', { buffer = bufnr })
+
+    output:render_user_turn('hello')
+    output:begin_assistant_turn()
+    output:on_content_block_start({ type = 'tool_use', id = 't1', name = 'Read' })
+    output:on_content_block_stop({ type = 'tool_use', id = 't1', name = 'Read', input = { file_path = '/tmp/x' } })
+    output:render_tool_result('t1', 'line1\nline2', false)
+    vim.wait(50, function() return false end)
+
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    _G._t1_lnum = nil
+    for i, l in ipairs(lines) do
+      if l:match('Tool:.*Read') then _G._t1_lnum = i; break end
+    end
+    -- User manually opens Tool 1's fold.
+    vim.api.nvim_win_set_cursor(winid, { _G._t1_lnum, 0 })
+    vim.cmd('normal! zo')
+    _G._t1_open_after_zo = vim.fn.foldclosed(_G._t1_lnum) == -1
+
+    -- Now append a second tool.
+    output:on_content_block_start({ type = 'tool_use', id = 't2', name = 'Bash' })
+    output:on_content_block_stop({ type = 'tool_use', id = 't2', name = 'Bash', input = { command = 'ls' } })
+    output:render_tool_result('t2', 'a\nb\nc', false)
+    vim.wait(50, function() return false end)
+
+    lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    _G._t2_lnum = nil
+    for i, l in ipairs(lines) do
+      if l:match('Tool:.*Bash') then _G._t2_lnum = i; break end
+    end
+    _G._t2_closed = vim.fn.foldclosed(_G._t2_lnum) == _G._t2_lnum
+    -- Tool 1 must remain manually opened (not re-closed by our fix).
+    _G._t1_still_open = vim.fn.foldclosed(_G._t1_lnum) == -1
+  ]])
+  eq(_G.child.lua_get('_G._t1_open_after_zo'), true)
+  eq(_G.child.lua_get('_G._t2_closed'), true)
+  eq(_G.child.lua_get('_G._t1_still_open'), true)
+end
+
 return T

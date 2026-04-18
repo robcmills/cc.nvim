@@ -11,9 +11,9 @@
   + [x] --capture flag for run.sh (interactive NDJSON fixture capture)
   + [ ] CI (GitHub Actions)
 - [x] Autoscroll (fix vertical scroll/snapping issues)
-- [ ] Fix folding issues
+- [x] Fix folding issues
   output is too expanded by default, shows tool output, 
-  - [ ] when output is focused, it collapses. Folding should not change due to output being focused.
+  - [x] when output is focused, it collapses. Folding should not change due to output being focused.
 - [ ] Add per tool call statusline (Running... (32s timeout 2m))
 - [ ] support plan mode toggle
 - [ ] Autosize prompt window to fit content (with configurable min/max heights)
