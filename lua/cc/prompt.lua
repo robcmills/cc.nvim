@@ -35,6 +35,8 @@ function Prompt:ensure_buffer()
   -- Omnifunc fallback for users without nvim-cmp.
   vim.bo[self.bufnr].omnifunc = "v:lua.require'cc.prompt'.omnifunc"
 
+  self:_setup_window_opts_for_buffer()
+
   -- If nvim-cmp is available, override buffer-local sources so our slash
   -- source wins over the user's global `path` source (which would otherwise
   -- expand `/` to filesystem paths).
@@ -85,6 +87,26 @@ function M.omnifunc(findstart, base)
     end
   end
   return matches
+end
+
+--- Configure window-local options on windows showing this prompt buffer.
+function Prompt:_setup_window_opts_for_buffer()
+  local bufnr = self.bufnr
+  local group = vim.api.nvim_create_augroup('cc.prompt.win.' .. bufnr, { clear = true })
+  vim.api.nvim_create_autocmd({ 'BufWinEnter', 'WinEnter' }, {
+    group = group,
+    buffer = bufnr,
+    callback = function()
+      local winid = vim.api.nvim_get_current_win()
+      if vim.api.nvim_win_get_buf(winid) ~= bufnr then
+        return
+      end
+      local config = require('cc.config').options
+      vim.wo[winid].number = config.line_numbers and config.line_numbers.prompt or false
+      vim.wo[winid].relativenumber = false
+      vim.wo[winid].wrap = config.wrap == nil or config.wrap.prompt ~= false
+    end,
+  })
 end
 
 function Prompt:set_window(winid)

@@ -23,6 +23,14 @@ local defaults = {
   -- Display
   show_thinking = false,
   show_cost = true,
+  line_numbers = {
+    output = false, -- show line numbers in the output window
+    prompt = false, -- show line numbers in the prompt window
+  },
+  wrap = {
+    output = true, -- soft-wrap lines in the output window
+    prompt = true, -- soft-wrap lines in the prompt window
+  },
 
   -- Keymaps
   keymaps = {

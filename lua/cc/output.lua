@@ -107,6 +107,9 @@ function Output:_setup_window_opts_for_buffer()
       vim.wo[winid].foldenable = true
       vim.wo[winid].foldtext = "v:lua.require'cc.output'.foldtext()"
       vim.wo[winid].fillchars = 'fold: '
+      vim.wo[winid].number = config.line_numbers and config.line_numbers.output or false
+      vim.wo[winid].relativenumber = false
+      vim.wo[winid].wrap = config.wrap == nil or config.wrap.output ~= false
       -- foldlevel is user-adjustable (via :CcFold / zM / zR). Only seed it the
       -- first time this window shows the buffer so re-focusing doesn't undo
       -- the user's choice.
