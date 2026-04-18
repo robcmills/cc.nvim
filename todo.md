@@ -24,7 +24,7 @@
   - [ ] hide line numbers by default
   - [ ] wrap output by default
 - [ ] Add support for session naming
-- [ ] Add config option to show/hide thinking
+- [x] Add config option to show/hide thinking
 - [x] Tighten up poor vertical spacing and multiple consecutive blank lines
 - [x] Fix poor horizontal spacing and indentation (gaps after carets) (2 spaces not 4)
 - [ ] Add unique "icons" for each entry and tool type (with nerdfont support) (configurable)

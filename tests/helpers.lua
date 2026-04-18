@@ -224,16 +224,18 @@ end
 --- without spawning a subprocess. Tests the full streaming code path.
 ---@param child table mini.test child
 ---@param fixture_name string e.g. 'simple_text' (without .ndjson)
+---@param opts table? optional cc.config overrides (e.g. { show_thinking = true })
 ---@return integer bufnr
-function M.replay_streaming(child, fixture_name)
+function M.replay_streaming(child, fixture_name, opts)
   local fixture_path = M.ndjson_fixtures_dir .. '/' .. fixture_name .. '.ndjson'
+  local opts_str = vim.inspect(opts or {})
   child.lua(string.format([==[
     local Parser = require('cc.parser')
     local Router = require('cc.router')
     local Output = require('cc.output')
     local Session = require('cc.session')
     local config = require('cc.config')
-    config.setup({})
+    config.setup(%s)
 
     local session = Session.new()
     local output = Output.new(session, 'cc-test-output')
@@ -261,7 +263,7 @@ function M.replay_streaming(child, fixture_name)
     _G._test_output = output
     _G._test_session = session
     _G._test_router = router
-  ]==], fixture_path))
+  ]==], opts_str, fixture_path))
   return child.lua_get('_G._test_bufnr')
 end
 

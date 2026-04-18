@@ -552,8 +552,12 @@ function Output:on_content_block_start(block)
     self:_append({ '  ' }, { 1 }, false)
     self.streaming_block_type = 'text'
   elseif block.type == 'thinking' then
-    self:_append({ '  ∴ thinking:' }, { 1 }, false)
-    self.streaming_block_type = 'thinking'
+    if require('cc.config').options.show_thinking then
+      self:_append({ '  ∴ thinking:' }, { 1 }, false)
+      self.streaming_block_type = 'thinking'
+    else
+      self.streaming_block_type = 'thinking_hidden'
+    end
   elseif block.type == 'tool_use' then
     local header_text = '  Tool: ' .. (block.name or '?')
     local header_lnum = self:_append({ header_text }, { '>2' }, true)
