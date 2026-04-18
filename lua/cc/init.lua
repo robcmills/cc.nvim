@@ -261,6 +261,30 @@ local function create_instance(opts)
   -- Start in insert mode in prompt buffer for immediate typing.
   vim.cmd('startinsert')
 
+  -- When opening a new instance while the user was focused in a prior
+  -- instance's prompt window, that prompt's BufWinLeave autocmd schedules
+  -- closing the old output window. With equalalways on (default), that
+  -- close redistributes space and clobbers our prompt_height, and can
+  -- leave the new output window's topline in a state where the last
+  -- line shows at the top. Schedule a fixup that runs AFTER the pending
+  -- close so our layout wins.
+  local prompt_winid = inst.prompt_winid
+  local output_winid = inst.output_winid
+  local output_bufnr = inst.output.bufnr
+  vim.schedule(function()
+    if prompt_winid and vim.api.nvim_win_is_valid(prompt_winid) then
+      pcall(vim.api.nvim_win_set_height, prompt_winid, Config.options.prompt_height)
+    end
+    if output_winid and vim.api.nvim_win_is_valid(output_winid)
+        and vim.api.nvim_win_get_buf(output_winid) == output_bufnr then
+      pcall(vim.api.nvim_win_call, output_winid, function()
+        local last = vim.api.nvim_buf_line_count(output_bufnr)
+        pcall(vim.api.nvim_win_set_cursor, output_winid, { last, 0 })
+        pcall(vim.cmd, 'normal! zb')
+      end)
+    end
+  end)
+
   return inst
 end
 

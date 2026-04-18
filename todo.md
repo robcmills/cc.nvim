@@ -29,6 +29,7 @@
 - [x] Fix poor horizontal spacing and indentation (gaps after carets) (2 spaces not 4)
 - [ ] Add unique "icons" for each entry and tool type (with nerdfont support) (configurable)
 - [ ] Add configurable themes support for customizing highlight groups, icons, etc.
+- [ ] Customize git commit tool calls to show commit message
 - [ ] Make resume history picker window larger
 - [ ] Add support for todo lists (requires brainstorming)
 - [x] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
