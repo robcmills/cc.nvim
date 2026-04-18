@@ -526,6 +526,13 @@ function Output:_is_following_tail()
   return cursor_row >= line_count
 end
 
+--- Public: force-activate tail mode by moving the cursor to the last
+--- line of the output window. Callers use this to guarantee subsequent
+--- appends follow the tail even if the user had scrolled up.
+function Output:follow_tail()
+  self:_follow_tail()
+end
+
 --- Advance cursor to the new last line and keep it in view. Uses
 --- nvim_win_call so topline calc and fold handling run in the target
 --- window's own context (works correctly even when the output window

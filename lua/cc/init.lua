@@ -613,6 +613,7 @@ function M.submit()
   local text = inst.prompt:read()
   inst.prompt:clear()
 
+  inst.output:follow_tail()
   inst.session:add_user_turn(text)
   inst.output:render_user_turn(text)
 
