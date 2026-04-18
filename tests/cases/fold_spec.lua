@@ -108,4 +108,67 @@ T['fold_levels']['edit diff lines get level 2'] = function()
   error('No @@ hunk header found in edit diff')
 end
 
+T['applied_folds'] = MiniTest.new_set()
+
+-- Regression: Vim evaluates foldexpr synchronously during nvim_buf_set_lines.
+-- If state.fold_levels isn't populated first, foldexpr returns 0 and the
+-- stale value sticks, so tool-result content stays visible at default
+-- foldlevel=1. Verify Vim's live fold computation matches state.fold_levels.
+T['applied_folds']['tool result content is inside closed fold at default level'] = function()
+  helpers.render_fixture(_G.child, 'tool_read')
+  _G.child.lua([[
+    local bufnr = _G._test_bufnr
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local winid
+    for _, w in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_buf(w) == bufnr then winid = w; break end
+    end
+    _G._tool_start, _G._output_start, _G._content_lnum = nil, nil, nil
+    for i, l in ipairs(lines) do
+      if not _G._tool_start and l:match('Tool:.*Read') then _G._tool_start = i end
+      if not _G._output_start and l:match('Output:') then _G._output_start = i end
+      if _G._output_start and not _G._content_lnum and i > _G._output_start and l:match('%S') then
+        _G._content_lnum = i
+      end
+    end
+    vim.api.nvim_win_call(winid, function()
+      _G._fc_output = vim.fn.foldclosed(_G._output_start)
+      _G._fc_content = vim.fn.foldclosed(_G._content_lnum)
+      _G._flv_content = vim.fn.foldlevel(_G._content_lnum)
+    end)
+  ]])
+  local tool_start = _G.child.lua_get('_G._tool_start')
+  -- At default foldlevel=1, the level-2 fold at Tool: should be closed and
+  -- must contain both the Output: subheader and its content lines.
+  eq(_G.child.lua_get('_G._fc_output'), tool_start)
+  eq(_G.child.lua_get('_G._fc_content'), tool_start)
+  eq(_G.child.lua_get('_G._flv_content'), 3)
+end
+
+T['win_enter'] = MiniTest.new_set()
+
+-- Regression: re-entering the output window must not reset the user's
+-- foldlevel back to default_fold_level.
+T['win_enter']['re-entering window preserves user foldlevel'] = function()
+  helpers.render_fixture(_G.child, 'tool_read')
+  _G.child.lua([[
+    local bufnr = _G._test_bufnr
+    local winid
+    for _, w in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_buf(w) == bufnr then winid = w; break end
+    end
+    -- User expands everything.
+    vim.wo[winid].foldlevel = 99
+    -- Split to another window and come back (fires WinEnter on return).
+    vim.cmd('vsplit')
+    local other = vim.api.nvim_get_current_win()
+    vim.api.nvim_set_current_win(winid)
+    -- Trigger WinEnter explicitly to cover headless evaluation.
+    vim.api.nvim_exec_autocmds('WinEnter', { buffer = bufnr })
+    _G._foldlevel_after = vim.wo[winid].foldlevel
+    vim.api.nvim_win_close(other, true)
+  ]])
+  eq(_G.child.lua_get('_G._foldlevel_after'), 99)
+end
+
 return T

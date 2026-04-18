@@ -104,10 +104,16 @@ function Output:_setup_window_opts_for_buffer()
       end
       vim.wo[winid].foldmethod = 'expr'
       vim.wo[winid].foldexpr = "v:lua.require'cc.output'.foldexpr(v:lnum)"
-      vim.wo[winid].foldlevel = config.default_fold_level
       vim.wo[winid].foldenable = true
       vim.wo[winid].foldtext = "v:lua.require'cc.output'.foldtext()"
       vim.wo[winid].fillchars = 'fold: '
+      -- foldlevel is user-adjustable (via :CcFold / zM / zR). Only seed it the
+      -- first time this window shows the buffer so re-focusing doesn't undo
+      -- the user's choice.
+      if not vim.w[winid].cc_output_fold_initialized then
+        vim.wo[winid].foldlevel = config.default_fold_level
+        vim.w[winid].cc_output_fold_initialized = true
+      end
       -- If the cursor is at the last line, re-anchor the view so topline
       -- is computed correctly now that the window is focused and folds
       -- are about to be evaluated. Without this, pre-render done from an
@@ -364,32 +370,32 @@ function Output:_append(lines, fold_levels, is_header)
     return line_count
   end
 
-  vim.bo[bufnr].modifiable = true
-  local first_lnum
-  if replace_empty then
-    first_lnum = 1
-    vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, lines)
-  else
-    first_lnum = line_count + 1
-    vim.api.nvim_buf_set_lines(bufnr, line_count, line_count, false, lines)
-  end
-  vim.bo[bufnr].modifiable = false
+  local first_lnum = replace_empty and 1 or (line_count + 1)
 
-  -- Record fold levels.
+  -- Record fold levels BEFORE inserting lines. Vim evaluates foldexpr
+  -- synchronously during nvim_buf_set_lines; if state.fold_levels isn't
+  -- populated yet, foldexpr returns 0 and the cached result sticks, leaving
+  -- nested content (tool results, etc.) unfolded at default_fold_level.
   for i, _ in ipairs(lines) do
     local lnum = first_lnum + i - 1
     local fl = fold_levels and fold_levels[i]
     if fl ~= nil then
       state.fold_levels[lnum] = fl
     else
-      -- inherit from previous line
       state.fold_levels[lnum] = state.fold_levels[lnum - 1] or 0
     end
   end
-
   if is_header then
     state.fold_headers[first_lnum] = true
   end
+
+  vim.bo[bufnr].modifiable = true
+  if replace_empty then
+    vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, lines)
+  else
+    vim.api.nvim_buf_set_lines(bufnr, line_count, line_count, false, lines)
+  end
+  vim.bo[bufnr].modifiable = false
 
   if was_following then
     self:_follow_tail()
@@ -420,12 +426,12 @@ function Output:_append_to_last_line(text)
     for i = 2, #chunks do
       table.insert(new_lines, indent .. chunks[i])
     end
-    vim.api.nvim_buf_set_lines(bufnr, last_row, last_row + 1, false, new_lines)
-    -- Inherit fold level for any newly added lines.
+    -- Record fold levels before set_lines so foldexpr sees them.
     local inherit = state.fold_levels[last_row + 1] or 0
     for i = 2, #chunks do
       state.fold_levels[last_row + i] = inherit
     end
+    vim.api.nvim_buf_set_lines(bufnr, last_row, last_row + 1, false, new_lines)
   end
   vim.bo[bufnr].modifiable = false
   if was_following then
