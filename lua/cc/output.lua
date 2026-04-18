@@ -301,10 +301,10 @@ function M.refresh_carets(bufnr)
     local line_count = vim.api.nvim_buf_line_count(bufnr)
     for lnum, _ in pairs(state.fold_headers) do
       if lnum <= line_count then
-        -- Determine fold state from our recorded fold-expr value so we don't
-        -- depend on Vim's lazy fold evaluation (which can lag in headless mode
-        -- and right after buffer edits). foldclosed() remains authoritative
-        -- only for user-manual fold toggles, which we check as an override.
+        -- Prefer foldclosed() once the fold engine has evaluated this line
+        -- (authoritative in both directions, so user zo/zc is respected).
+        -- Fall back to the recorded fold-expr value when the engine hasn't
+        -- run yet (headless mode, right after buffer edits).
         local raw = state.fold_levels[lnum]
         local my_level = 0
         if type(raw) == 'string' then
@@ -312,20 +312,23 @@ function M.refresh_carets(bufnr)
         elseif type(raw) == 'number' then
           my_level = raw
         end
-        local is_folded = my_level > 0 and my_level > wfl
-        local fc = vim.fn.foldclosed(lnum)
-        if fc == lnum then
-          is_folded = true
-        elseif fc ~= -1 and fc < lnum then
-          -- this line is hidden inside a closed outer fold
-          is_folded = true
+        local effective_level = vim.fn.foldlevel(lnum)
+        local is_folded
+        if effective_level == 0 and my_level > 0 then
+          is_folded = my_level > wfl
+        else
+          is_folded = vim.fn.foldclosed(lnum) ~= -1
         end
         local char = is_folded and CARET_FOLDED or CARET_OPEN
         local old_id = state.extmark_ids[lnum]
         if old_id then
           pcall(vim.api.nvim_buf_del_extmark, bufnr, NS_CARETS, old_id)
         end
-        local ok, id = pcall(vim.api.nvim_buf_set_extmark, bufnr, NS_CARETS, lnum - 1, 0, {
+        -- Indent the inline caret to match the header's visual depth so the
+        -- expanded view aligns with the folded (foldtext) view. Depth 1
+        -- headers sit at col 0, depth 2 at col 2, depth 3 at col 4.
+        local caret_col = math.max(0, (my_level - 1) * 2)
+        local ok, id = pcall(vim.api.nvim_buf_set_extmark, bufnr, NS_CARETS, lnum - 1, caret_col, {
           virt_text = { { char .. ' ', 'CcCaret' } },
           virt_text_pos = 'inline',
         })

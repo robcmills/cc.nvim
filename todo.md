@@ -14,6 +14,7 @@
 - [x] Fix folding issues
   output is too expanded by default, shows tool output, 
   - [x] when output is focused, it collapses. Folding should not change due to output being focused.
+- [ ] Prompt submission should turn output tailing back on
 - [ ] Add per tool call statusline (Running... (32s timeout 2m))
 - [ ] support plan mode toggle
 - [ ] Autosize prompt window to fit content (with configurable min/max heights)
