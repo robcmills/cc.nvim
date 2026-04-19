@@ -13,7 +13,7 @@ local defaults = {
   prompt_height = 10, -- lines for prompt buffer (horizontal layout)
 
   -- Folding
-  default_fold_level = 1, -- 0=minimal, 1=summaries, 2=inputs, 3=all
+  default_fold_level = 2, -- 0=minimal, 1=summaries, 2=inputs, 3=all
   max_tool_result_lines = 50,
   foldtext = nil, -- function(info)->string or nil for default; see output.default_foldtext
 

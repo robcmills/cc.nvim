@@ -16,7 +16,8 @@
   - [x] when output is focused, it collapses. Folding should not change due to output being focused.
 - [x] Prompt submission should turn output tailing back on
 - [ ] Add per tool call statusline (Running... (32s timeout 2m))
-- [ ] support plan mode toggle
+- [ ] Add support plan mode toggle
+- [ ] Add support for todo lists (requires brainstorming)
 - [ ] Autosize prompt window to fit content (with configurable min/max heights)
 - [ ] Identify most complex/fragile code and simplify (requires brainstorming)
 - [ ] Fix broken highlight groups
@@ -24,32 +25,25 @@
 - [ ] Enable window config 
   - [x] hide line numbers by default
   - [x] wrap output by default
-- [ ] Add support for session naming
+- [ ] Add support for session naming (/rename)
 - [x] Add config option to show/hide thinking
 - [x] Tighten up poor vertical spacing and multiple consecutive blank lines
 - [x] Fix poor horizontal spacing and indentation (gaps after carets) (2 spaces not 4)
-- [ ] Add unique "icons" for each entry and tool type (with nerdfont support) (configurable)
+- [x] Add unique "icons" for each entry and tool type (with nerdfont support) (configurable)
 - [ ] Add configurable themes support for customizing highlight groups, icons, etc.
-- [ ] Customize git commit tool calls to show commit message
 - [ ] Make resume history picker window larger
-- [ ] Add support for todo lists (requires brainstorming)
 - [x] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
 - [ ] Add support for /remote-control
 - [ ] Rename "Agent" tool to "Subagent"
 - [ ] Add lua types
-- [ ] Add configurable statusline (requires brainstorming for UI)
-  - [ ] Show thinking spinner
-  - [ ] Show token count (like claude code)
-  - [ ] Show cost
-  - [ ] Show mode (plan, auto, etc.)
-  - [ ] Show branch/PR
-  - [ ] Show effort level
-  - [ ] Show model
-  - [ ] Show claude code version
-  - [ ] Show session name
-  - [ ] Show remote control status (if active)
-
-- [ ] Format TodoWrite to look like a nice todo list
-   TodoWrite: #8
-    {"todos":[{"activeForm":"Adding statusline config defaults","status":"in_progress","content":"Add statusline config defaults"},{"activeForm":"Creating git helper module","status":"pending","content":"Create lua/cc/git.lua with cached branch/pr"},{"activeForm":"Creating version helper module","status":"pending","content":"Create lua/cc/version.lua for cached CLI version"},{"activeForm":"Creating statusline module","status":"pending","content":"Create lua/cc/statusline.lua with build_state/render/attach/refresh"},{"activeForm":"Wiring attach into output window","status":"pending","content":"Wire attach into output window setup"},{"activeForm":"Wiring refresh calls at events","status":"pending","content":"Wire refresh calls at router/session/process events"},{"activeForm":"Adding remote control flag","status":"pending","content":"Add remote_control_active flag in interactive.lua"},{"activeForm":"Adding statusline tests","status":"pending","content":"Add tests in tests/test_statusline.lua"}]}
+- [x] Add configurable statusline (requires brainstorming for UI)
+- [ ] Fix statusline thinking spinner
+- [ ] Fix missing mode in statusline on startup
+- [ ] Get rid of full line background highlight for folded lines (especially distracting on Output lines)
+- [x] Format bash tool calls to show description first then command
+- [x] Format git commit tool calls to show commit message
+- [x] Format TodoWrite to look like a nice todo list
+- [ ] Add custom fold profiles
+- [ ] Rename CcNew -> CcClear and CcOpen -> CcNew
+- [ ] Fix :BuffersNext/Prev not working in output window
 
