@@ -20,6 +20,12 @@ local defaults = {
   CcDiffAdd    = { link = 'DiffAdd' },
   CcDiffDelete = { link = 'DiffDelete' },
   CcDiffHunk   = { link = 'DiffChange' },
+  -- Statusline segments. Colors chosen to stay readable on typical dark
+  -- backgrounds; override by defining these groups in your colorscheme.
+  CcStl         = { fg = '#9aa5b1' },
+  CcStlTokens   = { fg = '#a9e39a' }, -- light green
+  CcStlMode     = { fg = '#e6c07b' }, -- yellow
+  CcStlBranch   = { fg = '#c3a6ff' }, -- light purple
 }
 
 function M.set_defaults()

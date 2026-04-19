@@ -9,7 +9,8 @@ local M = {}
 ---@param process cc.Process
 ---@param request_id string
 ---@param response_body table
-local function respond_success(process, request_id, response_body)
+---@param instance cc.Instance?
+local function respond_success(process, request_id, response_body, instance)
   process:write({
     type = 'control_response',
     response = {
@@ -18,6 +19,10 @@ local function respond_success(process, request_id, response_body)
       response = response_body,
     },
   })
+  if instance then
+    instance.remote_control_active = false
+    require('cc.statusline').refresh(instance)
+  end
 end
 
 -- ---------------------------------------------------------------------------
@@ -27,7 +32,8 @@ end
 ---@param output cc.Output
 ---@param request_id string
 ---@param req table can_use_tool request payload
-function M.handle_enter_plan_mode(process, output, request_id, req)
+---@param instance cc.Instance?
+function M.handle_enter_plan_mode(process, output, request_id, req, instance)
   output:render_notice('Plan Mode')
   local input = req.input or {}
   if input.plan_file_path then
@@ -37,7 +43,7 @@ function M.handle_enter_plan_mode(process, output, request_id, req)
     behavior = 'allow',
     updatedInput = input,
     toolUseID = req.tool_use_id,
-  })
+  }, instance)
 end
 
 -- ---------------------------------------------------------------------------
@@ -74,7 +80,8 @@ end
 ---@param output cc.Output
 ---@param request_id string
 ---@param req table
-function M.handle_exit_plan_mode(process, output, request_id, req)
+---@param instance cc.Instance?
+function M.handle_exit_plan_mode(process, output, request_id, req, instance)
   local input = req.input or {}
   local plan_text = input.plan or '(no plan content)'
   local plan_file = input.plan_file_path
@@ -102,7 +109,7 @@ function M.handle_exit_plan_mode(process, output, request_id, req)
             behavior = 'deny',
             message = reason and reason ~= '' and reason or 'User rejected plan via cc.nvim',
             toolUseID = req.tool_use_id,
-          })
+          }, instance)
         end)
       elseif choice == 'Approve plan' then
         output:render_notice('Plan approved')
@@ -110,7 +117,7 @@ function M.handle_exit_plan_mode(process, output, request_id, req)
           behavior = 'allow',
           updatedInput = input,
           toolUseID = req.tool_use_id,
-        })
+        }, instance)
       elseif choice == 'Edit plan' then
         if plan_file and plan_file ~= '' then
           -- Open the plan file in a split; user edits and re-runs.
@@ -123,7 +130,7 @@ function M.handle_exit_plan_mode(process, output, request_id, req)
           behavior = 'deny',
           message = 'User wants to edit the plan before approving',
           toolUseID = req.tool_use_id,
-        })
+        }, instance)
       end
     end
   )
@@ -207,7 +214,8 @@ end
 ---@param output cc.Output
 ---@param request_id string
 ---@param req table
-function M.handle_ask_user_question(process, output, request_id, req)
+---@param instance cc.Instance?
+function M.handle_ask_user_question(process, output, request_id, req, instance)
   local input = req.input or {}
   local questions = input.questions or {}
   local answers = {}
@@ -225,7 +233,7 @@ function M.handle_ask_user_question(process, output, request_id, req)
         answers = answers,
       },
       toolUseID = req.tool_use_id,
-    })
+    }, instance)
   end
 
   local i = 1
@@ -253,7 +261,8 @@ end
 ---@param output cc.Output
 ---@param request_id string
 ---@param req table elicitation request
-function M.handle_elicitation(process, output, request_id, req)
+---@param instance cc.Instance?
+function M.handle_elicitation(process, output, request_id, req, instance)
   local message = req.message or '(no message)'
   local mode = req.mode
   local url = req.url
@@ -267,9 +276,9 @@ function M.handle_elicitation(process, output, request_id, req)
       function(choice)
         if choice == 'Open in browser' then
           pcall(vim.ui.open, url)
-          respond_success(process, request_id, { action = 'accept', content = {} })
+          respond_success(process, request_id, { action = 'accept', content = {} }, instance)
         else
-          respond_success(process, request_id, { action = 'cancel' })
+          respond_success(process, request_id, { action = 'cancel' }, instance)
         end
       end
     )
@@ -286,7 +295,7 @@ function M.handle_elicitation(process, output, request_id, req)
     local i = 1
     local function step()
       if i > #keys then
-        respond_success(process, request_id, { action = 'accept', content = content })
+        respond_success(process, request_id, { action = 'accept', content = content }, instance)
         return
       end
       local key = keys[i]
@@ -294,7 +303,7 @@ function M.handle_elicitation(process, output, request_id, req)
       local prompt = (prop and prop.description) or key
       vim.ui.input({ prompt = prompt .. ': ' }, function(text)
         if text == nil then
-          respond_success(process, request_id, { action = 'cancel' })
+          respond_success(process, request_id, { action = 'cancel' }, instance)
           return
         end
         content[key] = text
@@ -312,9 +321,9 @@ function M.handle_elicitation(process, output, request_id, req)
     { prompt = message },
     function(choice)
       if choice == 'Accept' then
-        respond_success(process, request_id, { action = 'accept', content = {} })
+        respond_success(process, request_id, { action = 'accept', content = {} }, instance)
       else
-        respond_success(process, request_id, { action = 'cancel' })
+        respond_success(process, request_id, { action = 'cancel' }, instance)
       end
     end
   )

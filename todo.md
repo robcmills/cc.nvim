@@ -14,7 +14,7 @@
 - [x] Fix folding issues
   output is too expanded by default, shows tool output, 
   - [x] when output is focused, it collapses. Folding should not change due to output being focused.
-- [ ] Prompt submission should turn output tailing back on
+- [x] Prompt submission should turn output tailing back on
 - [ ] Add per tool call statusline (Running... (32s timeout 2m))
 - [ ] support plan mode toggle
 - [ ] Autosize prompt window to fit content (with configurable min/max heights)
@@ -35,24 +35,21 @@
 - [ ] Add support for todo lists (requires brainstorming)
 - [x] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
 - [ ] Add support for /remote-control
+- [ ] Rename "Agent" tool to "Subagent"
+- [ ] Add lua types
 - [ ] Add configurable statusline (requires brainstorming for UI)
   - [ ] Show thinking spinner
   - [ ] Show token count (like claude code)
   - [ ] Show cost
   - [ ] Show mode (plan, auto, etc.)
-  - [ ] Show PR
+  - [ ] Show branch/PR
   - [ ] Show effort level
   - [ ] Show model
   - [ ] Show claude code version
   - [ ] Show session name
   - [ ] Show remote control status (if active)
 
+- [ ] Format TodoWrite to look like a nice todo list
+   TodoWrite: #8
+    {"todos":[{"activeForm":"Adding statusline config defaults","status":"in_progress","content":"Add statusline config defaults"},{"activeForm":"Creating git helper module","status":"pending","content":"Create lua/cc/git.lua with cached branch/pr"},{"activeForm":"Creating version helper module","status":"pending","content":"Create lua/cc/version.lua for cached CLI version"},{"activeForm":"Creating statusline module","status":"pending","content":"Create lua/cc/statusline.lua with build_state/render/attach/refresh"},{"activeForm":"Wiring attach into output window","status":"pending","content":"Wire attach into output window setup"},{"activeForm":"Wiring refresh calls at events","status":"pending","content":"Wire refresh calls at router/session/process events"},{"activeForm":"Adding remote control flag","status":"pending","content":"Add remote_control_active flag in interactive.lua"},{"activeForm":"Adding statusline tests","status":"pending","content":"Add tests in tests/test_statusline.lua"}]}
 
-- [ ] mimic cc tools format:
-```
-⏺ Search(pattern: "getLaunchDarklyFlags|MOCK_LAUNCH_DARKLY_FLAGS", path: "/Users/robcmills/src/openspace/web/icedemon/e2e")
-  ⎿  Found 10 files
-
-⏺ Read(/Users/robcmills/src/openspace/web/icedemon/e2e/cypress/support/commands/interceptFlags.ts)
-  ⎿  Read 45 lines
-```

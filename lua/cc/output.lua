@@ -106,7 +106,8 @@ function Output:_setup_window_opts_for_buffer()
       vim.wo[winid].foldexpr = "v:lua.require'cc.output'.foldexpr(v:lnum)"
       vim.wo[winid].foldenable = true
       vim.wo[winid].foldtext = "v:lua.require'cc.output'.foldtext()"
-      vim.wo[winid].fillchars = 'fold: '
+      local sl_cfg = config.statusline or {}
+      vim.wo[winid].fillchars = sl_cfg.enabled and 'fold: ,stl:─' or 'fold: '
       vim.wo[winid].number = config.line_numbers and config.line_numbers.output or false
       vim.wo[winid].relativenumber = false
       vim.wo[winid].wrap = config.wrap == nil or config.wrap.output ~= false
@@ -132,6 +133,15 @@ function Output:_setup_window_opts_for_buffer()
       vim.schedule(function()
         M.refresh_carets(bufnr)
       end)
+      -- Re-attach statusline so it survives window recreation (split/close
+      -- cycles, tab switches, resume flow).
+      local ok, cc = pcall(require, 'cc')
+      if ok and cc and cc.find_instance then
+        local inst = cc.find_instance(bufnr)
+        if inst then
+          require('cc.statusline').attach(inst, winid)
+        end
+      end
     end,
   })
 end

@@ -160,6 +160,7 @@ local function setup_buffer_autocmds(inst)
         vim.api.nvim_set_current_buf(output_bufnr)
         inst.output_winid = vim.api.nvim_get_current_win()
         inst.output:set_window(inst.output_winid)
+        require('cc.statusline').attach(inst, inst.output_winid)
         vim.api.nvim_set_current_win(prompt_win)
         vim.api.nvim_win_set_height(prompt_win, Config.options.prompt_height)
         -- New windows on an existing buffer start with cursor at line 1,
@@ -257,6 +258,12 @@ local function create_instance(opts)
 
   -- Register in instances table.
   instances[prompt_buf] = inst
+
+  -- Attach cc statusline to the output window so it renders at the output's
+  -- own bottom edge. Requires laststatus=2 (set by attach).
+  if inst.output_winid then
+    require('cc.statusline').attach(inst, inst.output_winid)
+  end
 
   -- Start in insert mode in prompt buffer for immediate typing.
   vim.cmd('startinsert')
@@ -371,7 +378,11 @@ function M.open(opts)
   inst.router = Router.new({
     session = inst.session,
     output = inst.output,
-    on_session_id = function(id) inst.last_session_id = id end,
+    instance = inst,
+    on_session_id = function(id)
+      inst.last_session_id = id
+      require('cc.statusline').refresh(inst)
+    end,
   })
 
   inst.process = Process.new({
@@ -392,6 +403,8 @@ function M.open(opts)
       if inst.output then
         inst.output:render_notice('Session ended')
       end
+      if inst.session then inst.session.is_streaming = false end
+      require('cc.statusline').refresh(inst)
     end,
   })
 
@@ -431,7 +444,11 @@ function M.new_session()
   new_inst.router = Router.new({
     session = new_inst.session,
     output = new_inst.output,
-    on_session_id = function(id) new_inst.last_session_id = id end,
+    instance = new_inst,
+    on_session_id = function(id)
+      new_inst.last_session_id = id
+      require('cc.statusline').refresh(new_inst)
+    end,
   })
 
   new_inst.process = Process.new({
@@ -452,6 +469,8 @@ function M.new_session()
       if new_inst.output then
         new_inst.output:render_notice('Session ended')
       end
+      if new_inst.session then new_inst.session.is_streaming = false end
+      require('cc.statusline').refresh(new_inst)
     end,
   })
 
@@ -489,6 +508,13 @@ function M.resume(session_id)
 
   if path then
     local config = Config.options
+    local meta = history.read_session_meta(path)
+    inst.session.input_tokens = meta.input_tokens
+    inst.session.output_tokens = meta.output_tokens
+    inst.session.cost_usd = meta.cost_usd
+    inst.session.model = meta.model or inst.session.model
+    inst.session.permission_mode =
+      meta.permission_mode or config.permission_mode or inst.session.permission_mode
     local records = history.read_transcript(path)
     local max = config.history_max_records or 200
     local start_idx = 1
@@ -501,6 +527,7 @@ function M.resume(session_id)
       inst.output:render_historical_record(records[i])
     end
     inst.output:render_notice('resumed ' .. session_id:sub(1, 8))
+    require('cc.statusline').refresh(inst)
   else
     inst.output:render_notice('resuming ' .. session_id:sub(1, 8) .. ' (no local transcript found)')
   end
@@ -508,7 +535,11 @@ function M.resume(session_id)
   inst.router = Router.new({
     session = inst.session,
     output = inst.output,
-    on_session_id = function(id) inst.last_session_id = id end,
+    instance = inst,
+    on_session_id = function(id)
+      inst.last_session_id = id
+      require('cc.statusline').refresh(inst)
+    end,
   })
   inst.process = Process.new({
     claude_cmd = Config.options.claude_cmd,
@@ -524,6 +555,8 @@ function M.resume(session_id)
         vim.notify('cc.nvim: claude exited with code ' .. code, vim.log.levels.WARN)
       end
       if inst.output then inst.output:render_notice('Session ended') end
+      if inst.session then inst.session.is_streaming = false end
+      require('cc.statusline').refresh(inst)
     end,
   })
   inst.router:set_process(inst.process)

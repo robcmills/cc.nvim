@@ -37,6 +37,16 @@ local defaults = {
     prompt = true, -- soft-wrap lines in the prompt window
   },
 
+  -- Statusline on the output window.
+  -- format = function(state) -> string (Neovim statusline syntax).
+  -- state fields: is_thinking, total_tokens, input_tokens, output_tokens,
+  --   cost_usd, mode, branch, pr, effort, model, cli_version, session_name,
+  --   session_id, remote_control.
+  statusline = {
+    enabled = true,
+    format = nil,
+  },
+
   -- Keymaps
   keymaps = {
     submit = '<CR>', -- prompt buffer, normal mode

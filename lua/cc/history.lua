@@ -162,6 +162,45 @@ function M.read_transcript(path)
   return out
 end
 
+--- Scan a transcript file for cumulative session metadata: aggregate token
+--- usage across all assistant records, plus model and permission_mode last
+--- observed. Used by resume to seed the statusline before the subprocess
+--- has emitted its system:init.
+---@param path string
+---@return { input_tokens: integer, output_tokens: integer, cost_usd: number, model: string?, permission_mode: string? }
+function M.read_session_meta(path)
+  local meta = {
+    input_tokens = 0,
+    output_tokens = 0,
+    cost_usd = 0,
+    model = nil,
+    permission_mode = nil,
+  }
+  local f = io.open(path, 'r')
+  if not f then return meta end
+  for line in f:lines() do
+    local ok, rec = pcall(vim.json.decode, line, { luanil = { object = true, array = true } })
+    if ok and type(rec) == 'table' then
+      if rec.permissionMode then meta.permission_mode = rec.permissionMode end
+      if rec.permission_mode then meta.permission_mode = rec.permission_mode end
+      local msg = rec.message
+      if type(msg) == 'table' then
+        if msg.model then meta.model = msg.model end
+        local usage = msg.usage
+        if type(usage) == 'table' then
+          meta.input_tokens = meta.input_tokens + (usage.input_tokens or 0)
+          meta.output_tokens = meta.output_tokens + (usage.output_tokens or 0)
+        end
+      end
+      if type(rec.costUSD) == 'number' then
+        meta.cost_usd = meta.cost_usd + rec.costUSD
+      end
+    end
+  end
+  f:close()
+  return meta
+end
+
 --- Format a history entry for a picker line.
 ---@param entry cc.HistoryEntry
 ---@param show_cwd boolean

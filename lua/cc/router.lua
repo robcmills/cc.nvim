@@ -6,18 +6,26 @@ local M = {}
 ---@field session cc.Session
 ---@field output cc.Output
 ---@field process cc.Process?
+---@field instance cc.Instance?
 ---@field on_session_id fun(session_id: string)?
 local Router = {}
 Router.__index = Router
 
----@param opts { session: cc.Session, output: cc.Output, process: cc.Process?, on_session_id: fun(session_id: string)? }
+---@param opts { session: cc.Session, output: cc.Output, process: cc.Process?, instance: cc.Instance?, on_session_id: fun(session_id: string)? }
 function M.new(opts)
   return setmetatable({
     session = opts.session,
     output = opts.output,
     process = opts.process,
+    instance = opts.instance,
     on_session_id = opts.on_session_id,
   }, Router)
+end
+
+local function refresh_statusline(self)
+  if self.instance then
+    require('cc.statusline').refresh(self.instance)
+  end
 end
 
 function Router:set_process(process)
@@ -27,6 +35,7 @@ end
 ---@param msg table SDK NDJSON message
 function Router:dispatch(msg)
   local t = msg.type
+  local before_streaming = self.session.is_streaming
   if t == 'system' then
     self:_handle_system(msg)
   elseif t == 'stream_event' then
@@ -59,6 +68,12 @@ function Router:dispatch(msg)
     -- Skip; tool_progress inside the subagent handles fine-grained updates.
   elseif t == 'task_notification' then
     self.output:render_task('done', msg.summary or msg.description or '')
+  end
+
+  -- Refresh statusline on events that change visible state.
+  if t == 'system' or t == 'result'
+      or before_streaming ~= self.session.is_streaming then
+    refresh_statusline(self)
   end
 end
 
@@ -150,11 +165,15 @@ end
 function Router:_handle_control_request(msg)
   local req = msg.request
   if not req then return end
+  if self.instance then
+    self.instance.remote_control_active = true
+    require('cc.statusline').refresh(self.instance)
+  end
   if req.subtype == 'can_use_tool' then
     self:_handle_permission_request(msg.request_id, req)
   elseif req.subtype == 'elicitation' then
     require('cc.interactive').handle_elicitation(
-      self.process, self.output, msg.request_id, req)
+      self.process, self.output, msg.request_id, req, self.instance)
   end
 end
 
@@ -166,15 +185,15 @@ function Router:_handle_permission_request(request_id, req)
   -- Specialized handlers for interactive CC features.
   if tool_name == 'EnterPlanMode' then
     require('cc.interactive').handle_enter_plan_mode(
-      self.process, self.output, request_id, req)
+      self.process, self.output, request_id, req, self.instance)
     return
   elseif tool_name == 'ExitPlanMode' then
     require('cc.interactive').handle_exit_plan_mode(
-      self.process, self.output, request_id, req)
+      self.process, self.output, request_id, req, self.instance)
     return
   elseif tool_name == 'AskUserQuestion' then
     require('cc.interactive').handle_ask_user_question(
-      self.process, self.output, request_id, req)
+      self.process, self.output, request_id, req, self.instance)
     return
   end
 
@@ -214,6 +233,10 @@ function Router:_handle_permission_request(request_id, req)
             response = response_body,
           },
         })
+      end
+      if self.instance then
+        self.instance.remote_control_active = false
+        require('cc.statusline').refresh(self.instance)
       end
     end
   )
