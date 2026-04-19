@@ -47,7 +47,7 @@ local function default_format(state)
     table.insert(segments, HL_MODE .. state.mode .. ' mode')
   end
   if state.branch and state.branch ~= '' then
-    local b = HL_BRANCH .. '  ' .. state.branch
+    local b = HL_BRANCH .. ' ' .. state.branch
     if state.pr and state.pr ~= '' then
       b = b .. '  ' .. state.pr
     end
@@ -64,7 +64,7 @@ local function default_format(state)
   -- the last segment lets the line visually close with one fill unit before
   -- the window edge.
   if #segments == 0 then return HL_LINE .. '%=─' end
-  return HL_LINE .. '%=' .. table.concat(segments, SEP) .. HL_LINE .. ' '
+  return HL_LINE .. '%= ' .. table.concat(segments, SEP) .. HL_LINE .. ' '
 end
 
 ---@param instance cc.Instance

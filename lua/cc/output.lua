@@ -107,7 +107,7 @@ function Output:_setup_window_opts_for_buffer()
       vim.wo[winid].foldenable = true
       vim.wo[winid].foldtext = "v:lua.require'cc.output'.foldtext()"
       local sl_cfg = config.statusline or {}
-      vim.wo[winid].fillchars = sl_cfg.enabled and 'fold: ,stl:─' or 'fold: '
+      vim.wo[winid].fillchars = sl_cfg.enabled and 'fold: ,stl:─,stlnc:─' or 'fold: '
       vim.wo[winid].number = config.line_numbers and config.line_numbers.output or false
       vim.wo[winid].relativenumber = false
       vim.wo[winid].wrap = config.wrap == nil or config.wrap.output ~= false
