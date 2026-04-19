@@ -41,7 +41,7 @@ local function default_format(state)
   end
   local toks = fmt_tokens(state.total_tokens)
   if toks ~= '' then
-    table.insert(segments, HL_TOKENS .. toks)
+    table.insert(segments, HL_TOKENS .. toks .. ' tokens')
   end
   if state.mode and state.mode ~= '' then
     table.insert(segments, HL_MODE .. state.mode .. ' mode')

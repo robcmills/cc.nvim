@@ -178,8 +178,12 @@ function Session:on_result(msg)
     self.cost_usd = msg.total_cost_usd
   end
   if msg.usage then
-    self.input_tokens = msg.usage.input_tokens or self.input_tokens
-    self.output_tokens = msg.usage.output_tokens or self.output_tokens
+    local u = msg.usage
+    -- Match Claude Code's getTotalInputTokens/getTotalOutputTokens: accumulate
+    -- fresh input + output only. Cache reads/creations are billed separately
+    -- and would dwarf the real conversation size if folded in here.
+    self.input_tokens = self.input_tokens + (u.input_tokens or 0)
+    self.output_tokens = self.output_tokens + (u.output_tokens or 0)
   end
   self.is_streaming = false
 end
