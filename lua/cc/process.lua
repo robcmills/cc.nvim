@@ -47,6 +47,12 @@ function Process:spawn()
     '--include-partial-messages',
     '--include-hook-events',
     '--verbose',
+    '--append-system-prompt', table.concat({
+      'You are running inside a Neovim chat UI (cc.nvim). The user reads your replies as chat messages and types answers in a prompt buffer.',
+      'Do not use the AskUserQuestion tool. If you need input from the user, ask directly in your reply as prose; the user will answer in their next message.',
+      'Do not use EnterPlanMode or ExitPlanMode. If you want to propose a plan before acting, write the plan inline in your reply and wait for the user to respond.',
+      'When the user phrases a prompt as a question (e.g., "Would it be more robust to...?", "What if we...?", "Should I...?", "Could we...?", "I wonder if..."), respond with analysis or explanation only. Do not make code changes, edits, or implementations. Wait for an explicit directive like "go ahead", "make that change", "do it", or "yes, update it" before editing any files. This applies even in auto mode.',
+    }, ' '),
   }
 
   if self.opts.session_id then
