@@ -709,54 +709,131 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary)
   vim.bo[bufnr].modifiable = false
 end
 
+--- Render a YAML-ish representation of a Lua value.
+--- Simple types render as `key: value`. Nested tables recurse.
+--- Multi-line strings use `key: |` block-scalar form.
+---@param value any
+---@param indent string
+---@return string[]
+local function render_yaml_ish(value, indent)
+  indent = indent or ''
+  local out = {}
+  if type(value) ~= 'table' then
+    if type(value) == 'string' and value:find('\n') then
+      table.insert(out, indent .. '|')
+      for _, l in ipairs(vim.split(value, '\n', { plain = true })) do
+        table.insert(out, indent .. '  ' .. l)
+      end
+    else
+      table.insert(out, indent .. tostring(value))
+    end
+    return out
+  end
+  local is_array = #value > 0 and next(value, #value) == nil
+  if is_array then
+    for _, v in ipairs(value) do
+      if type(v) == 'table' then
+        table.insert(out, indent .. '-')
+        for _, l in ipairs(render_yaml_ish(v, indent .. '  ')) do
+          table.insert(out, l)
+        end
+      elseif type(v) == 'string' and v:find('\n') then
+        table.insert(out, indent .. '- |')
+        for _, l in ipairs(vim.split(v, '\n', { plain = true })) do
+          table.insert(out, indent .. '    ' .. l)
+        end
+      else
+        table.insert(out, indent .. '- ' .. tostring(v))
+      end
+    end
+  else
+    local keys = {}
+    for k in pairs(value) do table.insert(keys, k) end
+    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+    for _, k in ipairs(keys) do
+      local v = value[k]
+      if type(v) == 'table' then
+        table.insert(out, indent .. tostring(k) .. ':')
+        for _, l in ipairs(render_yaml_ish(v, indent .. '  ')) do
+          table.insert(out, l)
+        end
+      elseif type(v) == 'string' and v:find('\n') then
+        table.insert(out, indent .. tostring(k) .. ': |')
+        for _, l in ipairs(vim.split(v, '\n', { plain = true })) do
+          table.insert(out, indent .. '  ' .. l)
+        end
+      else
+        table.insert(out, indent .. tostring(k) .. ': ' .. tostring(v))
+      end
+    end
+  end
+  return out
+end
+
+--- Status marker for a TodoWrite item.
+local function todo_marker(status)
+  if status == 'completed' then return '☑' end
+  if status == 'in_progress' then return '◐' end
+  return '☐'
+end
+
+--- Default body formatter. Returns an array of body lines (without indent).
+---@param tool_name string
+---@param input table
+---@return string[]?
+local function default_tool_body(tool_name, input)
+  if tool_name == 'Bash' and input.command then
+    return vim.split(tostring(input.command), '\n', { plain = true })
+  elseif tool_name == 'Edit' then
+    return require('cc.diff').render_edit(input.old_string, input.new_string)
+  elseif tool_name == 'MultiEdit' then
+    return require('cc.diff').render_multiedit(input.edits)
+  elseif tool_name == 'Write' then
+    return require('cc.diff').render_write(input.content)
+  elseif tool_name == 'TodoWrite' and type(input.todos) == 'table' then
+    local lines = {}
+    for _, t in ipairs(input.todos) do
+      local text = t.content or t.activeForm or ''
+      table.insert(lines, todo_marker(t.status) .. ' ' .. tostring(text))
+    end
+    return lines
+  end
+  -- `description` is already shown in the fold summary; omit from body.
+  local filtered = {}
+  for k, v in pairs(input) do
+    if k ~= 'description' then filtered[k] = v end
+  end
+  return render_yaml_ish(filtered, '')
+end
+
 --- Render tool input block at fold level 2 (below the tool header).
 ---@param tool_name string
 ---@param input table?
 function Output:_render_tool_input(tool_name, input)
   if not input then return end
+  local config = require('cc.config').options
+  local body_lines
+  if type(config.tool_input_format) == 'function' then
+    local ok, result = pcall(config.tool_input_format, tool_name, input)
+    if ok and type(result) == 'string' then
+      body_lines = vim.split(result, '\n', { plain = true })
+    end
+  end
+  if not body_lines then
+    body_lines = default_tool_body(tool_name, input)
+  end
+  if not body_lines or #body_lines == 0 then return end
+
   local lines = {}
   local levels = {}
-
-  if tool_name == 'Bash' and input.command then
-    for _, l in ipairs(vim.split(tostring(input.command), '\n', { plain = true })) do
-      table.insert(lines, '    ' .. l)
-      table.insert(levels, 2)
-    end
-    if input.description then
-      table.insert(lines, '    # ' .. input.description)
-      table.insert(levels, 2)
-    end
-  elseif tool_name == 'Edit' then
-    local diff = require('cc.diff').render_edit(input.old_string, input.new_string)
-    for _, l in ipairs(diff) do
-      table.insert(lines, l)
-      table.insert(levels, 2)
-    end
-  elseif tool_name == 'MultiEdit' then
-    local diff = require('cc.diff').render_multiedit(input.edits)
-    for _, l in ipairs(diff) do
-      table.insert(lines, l)
-      table.insert(levels, 2)
-    end
-  elseif tool_name == 'Write' then
-    local diff = require('cc.diff').render_write(input.content)
-    for _, l in ipairs(diff) do
-      table.insert(lines, l)
-      table.insert(levels, 2)
-    end
-  else
-    -- Default: pretty-print input as JSON lines
-    local ok, encoded = pcall(vim.json.encode, input)
-    if ok and encoded then
-      for _, l in ipairs(vim.split(encoded, '\n', { plain = true })) do
-        table.insert(lines, '    ' .. l)
-        table.insert(levels, 2)
-      end
-    end
+  -- Diff renderers (Edit/MultiEdit/Write) already emit their own indentation
+  -- via the cc.diff module; other bodies get a 4-space indent.
+  local pre_indented = tool_name == 'Edit' or tool_name == 'MultiEdit' or tool_name == 'Write'
+  for _, l in ipairs(body_lines) do
+    table.insert(lines, pre_indented and l or ('    ' .. l))
+    table.insert(levels, 2)
   end
-  if #lines > 0 then
-    self:_append(lines, levels, false)
-  end
+  self:_append(lines, levels, false)
 end
 
 --- Render a tool_result block (from a user-type NDJSON message).
@@ -828,6 +905,9 @@ function M.summarize_tool_input(tool_name, input)
     return ''
   end
   if tool_name == 'Bash' then
+    if input.description and input.description ~= '' then
+      return tostring(input.description)
+    end
     local cmd = tostring(input.command or ''):gsub('\n', ' ')
     if #cmd > 80 then cmd = cmd:sub(1, 77) .. '...' end
     return cmd

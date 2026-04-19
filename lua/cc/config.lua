@@ -17,6 +17,12 @@ local defaults = {
   max_tool_result_lines = 50,
   foldtext = nil, -- function(info)->string or nil for default; see output.default_foldtext
 
+  -- Tool input body formatter.
+  -- function(tool_name, input) -> string | nil
+  -- Return a string (newlines allowed) to render below the tool header.
+  -- Return nil to defer to the default formatter. Indentation is added by the renderer.
+  tool_input_format = nil,
+
   -- History / resume
   history_max_records = 500, -- cap records rendered on resume; older collapsed into a notice
 
