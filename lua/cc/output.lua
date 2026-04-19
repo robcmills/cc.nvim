@@ -798,10 +798,14 @@ local function default_tool_body(tool_name, input)
     end
     return lines
   end
-  -- `description` is already shown in the fold summary; omit from body.
+  -- `description` and Read's file_path/offset/limit are already shown in the
+  -- fold summary.
+  local read_skip = { file_path = true, offset = true, limit = true }
   local filtered = {}
   for k, v in pairs(input) do
-    if k ~= 'description' then filtered[k] = v end
+    if k ~= 'description' and not (tool_name == 'Read' and read_skip[k]) then
+      filtered[k] = v
+    end
   end
   return render_yaml_ish(filtered, '')
 end
