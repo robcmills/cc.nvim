@@ -189,7 +189,7 @@ end
 
 T['subagent_tasks']['renders Agent tool'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
-  assert_any_line_matches(_G.child, '^%s+%S+%s+Agent:')
+  assert_any_line_matches(_G.child, '^%s+%S+%s+Subagent:')
 end
 
 T['subagent_tasks']['renders surrounding text blocks'] = function()

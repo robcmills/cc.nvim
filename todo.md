@@ -15,7 +15,10 @@
   output is too expanded by default, shows tool output, 
   - [x] when output is focused, it collapses. Folding should not change due to output being focused.
 - [x] Prompt submission should turn output tailing back on
+- [x] Add configurable statusline (requires brainstorming for UI)
 - [ ] Add per tool call statusline (Running... (32s timeout 2m))
+- [ ] Fix statusline thinking spinner
+- [ ] Fix missing mode in statusline on startup
 - [ ] Add support plan mode toggle
 - [ ] Add support for todo lists (requires brainstorming)
 - [ ] Autosize prompt window to fit content (with configurable min/max heights)
@@ -34,16 +37,12 @@
 - [ ] Make resume history picker window larger
 - [x] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
 - [ ] Add support for /remote-control
-- [ ] Rename "Agent" tool to "Subagent"
+- [x] Rename "Agent" tool to "Subagent"
 - [ ] Add lua types
-- [x] Add configurable statusline (requires brainstorming for UI)
-- [ ] Fix statusline thinking spinner
-- [ ] Fix missing mode in statusline on startup
 - [ ] Get rid of full line background highlight for folded lines (especially distracting on Output lines)
 - [x] Format bash tool calls to show description first then command
 - [x] Format git commit tool calls to show commit message
 - [x] Format TodoWrite to look like a nice todo list
-- [ ] Add custom fold profiles
 - [ ] Rename CcNew -> CcClear and CcOpen -> CcNew
 - [ ] Fix :BuffersNext/Prev not working in output window
 

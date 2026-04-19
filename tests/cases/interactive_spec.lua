@@ -61,7 +61,7 @@ T['subagent']['Agent tool renders summary'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found = false
   for _, line in ipairs(lines) do
-    if line:match('^%s+%S+%s+Agent:') then found = true; break end
+    if line:match('^%s+%S+%s+Subagent:') then found = true; break end
   end
   eq(found, true)
 end

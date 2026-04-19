@@ -24,6 +24,13 @@ local BUF_NAME_DEFAULT = 'cc-output'
 local CARET_OPEN = '▾'
 local CARET_FOLDED = '▸'
 
+-- Display-name overrides for tool headers. Keeps icon lookup and summary
+-- logic keyed by the real tool name while presenting a friendlier label.
+local TOOL_DISPLAY_NAMES = { Agent = 'Subagent' }
+local function display_tool_name(name)
+  return TOOL_DISPLAY_NAMES[name] or name or '?'
+end
+
 -- Per-buffer fold tracking (keyed by bufnr)
 ---@class cc.OutputBufState
 ---@field fold_levels table<integer, string|integer>  line number -> foldexpr value
@@ -648,7 +655,7 @@ function Output:on_content_block_start(block)
     end
   elseif block.type == 'tool_use' then
     local icon = require('cc.icons').for_tool(block.name or '')
-    local header_text = '  ' .. icon .. ' ' .. (block.name or '?') .. ':'
+    local header_text = '  ' .. icon .. ' ' .. display_tool_name(block.name) .. ':'
     local header_lnum = self:_append({ header_text }, { '>2' }, true)
     self.streaming_block_type = 'tool_use'
     self.streaming_tool_id = block.id
@@ -704,7 +711,7 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary)
   if lnum > vim.api.nvim_buf_line_count(bufnr) then return end
   vim.bo[bufnr].modifiable = true
   local icon = require('cc.icons').for_tool(tool_name)
-  local new_text = '  ' .. icon .. ' ' .. tool_name .. ': ' .. summary
+  local new_text = '  ' .. icon .. ' ' .. display_tool_name(tool_name) .. ': ' .. summary
   vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_text })
   vim.bo[bufnr].modifiable = false
 end
