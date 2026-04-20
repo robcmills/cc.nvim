@@ -113,7 +113,7 @@ T['applied_folds'] = MiniTest.new_set()
 -- Regression: Vim evaluates foldexpr synchronously during nvim_buf_set_lines.
 -- If state.fold_levels isn't populated first, foldexpr returns 0 and the
 -- stale value sticks, so tool-result content stays visible at default
--- foldlevel=1. Verify Vim's live fold computation matches state.fold_levels.
+-- foldlevel=2. Verify Vim's live fold computation matches state.fold_levels.
 T['applied_folds']['tool result content is inside closed fold at default level'] = function()
   helpers.render_fixture(_G.child, 'tool_read')
   _G.child.lua([[
@@ -137,11 +137,11 @@ T['applied_folds']['tool result content is inside closed fold at default level']
       _G._flv_content = vim.fn.foldlevel(_G._content_lnum)
     end)
   ]])
-  local tool_start = _G.child.lua_get('_G._tool_start')
-  -- At default foldlevel=1, the level-2 fold at the tool header should be closed and
-  -- must contain both the Output: subheader and its content lines.
-  eq(_G.child.lua_get('_G._fc_output'), tool_start)
-  eq(_G.child.lua_get('_G._fc_content'), tool_start)
+  local output_start = _G.child.lua_get('_G._output_start')
+  -- At default foldlevel=2, the level-2 tool-header fold is open, but the
+  -- level-3 Output: fold must be closed and contain the content lines.
+  eq(_G.child.lua_get('_G._fc_output'), output_start)
+  eq(_G.child.lua_get('_G._fc_content'), output_start)
   eq(_G.child.lua_get('_G._flv_content'), 3)
 end
 
@@ -198,14 +198,14 @@ T['manual_open']['new tool call is folded after user opens a prior fold'] = func
     vim.wait(50, function() return false end)
 
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    _G._t1_lnum = nil
+    _G._t1_output_lnum = nil
     for i, l in ipairs(lines) do
-      if l:match('^%s+%S+%s+Read:') then _G._t1_lnum = i; break end
+      if l:match('Output:') then _G._t1_output_lnum = i; break end
     end
-    -- User manually opens Tool 1's fold.
-    vim.api.nvim_win_set_cursor(winid, { _G._t1_lnum, 0 })
+    -- User manually opens Tool 1's Output: (level-3) fold.
+    vim.api.nvim_win_set_cursor(winid, { _G._t1_output_lnum, 0 })
     vim.cmd('normal! zo')
-    _G._t1_open_after_zo = vim.fn.foldclosed(_G._t1_lnum) == -1
+    _G._t1_open_after_zo = vim.fn.foldclosed(_G._t1_output_lnum) == -1
 
     -- Now append a second tool.
     output:on_content_block_start({ type = 'tool_use', id = 't2', name = 'Bash' })
@@ -214,13 +214,13 @@ T['manual_open']['new tool call is folded after user opens a prior fold'] = func
     vim.wait(50, function() return false end)
 
     lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    _G._t2_lnum = nil
-    for i, l in ipairs(lines) do
-      if l:match('^%s+%S+%s+Bash:') then _G._t2_lnum = i; break end
+    _G._t2_output_lnum = nil
+    for i = #lines, 1, -1 do
+      if lines[i]:match('Output:') then _G._t2_output_lnum = i; break end
     end
-    _G._t2_closed = vim.fn.foldclosed(_G._t2_lnum) == _G._t2_lnum
-    -- Tool 1 must remain manually opened (not re-closed by our fix).
-    _G._t1_still_open = vim.fn.foldclosed(_G._t1_lnum) == -1
+    _G._t2_closed = vim.fn.foldclosed(_G._t2_output_lnum) == _G._t2_output_lnum
+    -- Tool 1's Output: must remain manually opened (not re-closed by our fix).
+    _G._t1_still_open = vim.fn.foldclosed(_G._t1_output_lnum) == -1
   ]])
   eq(_G.child.lua_get('_G._t1_open_after_zo'), true)
   eq(_G.child.lua_get('_G._t2_closed'), true)
