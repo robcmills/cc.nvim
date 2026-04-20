@@ -658,14 +658,18 @@ function M.submit()
   })
 end
 
---- Public: send SIGINT to interrupt current generation.
+--- Public: interrupt the current turn without killing the CLI process.
+--- Sends a stream-json control_request; the "Interrupted" notice is rendered
+--- once the CLI acknowledges with a control_response (see router).
 function M.stop()
   local inst = get_current_instance()
-  if inst and inst.process then
-    inst.process:interrupt()
-    if inst.output then
-      inst.output:render_notice('Interrupted')
-    end
+  if not inst or not inst.process or not inst.process:is_alive() then return end
+  if not inst.session or not inst.session.is_streaming then return end
+  if inst.session.interrupt_pending then return end
+  local request_id = inst.process:send_control_interrupt()
+  if request_id then
+    inst.session.interrupt_pending = true
+    require('cc.statusline').refresh(inst)
   end
 end
 

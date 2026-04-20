@@ -45,4 +45,5 @@
 - [x] Format TodoWrite to look like a nice todo list
 - [ ] Rename CcNew -> CcClear and CcOpen -> CcNew
 - [ ] Fix :BuffersNext/Prev not working in output window
+- [x] Interrupt current turn via stream-json control_request (keeps session alive)
 

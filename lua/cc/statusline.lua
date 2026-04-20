@@ -36,7 +36,9 @@ local SEP = HL_LINE .. ' ── '
 ---@return string
 local function default_format(state)
   local segments = {}
-  if state.is_thinking then
+  if state.interrupt_pending then
+    table.insert(segments, HL_LINE .. 'interrupting…')
+  elseif state.is_thinking then
     table.insert(segments, HL_LINE .. '⠿')
   end
   local toks = fmt_tokens(state.total_tokens)
@@ -78,6 +80,7 @@ function M.build_state(instance)
   local output_tokens = session and session.output_tokens or 0
   return {
     is_thinking = session and session.is_streaming or false,
+    interrupt_pending = session and session.interrupt_pending or false,
     total_tokens = input_tokens + output_tokens,
     input_tokens = input_tokens,
     output_tokens = output_tokens,

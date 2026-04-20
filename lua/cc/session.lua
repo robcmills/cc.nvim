@@ -12,6 +12,7 @@ local M = {}
 ---@field current_message table?
 ---@field current_blocks table<integer, table>
 ---@field is_streaming boolean
+---@field interrupt_pending boolean
 ---@field cost_usd number
 ---@field input_tokens integer
 ---@field output_tokens integer
@@ -28,6 +29,7 @@ function M.new()
     current_message = nil,
     current_blocks = {},
     is_streaming = false,
+    interrupt_pending = false,
     cost_usd = 0,
     input_tokens = 0,
     output_tokens = 0,
@@ -83,6 +85,7 @@ end
 
 ---@param text string
 function Session:add_user_turn(text)
+  self.interrupt_pending = false
   table.insert(self.turns, {
     role = 'user',
     text = text,
@@ -174,6 +177,7 @@ end
 
 ---@param msg table result message
 function Session:on_result(msg)
+  self.interrupt_pending = false
   if msg.total_cost_usd then
     self.cost_usd = msg.total_cost_usd
   end

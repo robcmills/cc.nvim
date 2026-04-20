@@ -20,8 +20,17 @@ local M = {}
 ---@field on_exit fun(code: integer, signal: integer)?
 ---@field alive boolean
 ---@field _tee_fd userdata? file descriptor for NDJSON dump
+---@field _pending_controls table<string, string> request_id -> subtype
 local Process = {}
 Process.__index = Process
+
+--- Generate a v4-ish uuid. Good enough for local correlation of control_request
+--- request_ids; not cryptographic.
+---@return string
+local function gen_uuid()
+  local function h(n) return string.format('%0' .. n .. 'x', math.random(0, 16 ^ n - 1)) end
+  return h(8) .. '-' .. h(4) .. '-4' .. h(3) .. '-' .. h(4) .. '-' .. h(8) .. h(4)
+end
 
 ---@param opts { claude_cmd: string, cwd: string?, session_id: string?, permission_mode: string?, model: string?, extra_args: string[]?, on_message: fun(msg: table), on_stderr: fun(data: string)?, on_exit: fun(code: integer, signal: integer)? }
 function M.new(opts)
@@ -32,6 +41,7 @@ function M.new(opts)
     on_stderr = opts.on_stderr,
     on_exit = opts.on_exit,
     alive = false,
+    _pending_controls = {},
   }, Process)
 end
 
@@ -155,6 +165,35 @@ function Process:interrupt()
   if self.alive and self.pid then
     uv.kill(self.pid, 'sigint')
   end
+end
+
+--- Send a stream-json control_request to interrupt the current turn without
+--- killing the CLI process. The CLI aborts the in-flight API stream and any
+--- running tool, then returns a control_response with the same request_id.
+--- Returns the request_id so callers can correlate the response, or nil if
+--- the process is not alive.
+---@return string?
+function Process:send_control_interrupt()
+  if not self.alive or not self.stdin then return nil end
+  local request_id = gen_uuid()
+  self._pending_controls[request_id] = 'interrupt'
+  self:write({
+    type = 'control_request',
+    request_id = request_id,
+    request = { subtype = 'interrupt' },
+  })
+  return request_id
+end
+
+--- Consume a pending control_request by id. Returns the subtype if one was
+--- pending (and removes it), otherwise nil. Used by the router when a
+--- control_response arrives.
+---@param request_id string
+---@return string?
+function Process:consume_pending_control(request_id)
+  local subtype = self._pending_controls[request_id]
+  if subtype then self._pending_controls[request_id] = nil end
+  return subtype
 end
 
 --- Terminate the process.

@@ -48,6 +48,8 @@ function Router:dispatch(msg)
     self:_handle_result(msg)
   elseif t == 'control_request' then
     self:_handle_control_request(msg)
+  elseif t == 'control_response' then
+    self:_handle_control_response(msg)
   elseif t == 'tool_progress' then
     self:_handle_tool_progress(msg)
   elseif t == 'tool_use_summary' then
@@ -71,7 +73,7 @@ function Router:dispatch(msg)
   end
 
   -- Refresh statusline on events that change visible state.
-  if t == 'system' or t == 'result'
+  if t == 'system' or t == 'result' or t == 'control_response'
       or before_streaming ~= self.session.is_streaming then
     refresh_statusline(self)
   end
@@ -159,6 +161,23 @@ function Router:_handle_tool_progress(msg)
   local elapsed = msg.elapsed_time_seconds
   if tool_use_id and elapsed then
     self.output:update_tool_elapsed(tool_use_id, elapsed)
+  end
+end
+
+function Router:_handle_control_response(msg)
+  local resp = msg.response
+  if not resp or not resp.request_id then return end
+  local subtype = self.process and self.process:consume_pending_control(resp.request_id)
+  if subtype ~= 'interrupt' then return end
+  if self.session then
+    self.session.interrupt_pending = false
+    self.session.is_streaming = false
+  end
+  if resp.subtype == 'success' then
+    self.output:render_notice('Interrupted')
+  else
+    local err = resp.error or 'control_response error'
+    self.output:render_notice('Interrupt failed: ' .. tostring(err))
   end
 end
 
