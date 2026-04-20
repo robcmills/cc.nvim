@@ -786,12 +786,15 @@ local function default_tool_body(tool_name, input)
     end
     return lines
   end
-  -- `description` and Read's file_path/offset/limit are already shown in the
-  -- fold summary.
+  -- `description` and other fields already shown in the fold summary header.
   local read_skip = { file_path = true, offset = true, limit = true }
   local filtered = {}
   for k, v in pairs(input) do
-    if k ~= 'description' and not (tool_name == 'Read' and read_skip[k]) then
+    local skip = k == 'description'
+      or (tool_name == 'Read' and read_skip[k])
+      or (tool_name == 'WebFetch' and k == 'url')
+      or (tool_name == 'WebSearch' and k == 'query')
+    if not skip then
       filtered[k] = v
     end
   end
