@@ -61,6 +61,40 @@ directly (zero extra dependencies beyond what you already have), so all
 Claude Code features — skills, hooks, MCP servers, `CLAUDE.md`, your team
 subscription auth — work out-of-the-box unmodified.
 
+## Make it yours
+
+In neovim tradition, cc.nvim is designed to be tailored.
+Nearly every visible element is configurable:
+
+- **Statusline.** Pass `statusline.format = function(state)
+  ... end` and render whatever you want using standard Neovim statusline
+  syntax. The `state` table hands you `is_thinking`, `spinner_frame`,
+  `interrupt_pending`, `total_tokens`, `input_tokens`, `output_tokens`,
+  `cost_usd`, `mode`, `branch`, `pr`, `model`, `cli_version`,
+  `session_name`, `session_id`, and `remote_control` — build your own
+  layout around any subset.
+- **Per-tool input rendering.** `tool_input_format = function(tool_name,
+  input) -> string | nil` lets you decide exactly how each tool's input
+  is displayed below its header (custom Bash prefixes, compact Edit
+  previews, summaries for your favorite MCP tool). Return `nil` for the
+  built-in default.
+- **Per-tool icons.** Every tool gets a glyph (nerdfont auto-detected,
+  unicode fallback). Swap any of them: `tool_icons.icons = { Read = '📖',
+  Bash = '$', MyMcpTool = '🔧' }`. Set a `default` for unknown tools.
+- **Full highlight control.** `CcUser`, `CcAgent`, `CcTool`, `CcToolInput`,
+  `CcOutput`, `CcError`, `CcCost`, `CcDiffAdd/Delete/Hunk`, `CcCaret`,
+  `CcStl*`, and more — all link to existing colorscheme groups by default,
+  so your theme drives them. Override any with `vim.api.nvim_set_hl`.
+- **Layout knobs.** `layout = 'horizontal' | 'vertical'`, `prompt_height`,
+  per-window `line_numbers` and `wrap`, `default_fold_level`,
+  `max_tool_result_lines`, custom `foldtext` function.
+- **Themes + interactive theme picker** *(coming soon).* A built-in
+  gallery of visual mocks for every tool/turn type, with live theme
+  switching so you can see your changes in real time.
+
+See [Configuration](#configuration) and [Highlights](#highlights) for the
+full list.
+
 ## Requirements
 
 - Neovim **0.10+** (required for inline `virt_text` carets)
@@ -499,3 +533,5 @@ Feature-complete against the original plan. Small known gaps:
 
 - Telescope picker for `:CcHistory` (current picker is `vim.ui.select`)
 - Visual-selection context in `:CcSend` (include selection as file:line ref)
+
+See [todo.md](todo.md) for current progress/informal roadmap.
