@@ -6,16 +6,60 @@ foldable, progressive-disclosure output buffer.
 
 ## Why
 
-- Claude Code's TUI has rendering bugs and verbose output that overflows
-  terminal scrollback — in a buffer you can just scroll.
-- The markdown prompt gives you every vim motion, plugin, and keybinding
-  you've already configured. No cramped TUI input box.
-- Progressive disclosure folding lets long sessions stay readable: collapse
-  every turn to a one-liner, expand only what you care about. Verbose tool
-  outputs are collapsed by default.
-- Uses the `claude` CLI directly (zero extra dependencies beyond what you
-  already have), so all Claude Code features — skills, hooks, MCP servers,
-  `CLAUDE.md`, your team subscription auth — work out-of-the-box unmodified.
+I built this because I kept running into the same pain points using the
+Claude Code TUI day-to-day, and eventually wanted a better UI for myself.
+Most of these are well-documented in the `anthropics/claude-code` issue
+tracker; cc.nvim sidesteps them by rendering into regular Neovim buffers
+instead of taking over the terminal:
+
+- **Scrollback:** Since the TUI switched to an alternate screen
+  buffer ([#42670](https://github.com/anthropics/claude-code/issues/42670),
+  [#28077](https://github.com/anthropics/claude-code/issues/28077)), you can't
+  scroll up to read earlier messages — even ten messages back. And even if you
+  are not facing these issues, the default verbose output includes a lot of
+  tool results, which can quickly overflow your terminal scrollback limit
+  (which helps perf), cutting off the beginning of the session.
+  In a Neovim buffer it's just `gg` (reliably beginning of session), `G`
+  (latest message/enter tail mode), `<C-u>` / `<C-d>` (page up/down), search,
+  marks, yank (with no copy formatting issues caused by trailing whitespace).
+- **Rendering flicker and redraw jitter.** Streaming tokens in the TUI repaint
+  the whole screen; inside tmux this spirals into thousands of scroll
+  events per second ([#9935](https://github.com/anthropics/claude-code/issues/9935),
+  [#3648](https://github.com/anthropics/claude-code/issues/3648)). cc.nvim
+  appends to a buffer — no alt-screen, no repaint storms.
+- **Long sessions get sluggish.** The TUI holds and redraws the entire
+  conversation from the top on every update. A buffer doesn't care how
+  long the session is, and `history_max_records` caps resume rendering.
+- **Freezes and hangs.** `/plan` freezing the UI
+  ([#22032](https://github.com/anthropics/claude-code/issues/22032)) or
+  the renderer deadlocking with no input accepted
+  ([#25286](https://github.com/anthropics/claude-code/issues/25286)) —
+  the only fix is killing the process from another terminal. cc.nvim
+  runs `claude` as an async subprocess, so a stuck CLI never locks your
+  editor, and `:CcStop` sends a proper `control_request` interrupt.
+- **Tmux hostility.** Mouse-event capture breaks tmux copy/scroll
+  ([#38810](https://github.com/anthropics/claude-code/issues/38810)); SSH
+  and embedded terminals corrupt
+  ([#13504](https://github.com/anthropics/claude-code/issues/13504),
+  [#15875](https://github.com/anthropics/claude-code/issues/15875)). No
+  mouse capture here — tmux copy mode just works.
+- **Pasted text is collapsed to `[Pasted text +12 lines]`.** Painful to
+  review or revise, especially when you're dictating with speech-to-text
+  and need to scan what actually landed. The prompt buffer shows the
+  full text, always.
+- **Cramped input box.** The prompt is just a Neovim window — resize it
+  to whatever height suits you, and use every vim motion, plugin, autocomplete,
+  and keybinding you've already configured and are accustomed to.
+- **Verbose tool output overflows everything.** Tool results are folded
+  by default so session output stays scannable; when you do expand
+  something, a configurable `max_tool_result_lines` caps how much renders.
+  `:CcFold 0..3` toggles global disclosure levels. Foldlevel 1 is great for
+  scanning sessions at a glance. Then open folds to dig in.
+
+On top of avoiding the pain points above, cc.nvim uses the `claude` CLI
+directly (zero extra dependencies beyond what you already have), so all
+Claude Code features — skills, hooks, MCP servers, `CLAUDE.md`, your team
+subscription auth — work out-of-the-box unmodified.
 
 ## Requirements
 

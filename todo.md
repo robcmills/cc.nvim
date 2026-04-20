@@ -28,18 +28,20 @@
 - [ ] Add per tool call statusline (Running... (32s timeout 2m))
 - [x] Fix statusline thinking spinner (doesn't spin)
 - [x] Remove turn spinners
+- [ ] Add true e2e tests (requires brainstorming)
 - [ ] Fix missing mode in statusline on startup
 - [ ] Get rid of full line background highlight for folded lines (especially distracting on Output lines)
 - [ ] Identify most complex/fragile code and simplify (requires brainstorming)
 - [ ] Support "queued" prompts (submitted while agent is thinking or working)
+- [ ] Add support for /remote-control
+- [ ] Add support for session naming (/rename)
 - [ ] Enable window config 
   - [x] hide line numbers by default
   - [x] wrap output by default
-- [ ] Add support for session naming (/rename)
 - [ ] Add configurable themes support for customizing highlight groups, icons, etc.
+- [ ] Add a "theme viewer/switcher" to show visually mock examples of what each type of tool looks like, and user can interactively switch themes and see what it looks like live
 - [ ] Make resume history picker window larger
 - [ ] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
-- [ ] Add support for /remote-control
 - [ ] Rename CcNew -> CcClear and CcOpen -> CcNew
 - [ ] Fix :BuffersNext/Prev not working in output window
 - [ ] Improve lua types
