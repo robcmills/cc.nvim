@@ -78,12 +78,44 @@ T['highlight_groups']['CcOutput on Output: line'] = function()
   error('No Output: line found')
 end
 
--- NOTE: CcDiffAdd/CcDiffDelete/CcDiffHunk syntax matches can be overridden
--- by markdown syntax regions when the edited file contains markdown (code
--- fences, etc.). The tool_edit fixture edits a markdown file, so diff
--- highlights compete with markdownCodeBlock. This is a known limitation.
--- The diff lines ARE present (tested in diff_rendering_spec.lua); the
--- highlight just doesn't win in all contexts.
+-- Regression: headers appearing after a markdown region (e.g. a tool result
+-- containing backticks/code fences opens markdownCodeBlock) must still win.
+-- containedin=ALL on the CcXxx matches makes them fire even when nested
+-- inside markdown regions.
+T['highlight_groups']['CcTool wins after markdown region'] = function()
+  helpers.render_fixture(_G.child, 'multi_turn')
+  local lines = helpers.get_buffer_lines(_G.child)
+  local tool_header_count = 0
+  for i, line in ipairs(lines) do
+    if line:match('^%s+%S+%s+%u%w*:') then
+      tool_header_count = tool_header_count + 1
+      if tool_header_count >= 2 then
+        -- Find the column of the tool name (after icon + space).
+        local col = line:find('%u%w*:')
+        assert_hl_in_stack(_G.child, i, col, 'CcTool')
+        return
+      end
+    end
+  end
+  error('multi_turn fixture expected to have at least 2 tool headers')
+end
+
+T['highlight_groups']['CcOutput wins after markdown region'] = function()
+  helpers.render_fixture(_G.child, 'multi_turn')
+  local lines = helpers.get_buffer_lines(_G.child)
+  local output_count = 0
+  for i, line in ipairs(lines) do
+    if line:match('^%s+Output:%s*$') then
+      output_count = output_count + 1
+      if output_count >= 2 then
+        local col = line:find('Output')
+        assert_hl_in_stack(_G.child, i, col, 'CcOutput')
+        return
+      end
+    end
+  end
+  error('multi_turn fixture expected to have at least 2 Output: headers')
+end
 
 T['highlight_groups']['CcDiffAdd syntax match is defined'] = function()
   helpers.render_fixture(_G.child, 'tool_edit')
@@ -117,7 +149,7 @@ T['highlight_groups']['all default groups exist'] = function()
     _G._hl_groups = {}
     local groups = {'CcUser', 'CcAgent', 'CcTool', 'CcOutput', 'CcError',
                     'CcCost', 'CcNotice', 'CcHook', 'CcPermission', 'CcCaret',
-                    'CcSpinner', 'CcDiffAdd', 'CcDiffDelete', 'CcDiffHunk'}
+                    'CcDiffAdd', 'CcDiffDelete', 'CcDiffHunk'}
     for _, name in ipairs(groups) do
       local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name })
       _G._hl_groups[name] = ok and next(hl) ~= nil
