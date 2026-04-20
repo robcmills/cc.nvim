@@ -71,7 +71,7 @@ local defaults = {
       },
       -- Plain Unicode braille cycle — renders in any terminal.
       frames_unicode = { '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏' },
-      interval_ms = 250,
+      interval_ms = 500,
     },
   },
 
