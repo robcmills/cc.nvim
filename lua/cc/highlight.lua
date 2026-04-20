@@ -69,11 +69,12 @@ function M.apply_buffer_syntax(bufnr)
     -- Permission request/outcome lines
     vim.cmd([[syntax match CcPermission /^\s\+[⚠✓✗]\s\+\%(Permission\|Allowed\|Denied\):.*$/ containedin=ALL]])
 
-    -- Diff lines inside a tool input. The first non-whitespace char after the
-    -- indent is -, +, or @.
-    vim.cmd([[syntax match CcDiffAdd    /^\s\+\zs+.*$/ containedin=ALL]])
-    vim.cmd([[syntax match CcDiffDelete /^\s\+\zs-.*$/ containedin=ALL]])
-    vim.cmd([[syntax match CcDiffHunk   /^\s\+\zs@@.*@@$/ containedin=ALL]])
+    -- Diff lines inside a tool input. These are always prefixed with exactly
+    -- 8 spaces (see diff.lua INDENT), so we anchor on that to avoid matching
+    -- markdown bullets in agent prose which use a shallower indent.
+    vim.cmd([[syntax match CcDiffAdd    /^ \{8\}\zs+.*$/ containedin=ALL]])
+    vim.cmd([[syntax match CcDiffDelete /^ \{8\}\zs-.*$/ containedin=ALL]])
+    vim.cmd([[syntax match CcDiffHunk   /^ \{8\}\zs@@.*@@$/ containedin=ALL]])
   end)
 end
 
