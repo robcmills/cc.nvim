@@ -299,9 +299,7 @@ end
 --- so a replacement instance can swap its new buffers into the same layout.
 ---@param inst cc.Instance
 local function teardown_instance_keep_windows(inst)
-  if inst.output then
-    inst.output:stop_spinner()
-  end
+  require('cc.statusline_spinner').stop(inst)
   if inst.process then
     inst.process:close()
     inst.process = nil
@@ -323,9 +321,7 @@ end
 --- Tear down an instance: kill process, close windows, unlist buffer, remove from table.
 ---@param inst cc.Instance
 local function close_instance(inst)
-  if inst.output then
-    inst.output:stop_spinner()
-  end
+  require('cc.statusline_spinner').stop(inst)
   if inst.process then
     inst.process:close()
     inst.process = nil
@@ -403,7 +399,11 @@ function M.open(opts)
       if inst.output then
         inst.output:render_notice('Session ended')
       end
-      if inst.session then inst.session.is_streaming = false end
+      if inst.session then
+        inst.session.is_streaming = false
+        inst.session.turn_active = false
+      end
+      require('cc.statusline_spinner').stop(inst)
       require('cc.statusline').refresh(inst)
     end,
   })
@@ -469,7 +469,11 @@ function M.new_session()
       if new_inst.output then
         new_inst.output:render_notice('Session ended')
       end
-      if new_inst.session then new_inst.session.is_streaming = false end
+      if new_inst.session then
+        new_inst.session.is_streaming = false
+        new_inst.session.turn_active = false
+      end
+      require('cc.statusline_spinner').stop(new_inst)
       require('cc.statusline').refresh(new_inst)
     end,
   })
@@ -555,7 +559,11 @@ function M.resume(session_id)
         vim.notify('cc.nvim: claude exited with code ' .. code, vim.log.levels.WARN)
       end
       if inst.output then inst.output:render_notice('Session ended') end
-      if inst.session then inst.session.is_streaming = false end
+      if inst.session then
+        inst.session.is_streaming = false
+        inst.session.turn_active = false
+      end
+      require('cc.statusline_spinner').stop(inst)
       require('cc.statusline').refresh(inst)
     end,
   })
@@ -649,6 +657,8 @@ function M.submit()
   inst.output:follow_tail()
   inst.session:add_user_turn(text)
   inst.output:render_user_turn(text)
+  require('cc.statusline_spinner').sync(inst)
+  require('cc.statusline').refresh(inst)
 
   inst.process:write({
     type = 'user',
@@ -664,7 +674,7 @@ end
 function M.stop()
   local inst = get_current_instance()
   if not inst or not inst.process or not inst.process:is_alive() then return end
-  if not inst.session or not inst.session.is_streaming then return end
+  if not inst.session or not inst.session.turn_active then return end
   if inst.session.interrupt_pending then return end
   local request_id = inst.process:send_control_interrupt()
   if request_id then

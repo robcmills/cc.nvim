@@ -215,7 +215,6 @@ drives them):
 | `CcHook` | `Comment` |
 | `CcPermission` | `WarningMsg` |
 | `CcCaret` | `Comment` |
-| `CcSpinner` | `Comment` |
 | `CcDiffAdd` | `DiffAdd` |
 | `CcDiffDelete` | `DiffDelete` |
 | `CcDiffHunk` | `DiffChange` |

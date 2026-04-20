@@ -95,7 +95,7 @@ end
 
 --- Get all extmarks from a named namespace in the output buffer.
 ---@param child table
----@param ns_name string e.g. 'cc.carets' or 'cc.spinner'
+---@param ns_name string e.g. 'cc.carets'
 ---@return table[] extmarks
 function M.get_extmarks(child, ns_name)
   child.lua(string.format([==[

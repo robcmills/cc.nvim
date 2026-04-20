@@ -16,34 +16,33 @@
   - [x] when output is focused, it collapses. Folding should not change due to output being focused.
 - [x] Prompt submission should turn output tailing back on
 - [x] Add configurable statusline (requires brainstorming for UI)
+- [x] Add config option to show/hide thinking
+- [x] Tighten up poor vertical spacing and multiple consecutive blank lines
+- [x] Fix poor horizontal spacing and indentation (gaps after carets) (2 spaces not 4)
+- [x] Add unique "icons" for each entry and tool type (with nerdfont support) (configurable)
+- [x] Rename "Agent" tool to "Subagent"
+- [x] Format bash tool calls to show description first then command
+- [x] Format git commit tool calls to show commit message
+- [x] Format TodoWrite to look like a nice todo list
+- [x] Interrupt current turn via stream-json control_request (keeps session alive)
 - [ ] Add per tool call statusline (Running... (32s timeout 2m))
-- [ ] Fix statusline thinking spinner
+- [x] Fix statusline thinking spinner (doesn't spin)
+- [x] Remove turn spinners
 - [ ] Fix missing mode in statusline on startup
-- [ ] Add support plan mode toggle
-- [ ] Add support for todo lists (requires brainstorming)
-- [ ] Autosize prompt window to fit content (with configurable min/max heights)
+- [ ] Get rid of full line background highlight for folded lines (especially distracting on Output lines)
 - [ ] Identify most complex/fragile code and simplify (requires brainstorming)
-- [ ] Fix broken highlight groups
 - [ ] Support "queued" prompts (submitted while agent is thinking or working)
 - [ ] Enable window config 
   - [x] hide line numbers by default
   - [x] wrap output by default
 - [ ] Add support for session naming (/rename)
-- [x] Add config option to show/hide thinking
-- [x] Tighten up poor vertical spacing and multiple consecutive blank lines
-- [x] Fix poor horizontal spacing and indentation (gaps after carets) (2 spaces not 4)
-- [x] Add unique "icons" for each entry and tool type (with nerdfont support) (configurable)
 - [ ] Add configurable themes support for customizing highlight groups, icons, etc.
 - [ ] Make resume history picker window larger
-- [x] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
+- [ ] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
 - [ ] Add support for /remote-control
-- [x] Rename "Agent" tool to "Subagent"
-- [ ] Add lua types
-- [ ] Get rid of full line background highlight for folded lines (especially distracting on Output lines)
-- [x] Format bash tool calls to show description first then command
-- [x] Format git commit tool calls to show commit message
-- [x] Format TodoWrite to look like a nice todo list
 - [ ] Rename CcNew -> CcClear and CcOpen -> CcNew
 - [ ] Fix :BuffersNext/Prev not working in output window
-- [x] Interrupt current turn via stream-json control_request (keeps session alive)
-
+- [ ] Improve lua types
+- [ ] Autosize prompt window to fit content (with configurable min/max heights)
+- [ ] Add support plan mode toggle
+- [ ] Add support for todo lists (requires brainstorming)

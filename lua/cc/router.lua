@@ -24,6 +24,7 @@ end
 
 local function refresh_statusline(self)
   if self.instance then
+    require('cc.statusline_spinner').sync(self.instance)
     require('cc.statusline').refresh(self.instance)
   end
 end
@@ -35,7 +36,7 @@ end
 ---@param msg table SDK NDJSON message
 function Router:dispatch(msg)
   local t = msg.type
-  local before_streaming = self.session.is_streaming
+  local before_turn_active = self.session.turn_active
   if t == 'system' then
     self:_handle_system(msg)
   elseif t == 'stream_event' then
@@ -74,7 +75,7 @@ function Router:dispatch(msg)
 
   -- Refresh statusline on events that change visible state.
   if t == 'system' or t == 'result' or t == 'control_response'
-      or before_streaming ~= self.session.is_streaming then
+      or before_turn_active ~= self.session.turn_active then
     refresh_statusline(self)
   end
 end
@@ -172,6 +173,7 @@ function Router:_handle_control_response(msg)
   if self.session then
     self.session.interrupt_pending = false
     self.session.is_streaming = false
+    self.session.turn_active = false
   end
   if resp.subtype == 'success' then
     self.output:render_notice('Interrupted')

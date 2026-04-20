@@ -64,7 +64,6 @@ function M.new(session, buf_name)
     buf_name = buf_name or BUF_NAME_DEFAULT,
     streaming_block_type = nil,
     streaming_tool_id = nil,
-    spinner = nil, -- cc.Spinner, active during an assistant turn
     last_turn_role = nil, ---@type 'user'|'agent'|nil tracks consecutive turns
     agent_header_lnum = nil, ---@type integer? header line of current agent fold
   }, Output)
@@ -611,11 +610,6 @@ function Output:begin_assistant_turn()
   if is_continuation and self.agent_header_lnum then
     -- Consecutive agent turn: skip the header, stay inside existing fold.
     self:_append({ '' }, { 1 }, false)
-    -- Restart spinner on the original header.
-    if self.spinner then self.spinner:stop() end
-    local Spinner = require('cc.spinner')
-    self.spinner = Spinner.new(self.bufnr, self.agent_header_lnum)
-    self.spinner:start()
     return self.agent_header_lnum
   end
 
@@ -624,20 +618,7 @@ function Output:begin_assistant_turn()
   -- Header line (is_header skips blank-line collapsing and registers caret).
   local header_lnum = self:_append({ 'Agent:' }, { '>1' }, true)
   self.agent_header_lnum = header_lnum
-  -- Start spinner on the Agent header.
-  if self.spinner then self.spinner:stop() end
-  local Spinner = require('cc.spinner')
-  self.spinner = Spinner.new(self.bufnr, header_lnum)
-  self.spinner:start()
   return header_lnum
-end
-
---- Stop the current assistant-turn spinner (called on message_stop / result).
-function Output:stop_spinner()
-  if self.spinner then
-    self.spinner:stop()
-    self.spinner = nil
-  end
 end
 
 --- Content block started (text, thinking, or tool_use).
@@ -956,7 +937,6 @@ end
 ---@param result table
 function Output:render_result(result)
   self.last_turn_role = nil
-  self:stop_spinner()
   local parts = {}
   if result.total_cost_usd then
     table.insert(parts, string.format('$%.4f', result.total_cost_usd))
@@ -1017,7 +997,6 @@ function Output:render_historical_record(rec)
     end
   elseif rec.type == 'assistant' then
     self:begin_assistant_turn()
-    self:stop_spinner() -- no streaming for historical
     for _, block in ipairs(rec.blocks or {}) do
       if type(block) == 'table' then
         if block.type == 'text' then

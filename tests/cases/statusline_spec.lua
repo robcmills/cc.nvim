@@ -45,7 +45,7 @@ T['build_state']['reads session + instance fields'] = function()
     local session = Session.new()
     session.model = 'claude-opus-4-7'
     session.permission_mode = 'plan'
-    session.is_streaming = true
+    session.turn_active = true
     session.input_tokens = 1000
     session.output_tokens = 250
     session.cost_usd = 0.42
@@ -80,6 +80,34 @@ T['build_state']['empty session defaults'] = function()
   eq(_G.child.lua_get('_G._state.mode == nil'), true)
 end
 
+T['build_state']['is_streaming alone does not set is_thinking'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s.is_streaming = true
+    s.turn_active = false
+    _G._state = require('cc.statusline').build_state({ session = s })
+  ]])
+  eq(_G.child.lua_get('_G._state.is_thinking'), false)
+end
+
+T['build_state']['includes spinner_frame from statusline_spinner module'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      statusline = { spinner = { frames = { 'A', 'B' }, interval_ms = 100 } },
+    })
+    local Session = require('cc.session')
+    local s = Session.new()
+    s.turn_active = true
+    local inst = { session = s }
+    require('cc.statusline_spinner').start(inst)
+    _G._state = require('cc.statusline').build_state(inst)
+    require('cc.statusline_spinner').stop(inst)
+  ]])
+  -- Before the timer ticks, frame is 1 => 'A'.
+  eq(_G.child.lua_get('_G._state.spinner_frame'), 'A')
+end
+
 -- ---------------------------------------------------------------------------
 -- Default format
 -- ---------------------------------------------------------------------------
@@ -98,14 +126,26 @@ T['default_format']['empty state yields rule char at right edge'] = function()
   eq(out:find('─', 1, true) ~= nil, true)
 end
 
-T['default_format']['shows thinking glyph while streaming'] = function()
+T['default_format']['shows provided spinner_frame while turn is active'] = function()
+  _G.child.lua([[
+    _G._out = require('cc.statusline')._default_format({
+      is_thinking = true,
+      spinner_frame = 'SPIN',
+      total_tokens = 0,
+    })
+  ]])
+  eq(_G.child.lua_get("_G._out:find('SPIN', 1, true) ~= nil"), true)
+end
+
+T['default_format']['falls back to hourglass when no spinner_frame'] = function()
   _G.child.lua([[
     _G._out = require('cc.statusline')._default_format({
       is_thinking = true,
       total_tokens = 0,
     })
   ]])
-  eq(_G.child.lua_get("_G._out:find('⠿', 1, true) ~= nil"), true)
+  -- ⏳ (U+23F3) renders in any terminal; used when spinner_frame missing.
+  eq(_G.child.lua_get("_G._out:find('⏳', 1, true) ~= nil"), true)
 end
 
 T['default_format']['shows mode, tokens, branch+pr, session name, remote'] = function()

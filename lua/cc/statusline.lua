@@ -39,7 +39,9 @@ local function default_format(state)
   if state.interrupt_pending then
     table.insert(segments, HL_LINE .. 'interrupting…')
   elseif state.is_thinking then
-    table.insert(segments, HL_LINE .. '⠿')
+    local glyph = state.spinner_frame
+    if not glyph or glyph == '' then glyph = '⏳' end
+    table.insert(segments, HL_LINE .. glyph)
   end
   local toks = fmt_tokens(state.total_tokens)
   if toks ~= '' then
@@ -78,8 +80,14 @@ function M.build_state(instance)
   end
   local input_tokens = session and session.input_tokens or 0
   local output_tokens = session and session.output_tokens or 0
+  local spinner_frame = ''
+  if instance then
+    local ok, Spinner = pcall(require, 'cc.statusline_spinner')
+    if ok then spinner_frame = Spinner.current_frame(instance) end
+  end
   return {
-    is_thinking = session and session.is_streaming or false,
+    is_thinking = session and session.turn_active or false,
+    spinner_frame = spinner_frame,
     interrupt_pending = session and session.interrupt_pending or false,
     total_tokens = input_tokens + output_tokens,
     input_tokens = input_tokens,

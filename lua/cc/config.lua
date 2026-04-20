@@ -45,12 +45,34 @@ local defaults = {
 
   -- Statusline on the output window.
   -- format = function(state) -> string (Neovim statusline syntax).
-  -- state fields: is_thinking, total_tokens, input_tokens, output_tokens,
-  --   cost_usd, mode, branch, pr, effort, model, cli_version, session_name,
-  --   session_id, remote_control.
+  -- state fields: is_thinking, spinner_frame, total_tokens, input_tokens,
+  --   output_tokens, cost_usd, mode, branch, pr, effort, model, cli_version,
+  --   session_name, session_id, remote_control.
+  -- is_thinking is true from user submit through the final result message,
+  -- i.e. the whole span in which the agent is busy (including tool calls
+  -- and permission prompts).
+  -- spinner.use_nerdfont: nil (auto-detect), true, or false. nil defers to
+  -- nvim-web-devicons / mini.icons being loadable.
   statusline = {
     enabled = true,
     format = nil,
+    spinner = {
+      -- nil = auto-detect (mirrors tool_icons.use_nerdfont); true/false forces.
+      use_nerdfont = nil,
+      -- Active frames. nil => resolve from frames_nerdfont / frames_unicode
+      -- based on use_nerdfont. Users may set any of these three.
+      frames = nil,
+      -- Nerd Font fa-hourglass cycle (U+F254, U+F251, U+F252, U+F253).
+      frames_nerdfont = {
+        '\xef\x89\x94',
+        '\xef\x89\x91',
+        '\xef\x89\x92',
+        '\xef\x89\x93',
+      },
+      -- Plain Unicode braille cycle — renders in any terminal.
+      frames_unicode = { '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏' },
+      interval_ms = 250,
+    },
   },
 
   -- Keymaps

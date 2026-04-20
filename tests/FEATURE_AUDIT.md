@@ -165,7 +165,7 @@ cc.nvim's current `router.lua`, `output.lua`, `interactive.lua`, and
 | Fold levels 0-3 | Handled | Progressive disclosure |
 | Foldtext summaries | Handled | Role-aware with tool count and text preview |
 | Carets (▾/▸) | Handled | Inline virt_text synced to fold state |
-| Spinner | Handled | Braille animation on Agent header |
+| Spinner | Handled | Animated glyph in statusline during agent turns |
 | Cost/usage bar | Handled | `── $X.XX │ Nk in │ N out ──` |
 | Thinking blocks | Partial | Only when `show_thinking = true` |
 | Highlight groups (14 CcXxx) | Handled | Regex-based syntax matches |
@@ -209,7 +209,7 @@ These are the bread-and-butter features that every session exercises:
 25. **API retry** — retry notice
 26. **Hook started/response** — hook execution notices
 27. **Sub-agent started/done** — task_started/task_notification rendering
-28. **Spinner animation** — braille cycle on Agent header during streaming
+28. **Spinner animation** — animated glyph in statusline while turn is active (submit → result)
 29. **Tool elapsed time** — progressive time updates
 
 ### Tier 4 — Not yet handled (test to document current behavior, defer support)
