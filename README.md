@@ -9,12 +9,13 @@ foldable, progressive-disclosure output buffer.
 - Claude Code's TUI has rendering bugs and verbose output that overflows
   terminal scrollback — in a buffer you can just scroll.
 - The markdown prompt gives you every vim motion, plugin, and keybinding
-  you've already configured. No cramped input box.
+  you've already configured. No cramped TUI input box.
 - Progressive disclosure folding lets long sessions stay readable: collapse
-  every turn to a one-liner, expand only what you care about.
+  every turn to a one-liner, expand only what you care about. Verbose tool
+  outputs are collapsed by default.
 - Uses the `claude` CLI directly (zero extra dependencies beyond what you
   already have), so all Claude Code features — skills, hooks, MCP servers,
-  `CLAUDE.md`, your team subscription auth — work unmodified.
+  `CLAUDE.md`, your team subscription auth — work out-of-the-box unmodified.
 
 ## Requirements
 
@@ -60,14 +61,16 @@ on the bottom. Type your message, then press `<CR>` in normal mode (or run
 | `:CcOpen` | Open cc.nvim (spawn process, create buffers) |
 | `:CcClose` | Close cc.nvim (kill process, close windows) |
 | `:CcToggle` | Toggle visibility |
+| `:CcNew` | Start a fresh session in the current windows |
 | `:CcSend` | Submit the prompt buffer to the agent |
-| `:CcStop` | Interrupt current generation (SIGINT) |
+| `:CcStop` | Interrupt current turn (stream-json `control_request`) |
 | `:CcFold {n}` | Set output fold level (0..3) |
 | `:CcPlan` | Open in plan mode (`--permission-mode plan`) |
 | `:CcPlanShow` | Open the most recent plan file |
 | `:CcResume [id]` | Resume a session (picker if no id) |
 | `:CcContinue` | Resume most recent session for current cwd |
 | `:CcHistory` / `:CcHistory!` | Pick a session (! = all projects) |
+| `:CcDumpNdjson [path]` | Tee raw NDJSON from the subprocess to a file (no arg = stop) |
 
 ## Default keymaps
 
@@ -102,15 +105,44 @@ require('cc').setup({
   prompt_height = 10,          -- prompt buffer height (lines)
 
   -- Folding
-  default_fold_level = 1,      -- 0=minimal, 1=summaries, 2=inputs, 3=all
+  default_fold_level = 2,      -- 0=minimal, 1=summaries, 2=inputs, 3=all
   max_tool_result_lines = 50,  -- tool results beyond this are truncated
+  foldtext = nil,              -- function(info) -> string; nil = built-in default
+
+  -- Tool input rendering: function(tool_name, input) -> string | nil
+  -- Return a string to render below a tool header, or nil to use the default.
+  tool_input_format = nil,
 
   -- History / resume
-  history_max_records = 200,   -- cap records replayed on :CcResume
+  history_max_records = 500,   -- cap records rendered on resume; older collapsed into a notice
 
   -- Display
   show_thinking = false,       -- show thinking blocks
   show_cost = true,            -- show cost/usage after each turn
+  tool_icons = {
+    use_nerdfont = nil,        -- nil = auto-detect; true/false forces
+    default = nil,             -- icon for unknown tools
+    icons = {},                -- per-tool overrides, e.g. { Read = '📖', Bash = '$' }
+  },
+  line_numbers = {
+    output = false,            -- show line numbers in the output window
+    prompt = false,            -- show line numbers in the prompt window
+  },
+  wrap = {
+    output = true,             -- soft-wrap lines in the output window
+    prompt = true,             -- soft-wrap lines in the prompt window
+  },
+
+  -- Statusline rendered at the bottom of the output window
+  statusline = {
+    enabled = true,
+    format = nil,              -- function(state) -> string (Neovim statusline syntax)
+    spinner = {
+      use_nerdfont = nil,      -- nil = auto-detect; true/false forces
+      frames = nil,            -- override; nil resolves to frames_nerdfont / frames_unicode
+      interval_ms = 250,
+    },
+  },
 
   -- Keymaps
   keymaps = {
@@ -130,13 +162,14 @@ The output buffer is foldable with four logical levels:
 | `foldlevel` | What's visible |
 |---|---|
 | 0 | Only User / Agent turn headers |
-| 1 *(default)* | + agent text + tool summary lines (one-liners) |
-| 2 | + tool inputs (Bash commands, Edit diffs) |
+| 1 | + agent text + tool summary lines (one-liners) |
+| 2 *(default)* | + tool inputs (Bash commands, Edit diffs) |
 | 3 | + tool results (stdout, read file contents) |
 
 Every foldable header gets a caret prefix rendered as inline `virt_text`:
 `▾` when open, `▸` when folded. Carets stay in sync with Vim's fold state
-automatically.
+automatically. Tool headers use per-tool icons (nerdfont or unicode glyphs,
+auto-detected) instead of a plain `Tool:` prefix.
 
 Example at `foldlevel=1`:
 
@@ -146,9 +179,9 @@ Example at `foldlevel=1`:
 
 ▾ Agent:
     I'll look into the token expiration.
-    ▸ Tool: Read — src/auth.ts
-    ▸ Tool: Edit — src/auth.ts
-    ▸ Tool: Bash — npm test
+    ▸ 📖 Read: src/auth.ts
+    ▸ ✏️ Edit: src/auth.ts
+    ▸ $ Bash: npm test
     Fixed. The expiry was '1h'; changed to '24h'.
   ── $0.05 │ 12k in │ 55 out ──
 ```
@@ -184,6 +217,30 @@ Sources (merged, project overrides user overrides session):
 Works with nvim-cmp (registered as source `cc_slash`) or via buffer-local
 `omnifunc` (`<C-x><C-o>`) for users without nvim-cmp.
 
+## Statusline
+
+The output window gets its own statusline (requires `laststatus=2`, which
+cc.nvim sets automatically when attaching). The default format shows:
+
+- A spinner glyph (nerdfont or braille, auto-detected) while the agent is
+  working — active from user submit through the final `result` message,
+  covering tool calls and permission prompts. Shows `interrupting…` while
+  a `:CcStop` is in flight and awaiting the CLI's acknowledgement.
+- Cumulative session tokens (input + output)
+- Permission mode
+- Current git branch and PR number (if any)
+- Session name / `⚡` remote-control indicator when applicable
+
+Provide `statusline.format = function(state) ... end` to build your own.
+The `state` table exposes `is_thinking`, `spinner_frame`, `interrupt_pending`,
+`total_tokens`, `input_tokens`, `output_tokens`, `cost_usd`, `mode`, `branch`,
+`pr`, `model`, `cli_version`, `session_name`, `session_id`, and
+`remote_control`. Return a string using standard Neovim statusline syntax.
+
+`:CcStop` (or `<C-c>`) sends a stream-json `control_request` with
+`subtype: interrupt` on stdin. The process stays alive for the next turn;
+"Interrupted" only renders once the CLI acknowledges via `control_response`.
+
 ## Session history
 
 Every conversation is stored by Claude Code at
@@ -208,6 +265,7 @@ drives them):
 | `CcUser` | `Function` |
 | `CcAgent` | `String` |
 | `CcTool` | `Identifier` |
+| `CcToolInput` | `Normal` |
 | `CcOutput` | `Type` |
 | `CcError` | `ErrorMsg` |
 | `CcCost` | `Comment` |
@@ -218,6 +276,10 @@ drives them):
 | `CcDiffAdd` | `DiffAdd` |
 | `CcDiffDelete` | `DiffDelete` |
 | `CcDiffHunk` | `DiffChange` |
+| `CcStl` | (fg `#9aa5b1`) — statusline base |
+| `CcStlTokens` | (fg `#a9e39a`) — token count segment |
+| `CcStlMode` | (fg `#e6c07b`) — permission-mode segment |
+| `CcStlBranch` | (fg `#c3a6ff`) — git branch / PR segment |
 
 Override any of them in your colorscheme or via `vim.api.nvim_set_hl`.
 
@@ -253,7 +315,7 @@ for full isolation.
 ### Running tests
 
 ```bash
-./tests/run.sh                        # all 111 specs (minimal config)
+./tests/run.sh                        # all specs (minimal config)
 ./tests/run.sh output_rendering       # filter by spec file pattern
 ./tests/run.sh --config=rob           # run with Rob's full Neovim config
 ./tests/run.sh --visual simple_text   # render a fixture, print visual dump
@@ -269,17 +331,21 @@ tests/
 ├── rob_init.lua            # sources ~/.config/nvim/init.lua (full user config)
 ├── helpers.lua             # render_fixture(), replay_streaming(), visual_dump(), assertion helpers
 ├── cases/
-│   ├── output_rendering_spec.lua   # user/agent turn headers, text rendering
-│   ├── fold_spec.lua               # fold levels 0-3, :CcFold, foldtext summaries
-│   ├── diff_rendering_spec.lua     # Edit/Write/MultiEdit diffs
-│   ├── highlight_spec.lua          # CcXxx highlight group defaults
-│   ├── caret_spec.lua              # ▾/▸ extmark sync with fold state
-│   ├── interactive_spec.lua        # AskUserQuestion, permissions, MCP elicitation
-│   ├── streaming_spec.lua          # streaming-only types: hooks, tool_progress, api_retry, etc.
-│   ├── history_resume_spec.lua     # :CcResume transcript re-rendering
+│   ├── output_rendering_spec.lua    # user/agent turn headers, text rendering
+│   ├── fold_spec.lua                # fold levels 0-3, :CcFold, foldtext summaries
+│   ├── diff_rendering_spec.lua      # Edit/Write/MultiEdit diffs
+│   ├── highlight_spec.lua           # CcXxx highlight group defaults
+│   ├── caret_spec.lua               # ▾/▸ extmark sync with fold state
+│   ├── icons_spec.lua               # per-tool icon resolution + nerdfont detection
+│   ├── interactive_spec.lua         # AskUserQuestion, permissions, MCP elicitation
+│   ├── interrupt_spec.lua           # :CcStop control_request / control_response flow
+│   ├── statusline_spec.lua          # output-window statusline format + state
+│   ├── statusline_spinner_spec.lua  # spinner timer lifecycle and frame resolution
+│   ├── streaming_spec.lua           # streaming-only types: hooks, tool_progress, api_retry, etc.
+│   ├── history_resume_spec.lua      # :CcResume transcript re-rendering
 │   └── process_integration_spec.lua # full pipeline via fake_claude.sh subprocess
 ├── fixtures/
-│   ├── jsonl/              # 17 JSONL fixtures (resume path — curated from real sessions)
+│   ├── jsonl/              # 18 JSONL fixtures (resume path — curated from real sessions)
 │   ├── ndjson/             # 11 NDJSON fixtures (streaming path — captured via :CcDumpNdjson)
 │   ├── fake_claude.sh      # bash replay script for process-level integration tests
 │   └── fake_claude.lua     # nvim-l replay script (alternative)
@@ -333,7 +399,7 @@ extmarks — without running any assertions:
   2 [fl=     hl=             ]     Fix auth bug
   3 [fl=1    hl=CcAgent      ] ▾ Agent:
   4 [fl=     hl=             ]     I'll look into it.
-  5 [fl=2    hl=CcTool       ]   ▸ Tool: Read — src/auth.ts
+  5 [fl=2    hl=CcTool       ]   ▸ 📖 Read: src/auth.ts
       extmark=[('▸ ','CcCaret')]
 ```
 
@@ -388,5 +454,4 @@ If carets don't appear: you need Neovim 0.10+ for inline `virt_text`.
 Feature-complete against the original plan. Small known gaps:
 
 - Telescope picker for `:CcHistory` (current picker is `vim.ui.select`)
-- Richer status line integration (cost / permission mode indicators)
 - Visual-selection context in `:CcSend` (include selection as file:line ref)
