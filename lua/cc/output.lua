@@ -44,6 +44,7 @@ M._buf_state = {}
 ---@field header_lnum integer 1-indexed line number of the tool header (e.g. "  ▤ Read: /path")
 ---@field result_header_lnum integer? line where "▾ Output:" was inserted
 ---@field input_rendered boolean
+---@field input_end_lnum integer? last line of rendered tool input; insertion point for tool_result
 
 ---@class cc.Output
 ---@field bufnr integer
@@ -451,6 +452,108 @@ function Output:_append(lines, fold_levels, is_header)
   return first_lnum
 end
 
+--- Insert lines into the middle of the buffer at start_lnum (1-indexed),
+--- shifting all tracked line-number state (fold_levels, fold_headers,
+--- extmark_ids, tool_blocks line refs, agent_header_lnum) down by #lines.
+--- Used when a tool_result arrives while a later tool is still streaming:
+--- the Output: block must land after the owning tool's input, not at the
+--- end of the buffer where later tool headers already live.
+---@param start_lnum integer 1-indexed; new lines insert BEFORE this line
+---@param lines string[]
+---@param fold_levels (string|integer)[]?
+---@param is_header boolean? whether the FIRST inserted line registers a caret
+function Output:_insert_lines(start_lnum, lines, fold_levels, is_header)
+  local bufnr = self:ensure_buffer()
+  local state = M._buf_state[bufnr]
+  local n = #lines
+  if n == 0 then return end
+
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  if start_lnum > line_count then
+    -- Insertion point is past end; just append instead of shifting.
+    self:_append(lines, fold_levels, is_header)
+    return
+  end
+
+  local was_following = self:_is_following_tail()
+
+  local function shift_int_keyed(tbl)
+    local shifted = {}
+    for lnum, v in pairs(tbl) do
+      if type(lnum) == 'number' and lnum >= start_lnum then
+        shifted[lnum + n] = v
+      else
+        shifted[lnum] = v
+      end
+    end
+    return shifted
+  end
+  state.fold_levels = shift_int_keyed(state.fold_levels)
+  state.fold_headers = shift_int_keyed(state.fold_headers)
+  state.extmark_ids = shift_int_keyed(state.extmark_ids)
+
+  for _, meta in pairs(state.tool_blocks) do
+    if meta.header_lnum and meta.header_lnum >= start_lnum then
+      meta.header_lnum = meta.header_lnum + n
+    end
+    if meta.result_header_lnum and meta.result_header_lnum >= start_lnum then
+      meta.result_header_lnum = meta.result_header_lnum + n
+    end
+    if meta.input_end_lnum and meta.input_end_lnum >= start_lnum then
+      meta.input_end_lnum = meta.input_end_lnum + n
+    end
+  end
+
+  if state.pending_fold_closes then
+    for _, h in ipairs(state.pending_fold_closes) do
+      if h.lnum >= start_lnum then
+        h.lnum = h.lnum + n
+      end
+    end
+  end
+
+  if self.agent_header_lnum and self.agent_header_lnum >= start_lnum then
+    self.agent_header_lnum = self.agent_header_lnum + n
+  end
+
+  for i = 1, n do
+    local lnum = start_lnum + i - 1
+    local fl = fold_levels and fold_levels[i]
+    if fl ~= nil then
+      state.fold_levels[lnum] = fl
+    else
+      state.fold_levels[lnum] = state.fold_levels[lnum - 1] or 0
+    end
+  end
+  if is_header then
+    state.fold_headers[start_lnum] = true
+  end
+
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, start_lnum - 1, start_lnum - 1, false, lines)
+  vim.bo[bufnr].modifiable = false
+
+  for i = 1, n do
+    local lnum = start_lnum + i - 1
+    local fl = state.fold_levels[lnum]
+    if type(fl) == 'string' then
+      local depth = tonumber(fl:match('[>%<]?(%d+)'))
+      if depth and depth > 0 then
+        state.pending_fold_closes = state.pending_fold_closes or {}
+        table.insert(state.pending_fold_closes, { lnum = lnum, depth = depth })
+      end
+    end
+  end
+
+  if was_following then
+    self:_follow_tail()
+  end
+  vim.schedule(function()
+    M._flush_pending_fold_closes(bufnr)
+    M.refresh_carets(bufnr)
+  end)
+end
+
 --- Close any deferred new fold headers whose depth exceeds foldlevel in
 --- each window showing this buffer. Only closes when the fold has grown
 --- past a single line (so zc targets it, not its parent) or when the
@@ -674,8 +777,19 @@ function Output:on_content_block_stop(block)
     end
     -- Render the full input at fold level 2 (multi-line if needed)
     if meta and not meta.input_rendered then
-      self:_render_tool_input(block.name, block.input)
+      local last_lnum = self:_render_tool_input(block.name, block.input)
       meta.input_rendered = true
+      meta.input_end_lnum = last_lnum or meta.header_lnum
+      -- If a tool_result for this tool arrived during streaming (race: client
+      -- finished the tool while Claude was still streaming the next tool_use),
+      -- flush it now so Output: lands right after this tool's input.
+      if state.pending_results then
+        local pending = state.pending_results[block.id or '']
+        if pending then
+          state.pending_results[block.id or ''] = nil
+          self:_render_tool_result_for(meta, pending.content, pending.is_error)
+        end
+      end
     end
   end
   self.streaming_block_type = nil
@@ -804,8 +918,9 @@ end
 --- Render tool input block at fold level 2 (below the tool header).
 ---@param tool_name string
 ---@param input table?
+---@return integer? last_lnum 1-indexed last line written, or nil if nothing rendered
 function Output:_render_tool_input(tool_name, input)
-  if not input then return end
+  if not input then return nil end
   local config = require('cc.config').options
   local body_lines
   if type(config.tool_input_format) == 'function' then
@@ -817,7 +932,7 @@ function Output:_render_tool_input(tool_name, input)
   if not body_lines then
     body_lines = default_tool_body(tool_name, input)
   end
-  if not body_lines or #body_lines == 0 then return end
+  if not body_lines or #body_lines == 0 then return nil end
 
   local lines = {}
   local levels = {}
@@ -828,11 +943,15 @@ function Output:_render_tool_input(tool_name, input)
     table.insert(lines, pre_indented and l or ('    ' .. l))
     table.insert(levels, 2)
   end
-  self:_append(lines, levels, false)
+  local first_lnum = self:_append(lines, levels, false)
+  return first_lnum + #lines - 1
 end
 
 --- Render a tool_result block (from a user-type NDJSON message).
---- Appends a "▾ Output:" sub-header (fold level >3) and the content (level 3).
+--- Places a "▾ Output:" sub-header (fold level >3) and the content (level 3)
+--- right after the owning tool's input block. If the input hasn't rendered
+--- yet (streaming race: client finished the tool before Claude's
+--- content_block_stop fired), defer until on_content_block_stop flushes it.
 ---@param tool_use_id string
 ---@param content string|table
 ---@param is_error boolean?
@@ -840,11 +959,24 @@ function Output:render_tool_result(tool_use_id, content, is_error)
   local state = M._buf_state[self.bufnr]
   local meta = state.tool_blocks[tool_use_id]
   if not meta then
-    -- Tool not tracked (rare); render at end as a standalone note.
+    -- Tool not tracked (rare); drop.
     return
   end
+  if not meta.input_rendered then
+    state.pending_results = state.pending_results or {}
+    state.pending_results[tool_use_id] = { content = content, is_error = is_error }
+    return
+  end
+  self:_render_tool_result_for(meta, content, is_error)
+end
 
-  -- Build result text from content (string or array of blocks).
+--- Actually render the Output:/Error: block for a tool, inserting at the
+--- line right after the tool's input. Shifts later tool headers down as
+--- needed via _insert_lines.
+---@param meta cc.OutputToolBlock
+---@param content string|table
+---@param is_error boolean?
+function Output:_render_tool_result_for(meta, content, is_error)
   local text_parts = {}
   if type(content) == 'string' then
     table.insert(text_parts, content)
@@ -859,7 +991,6 @@ function Output:render_tool_result(tool_use_id, content, is_error)
   end
   local text = table.concat(text_parts, '\n')
 
-  -- Truncate for buffer display; full result stored on meta for lazy expansion.
   local config = require('cc.config').options
   local max_lines = config.max_tool_result_lines or 50
   local all_lines = vim.split(text, '\n', { plain = true })
@@ -871,23 +1002,29 @@ function Output:render_tool_result(tool_use_id, content, is_error)
     truncated = true
   end
 
-  local header_text = '    ' .. (is_error and 'Error:' or 'Output:')
-  local header_lnum = self:_append({ header_text }, { '>3' }, true)
-  meta.result_header_lnum = header_lnum
-  meta.full_result = text
-
-  local body_lines = {}
-  local body_levels = {}
+  local lines = { '    ' .. (is_error and 'Error:' or 'Output:') }
+  local levels = { '>3' }
   for _, l in ipairs(display_lines) do
-    table.insert(body_lines, '      ' .. l)
-    table.insert(body_levels, 3)
+    table.insert(lines, '      ' .. l)
+    table.insert(levels, 3)
   end
   if truncated then
-    table.insert(body_lines, string.format('      [... %d more lines]', #all_lines - max_lines))
-    table.insert(body_levels, 3)
+    table.insert(lines, string.format('      [... %d more lines]', #all_lines - max_lines))
+    table.insert(levels, 3)
   end
-  if #body_lines > 0 then
-    self:_append(body_lines, body_levels, false)
+
+  local bufnr = self.bufnr
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  local anchor = meta.input_end_lnum or meta.header_lnum or line_count
+  local insertion_point = anchor + 1
+
+  meta.full_result = text
+  if insertion_point > line_count then
+    local first_lnum = self:_append(lines, levels, true)
+    meta.result_header_lnum = first_lnum
+  else
+    meta.result_header_lnum = insertion_point
+    self:_insert_lines(insertion_point, lines, levels, true)
   end
 end
 

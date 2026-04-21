@@ -1,0 +1,16 @@
+{"type":"system","subtype":"init","session_id":"test-stream-race-001","tools":["Grep"],"model":"claude-sonnet-4-20250514","permissionMode":"auto"}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_race01","role":"assistant","type":"message","model":"claude-sonnet-4-20250514"}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_race_1","name":"Grep","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"pattern\":\"remote\",\"path\":\"README.md\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_race_2","name":"Grep","input":{}}}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_race_1","content":"README:first result body","is_error":false}]}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"pattern\":\"remote\",\"path\":\"router.lua\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":1}}
+{"type":"stream_event","event":{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_race_3","name":"Grep","input":{}}}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_race_2","content":"router:second result body","is_error":false}]}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"pattern\":\"remote\",\"path\":\"FEATURE_AUDIT.md\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":2}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_race_3","content":"feature:third result body","is_error":false}]}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"result","total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":50}}

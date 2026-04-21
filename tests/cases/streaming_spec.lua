@@ -289,6 +289,82 @@ T['multi_block']['renders final text'] = function()
 end
 
 -- ---------------------------------------------------------------------------
+-- Parallel tool_result race: a tool_result arriving while the next tool's
+-- content_block is still streaming must still render Output: under the
+-- correct tool's input — not between the next tool's header and its input.
+-- ---------------------------------------------------------------------------
+T['parallel_tool_result_race'] = MiniTest.new_set()
+
+T['parallel_tool_result_race']['output lands under owning tool input, not next tool header'] = function()
+  helpers.replay_streaming(_G.child, 'parallel_tool_result_race')
+  local lines = helpers.get_buffer_lines(_G.child)
+
+  -- Find each tool header and verify each Output: appears BEFORE the next tool header.
+  local tool_header_rows = {}
+  local output_header_rows = {}
+  for i, line in ipairs(lines) do
+    if line:match('^%s+%S+%s+Grep:') then
+      table.insert(tool_header_rows, i)
+    elseif line:match('^%s+Output:%s*$') then
+      table.insert(output_header_rows, i)
+    end
+  end
+  eq(#tool_header_rows, 3)
+  eq(#output_header_rows, 3)
+
+  -- Each tool N's Output must appear before tool N+1's header.
+  if output_header_rows[1] > tool_header_rows[2] then
+    error(string.format(
+      'tool 1 Output (line %d) appears after tool 2 header (line %d):\n%s',
+      output_header_rows[1], tool_header_rows[2], table.concat(lines, '\n')))
+  end
+  if output_header_rows[2] > tool_header_rows[3] then
+    error(string.format(
+      'tool 2 Output (line %d) appears after tool 3 header (line %d):\n%s',
+      output_header_rows[2], tool_header_rows[3], table.concat(lines, '\n')))
+  end
+end
+
+T['parallel_tool_result_race']['each result body is grouped with its owning tool'] = function()
+  helpers.replay_streaming(_G.child, 'parallel_tool_result_race')
+  local lines = helpers.get_buffer_lines(_G.child)
+
+  local function line_of(pat)
+    for i, l in ipairs(lines) do
+      if l:find(pat, 1, true) then return i end
+    end
+    error('pattern not found: ' .. pat .. '\n' .. table.concat(lines, '\n'))
+  end
+
+  local first_body = line_of('README:first result body')
+  local second_header = line_of('router.lua')
+  local second_body = line_of('router:second result body')
+  local third_header = line_of('FEATURE_AUDIT.md')
+  local third_body = line_of('feature:third result body')
+
+  -- Tool 1's result body must come before tool 2's input references router.lua.
+  if first_body > second_header then
+    error('tool 1 result appears after tool 2 input:\n' .. table.concat(lines, '\n'))
+  end
+  if second_body > third_header then
+    error('tool 2 result appears after tool 3 input:\n' .. table.concat(lines, '\n'))
+  end
+  if not (first_body < second_body and second_body < third_body) then
+    error('result bodies out of order:\n' .. table.concat(lines, '\n'))
+  end
+end
+
+T['parallel_tool_result_race']['all three inputs and outputs render'] = function()
+  helpers.replay_streaming(_G.child, 'parallel_tool_result_race')
+  assert_buffer_contains(_G.child, 'README%.md')
+  assert_buffer_contains(_G.child, 'router%.lua')
+  assert_buffer_contains(_G.child, 'FEATURE_AUDIT%.md')
+  assert_buffer_contains(_G.child, 'README:first result body')
+  assert_buffer_contains(_G.child, 'router:second result body')
+  assert_buffer_contains(_G.child, 'feature:third result body')
+end
+
+-- ---------------------------------------------------------------------------
 -- API retry notice
 -- ---------------------------------------------------------------------------
 T['api_retry'] = MiniTest.new_set()
