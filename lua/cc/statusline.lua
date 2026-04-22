@@ -30,6 +30,7 @@ local HL_LINE    = '%#CcStl#'
 local HL_TOKENS  = '%#CcStlTokens#'
 local HL_MODE    = '%#CcStlMode#'
 local HL_BRANCH  = '%#CcStlBranch#'
+local HL_SESSION = '%#CcStlSession#'
 local SEP = HL_LINE .. ' ── '
 
 ---@param state table
@@ -58,7 +59,7 @@ local function default_format(state)
     table.insert(segments, b)
   end
   if state.session_name and state.session_name ~= '' then
-    table.insert(segments, HL_LINE .. state.session_name)
+    table.insert(segments, HL_SESSION .. state.session_name)
   end
   if state.remote_control then
     table.insert(segments, HL_LINE .. '⚡')

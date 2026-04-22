@@ -3,8 +3,10 @@
 -- Layout: ~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
 --   Encoded cwd: "/" -> "-" (e.g. /Users/foo/bar -> -Users-foo-bar)
 -- Records of interest:
---   {"type":"user",      "message":{"role":"user", "content": "<str>" | [blocks...]}}
---   {"type":"assistant", "message":{"role":"assistant", "content": [blocks...]}}
+--   {"type":"user",         "message":{"role":"user", "content": "<str>" | [blocks...]}}
+--   {"type":"assistant",    "message":{"role":"assistant", "content": [blocks...]}}
+--   {"type":"custom-title", "customTitle":"<name>","sessionId":"..."} — user rename
+--   {"type":"ai-title",     "aiTitle":"<name>","sessionId":"..."}     — AI-generated
 -- Other record types (snapshots, hooks, system, permission-mode) are skipped.
 
 local M = {}
@@ -43,15 +45,19 @@ local function list_in_dir(project_dir)
     local stat = vim.uv.fs_stat(path)
     if stat then
       local session_id = vim.fn.fnamemodify(path, ':t:r')
-      -- Title = first user-string message; pulled from the file.
-      local title, cwd = M._extract_metadata(path)
+      local meta = M._extract_metadata(path)
+      -- Display title precedence: user custom-title > ai-title > first user message.
+      local display = meta.custom_title or meta.ai_title or meta.first_prompt
       table.insert(entries, {
         session_id = session_id,
         path = path,
         mtime = stat.mtime.sec,
         size = stat.size,
-        title = title or '(empty)',
-        cwd = cwd,
+        title = display or '(empty)',
+        custom_title = meta.custom_title,
+        ai_title = meta.ai_title,
+        first_prompt = meta.first_prompt,
+        cwd = meta.cwd,
       })
     end
   end
@@ -59,31 +65,67 @@ local function list_in_dir(project_dir)
   return entries
 end
 
---- Read the first user-string message + cwd from a JSONL without loading everything.
+--- Read session-level metadata from a JSONL without loading everything.
+--- Scans the whole file (bounded by file size) so late renames win over early ones.
 ---@param path string
----@return string? title, string? cwd
+---@return { custom_title: string?, ai_title: string?, first_prompt: string?, cwd: string? }
 function M._extract_metadata(path)
+  local meta = {}
   local f = io.open(path, 'r')
-  if not f then return nil, nil end
-  local title, cwd
-  -- Read up to 200 lines or until we have both.
-  for _ = 1, 200 do
-    local line = f:read('*l')
-    if not line then break end
+  if not f then return meta end
+  for line in f:lines() do
     local ok, rec = pcall(vim.json.decode, line, { luanil = { object = true, array = true } })
     if ok and type(rec) == 'table' then
-      if not cwd and rec.cwd then cwd = rec.cwd end
-      if not title and rec.type == 'user' and type(rec.message) == 'table' then
+      if not meta.cwd and rec.cwd then meta.cwd = rec.cwd end
+      if rec.type == 'custom-title' and type(rec.customTitle) == 'string' then
+        -- Last write wins; empty string clears (matches Claude Code's behavior).
+        if rec.customTitle == '' then
+          meta.custom_title = nil
+        else
+          meta.custom_title = rec.customTitle
+        end
+      elseif rec.type == 'ai-title' and type(rec.aiTitle) == 'string' then
+        meta.ai_title = rec.aiTitle
+      elseif not meta.first_prompt and rec.type == 'user' and type(rec.message) == 'table' then
         local c = rec.message.content
         if type(c) == 'string' and c ~= '' then
-          title = c:gsub('\n', ' '):sub(1, 120)
+          meta.first_prompt = c:gsub('\n', ' '):sub(1, 120)
         end
       end
-      if title and cwd then break end
     end
   end
   f:close()
-  return title, cwd
+  return meta
+end
+
+--- Resolve the JSONL path for a session in the given cwd.
+---@param session_id string
+---@param cwd string?
+---@return string? path
+function M.session_path(session_id, cwd)
+  cwd = cwd or vim.fn.getcwd()
+  local project_dir = PROJECTS_DIR .. '/' .. M.encode_cwd(cwd)
+  local path = project_dir .. '/' .. session_id .. '.jsonl'
+  local stat = vim.uv.fs_stat(path)
+  if stat then return path end
+  return nil
+end
+
+--- Append a `custom-title` entry to a session's JSONL. Matches Claude Code's
+--- `saveCustomTitle` on-disk format so the TUI sees the rename.
+--- Empty string clears the custom title (readers treat it as no-title).
+---@param path string
+---@param session_id string
+---@param name string
+---@return boolean ok, string? err
+function M.append_custom_title(path, session_id, name)
+  local f, err = io.open(path, 'a')
+  if not f then return false, err end
+  local rec = { type = 'custom-title', customTitle = name, sessionId = session_id }
+  f:write(vim.json.encode(rec))
+  f:write('\n')
+  f:close()
+  return true
 end
 
 ---@class cc.HistoryEntry
@@ -91,7 +133,10 @@ end
 ---@field path string
 ---@field mtime integer
 ---@field size integer
----@field title string
+---@field title string resolved display title (custom > ai > first prompt)
+---@field custom_title string? user rename via /rename, if any
+---@field ai_title string? AI-generated title, if any
+---@field first_prompt string? first user-string message
 ---@field cwd string?
 
 --- List sessions for the given cwd (defaults to vim.fn.getcwd()).
@@ -167,7 +212,7 @@ end
 --- observed. Used by resume to seed the statusline before the subprocess
 --- has emitted its system:init.
 ---@param path string
----@return { input_tokens: integer, output_tokens: integer, cost_usd: number, model: string?, permission_mode: string? }
+---@return { input_tokens: integer, output_tokens: integer, cost_usd: number, model: string?, permission_mode: string?, custom_title: string?, ai_title: string? }
 function M.read_session_meta(path)
   local meta = {
     input_tokens = 0,
@@ -175,6 +220,8 @@ function M.read_session_meta(path)
     cost_usd = 0,
     model = nil,
     permission_mode = nil,
+    custom_title = nil,
+    ai_title = nil,
   }
   local f = io.open(path, 'r')
   if not f then return meta end
@@ -183,6 +230,11 @@ function M.read_session_meta(path)
     if ok and type(rec) == 'table' then
       if rec.permissionMode then meta.permission_mode = rec.permissionMode end
       if rec.permission_mode then meta.permission_mode = rec.permission_mode end
+      if rec.type == 'custom-title' and type(rec.customTitle) == 'string' then
+        meta.custom_title = rec.customTitle ~= '' and rec.customTitle or nil
+      elseif rec.type == 'ai-title' and type(rec.aiTitle) == 'string' then
+        meta.ai_title = rec.aiTitle
+      end
       local msg = rec.message
       if type(msg) == 'table' then
         if msg.model then meta.model = msg.model end

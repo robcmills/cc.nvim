@@ -28,7 +28,7 @@
 - [x] Fix statusline thinking spinner (doesn't spin)
 - [x] Remove turn spinners
 - [ ] Add support for /remote-control
-- [ ] Add support for session naming (/rename)
+- [x] Add support for session naming (/rename)
 - [ ] Support "queued" prompts (submitted while agent is thinking or working)
 - [ ] Add syntax highlighting for code blocks in output
 - [ ] Explore potentially using foldcolumn

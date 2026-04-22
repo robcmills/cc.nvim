@@ -25,6 +25,8 @@ local M = {}
 ---@field prompt_winid integer?
 ---@field last_session_id string?
 ---@field last_plan_file string?
+---@field session_name string? user-set session title (set via /rename)
+---@field remote_control_active boolean?
 
 local instances = {} -- keyed by prompt bufnr
 local next_instance_id = 1
@@ -208,6 +210,7 @@ local function create_instance(opts)
     prompt_winid = nil,
     last_session_id = nil,
     last_plan_file = nil,
+    session_name = nil,
   }
 
   inst.output = Output.new(inst.session, output_name)
@@ -519,6 +522,7 @@ function M.resume(session_id)
     inst.session.model = meta.model or inst.session.model
     inst.session.permission_mode =
       meta.permission_mode or config.permission_mode or inst.session.permission_mode
+    inst.session_name = meta.custom_title or meta.ai_title or inst.session_name
     local records = history.read_transcript(path)
     local max = config.history_max_records or 200
     local start_idx = 1
@@ -652,6 +656,13 @@ function M.submit()
     return
   end
   local text = inst.prompt:read()
+
+  -- Intercept client-side slash commands before forwarding to the agent.
+  if M._try_handle_client_command(inst, text) then
+    inst.prompt:clear()
+    return
+  end
+
   inst.prompt:clear()
 
   inst.output:follow_tail()
@@ -666,6 +677,58 @@ function M.submit()
     message = { role = 'user', content = text },
     parent_tool_use_id = vim.NIL,
   })
+end
+
+--- Client-side slash command dispatch. Returns true if the text was handled
+--- locally (and must not be forwarded to the agent).
+---@param inst cc.Instance
+---@param text string raw prompt text
+---@return boolean handled
+function M._try_handle_client_command(inst, text)
+  local trimmed = text:match('^%s*(.-)%s*$') or ''
+  local cmd, args = trimmed:match('^/([%w_-]+)%s*(.*)$')
+  if not cmd then return false end
+  if cmd == 'rename' then
+    M._handle_rename(inst, args or '')
+    return true
+  end
+  return false
+end
+
+--- Persist a user-chosen session title. Matches Claude Code's on-disk format
+--- (a `custom-title` JSONL record) so renames are visible from the TUI too.
+---@param inst cc.Instance
+---@param args string raw arguments after `/rename `
+function M._handle_rename(inst, args)
+  local name = args:match('^%s*(.-)%s*$') or ''
+  local history = require('cc.history')
+  local session_id = inst.last_session_id
+  if not session_id or session_id == '' then
+    inst.output:render_notice('/rename: no session id yet — wait for first response')
+    return
+  end
+  if name == '' then
+    local current = inst.session_name
+    if current and current ~= '' then
+      inst.output:render_notice('/rename: current title is "' .. current .. '" — usage: /rename <name>')
+    else
+      inst.output:render_notice('/rename: usage: /rename <name>')
+    end
+    return
+  end
+  local path = history.session_path(session_id)
+  if not path then
+    inst.output:render_notice('/rename: transcript not yet on disk — try again after next turn')
+    return
+  end
+  local ok, err = history.append_custom_title(path, session_id, name)
+  if not ok then
+    inst.output:render_notice('/rename: failed to write title: ' .. tostring(err))
+    return
+  end
+  inst.session_name = name
+  inst.output:render_notice('Session renamed to: ' .. name)
+  require('cc.statusline').refresh(inst)
 end
 
 --- Public: interrupt the current turn without killing the CLI process.

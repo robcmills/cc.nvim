@@ -3,6 +3,8 @@
 --      for this session (built-ins + skills + MCP + custom commands)
 --   2. ~/.claude/commands/*.md — descriptions + arguments docstrings
 --   3. <cwd>/.claude/commands/*.md — project-level overrides
+--   4. cc.nvim-native commands intercepted in init.lua M._try_handle_client_command
+--      (not forwarded to the agent — they don't come from system/init).
 -- Merged by name; descriptions from files preferred over bare init names.
 
 local M = {}
@@ -10,7 +12,13 @@ local M = {}
 ---@class cc.SlashCmd
 ---@field name string
 ---@field description string?
----@field source string  'init' | 'user' | 'project'
+---@field source string  'init' | 'user' | 'project' | 'client'
+
+-- Client-side slash commands: handled by cc.nvim, not forwarded to the agent.
+---@type cc.SlashCmd[]
+local CLIENT_COMMANDS = {
+  { name = 'rename', description = 'Rename the current conversation', source = 'client' },
+}
 
 --- Parse YAML-frontmatter `description` from a markdown file.
 ---@param path string
@@ -59,6 +67,13 @@ function M.list(session_commands)
   scan_dir(vim.fn.expand('~/.claude/commands'), 'user', byname)
   -- Project commands take final precedence.
   scan_dir(vim.fn.getcwd() .. '/.claude/commands', 'project', byname)
+  -- cc.nvim client-side commands: only surfaced when not already claimed by
+  -- the agent's slash_commands (so upstream wins if /rename becomes SDK-visible).
+  for _, cmd in ipairs(CLIENT_COMMANDS) do
+    if not byname[cmd.name] or byname[cmd.name].source == 'init' then
+      byname[cmd.name] = cmd
+    end
+  end
 
   local list = {}
   for _, v in pairs(byname) do table.insert(list, v) end

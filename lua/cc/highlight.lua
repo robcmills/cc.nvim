@@ -25,6 +25,7 @@ local defaults = {
   CcStlTokens   = { fg = '#a9e39a' }, -- light green
   CcStlMode     = { fg = '#e6c07b' }, -- yellow
   CcStlBranch   = { fg = '#c3a6ff' }, -- light purple
+  CcStlSession  = { fg = '#8ecae6' }, -- light blue
 }
 
 function M.set_defaults()
