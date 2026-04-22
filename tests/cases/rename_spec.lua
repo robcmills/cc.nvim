@@ -145,14 +145,18 @@ T['dispatch']['handler parses name and sets instance.session_name'] = function()
     history.session_path = function(sid) if sid == session_id then return path end end
 
     local notices = {}
+    local prompt_name_calls = {}
     local inst = {
       last_session_id = session_id,
       session_name = nil,
       session = {},
-      output = { render_notice = function(_, text) table.insert(notices, text) end },
+      output = {
+        render_notice = function(self, text) table.insert(notices, text) end,
+      },
+      prompt = {
+        set_buf_name = function(self, name) table.insert(prompt_name_calls, name) end,
+      },
     }
-    -- Inline the inst 'self' style: output:render_notice(text) needs : calling
-    inst.output.render_notice = function(self, text) table.insert(notices, text) end
 
     local cc = require('cc')
     cc._handle_rename(inst, 'my-new-name')
@@ -165,12 +169,14 @@ T['dispatch']['handler parses name and sets instance.session_name'] = function()
       notice = notices[1],
       last_type = last_rec.type,
       last_title = last_rec.customTitle,
+      prompt_name = prompt_name_calls[1],
     }
   end)()]])
   eq(result.session_name, 'my-new-name')
   eq(result.last_type, 'custom-title')
   eq(result.last_title, 'my-new-name')
   eq(result.notice, 'Session renamed to: my-new-name')
+  eq(result.prompt_name, 'cc-my-new-name')
 end
 
 T['dispatch']['empty args prints usage'] = function()

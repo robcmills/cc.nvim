@@ -523,6 +523,9 @@ function M.resume(session_id)
     inst.session.permission_mode =
       meta.permission_mode or config.permission_mode or inst.session.permission_mode
     inst.session_name = meta.custom_title or meta.ai_title or inst.session_name
+    if inst.session_name and inst.session_name ~= '' then
+      M._apply_session_buf_names(inst, inst.session_name)
+    end
     local records = history.read_transcript(path)
     local max = config.history_max_records or 200
     local start_idx = 1
@@ -695,6 +698,18 @@ function M._try_handle_client_command(inst, text)
   return false
 end
 
+--- Apply the session-name-derived buffer name to the prompt buffer. Only
+--- the prompt is `buflisted`, so renaming the output (nofile/hide) would not
+--- surface anywhere. Test stubs may omit `prompt`, so guard for nil.
+---@param inst cc.Instance
+---@param name string session title (non-empty)
+function M._apply_session_buf_names(inst, name)
+  if not name or name == '' then return end
+  if inst.prompt and inst.prompt.set_buf_name then
+    inst.prompt:set_buf_name('cc-' .. name)
+  end
+end
+
 --- Persist a user-chosen session title. Matches Claude Code's on-disk format
 --- (a `custom-title` JSONL record) so renames are visible from the TUI too.
 ---@param inst cc.Instance
@@ -727,6 +742,7 @@ function M._handle_rename(inst, args)
     return
   end
   inst.session_name = name
+  M._apply_session_buf_names(inst, name)
   inst.output:render_notice('Session renamed to: ' .. name)
   require('cc.statusline').refresh(inst)
 end

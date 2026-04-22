@@ -113,6 +113,18 @@ function Prompt:set_window(winid)
   self.winid = winid
 end
 
+--- Rename the prompt buffer (e.g. to reflect a session title). No-op on empty
+--- input or if the buffer isn't yet created. Wrapped in pcall so a name
+--- collision (E95) doesn't abort the caller.
+---@param name string
+function Prompt:set_buf_name(name)
+  if not name or name == '' then return end
+  self.buf_name = name
+  if self.bufnr > 0 and vim.api.nvim_buf_is_valid(self.bufnr) then
+    pcall(vim.api.nvim_buf_set_name, self.bufnr, name)
+  end
+end
+
 --- Read current prompt buffer content as a single string.
 ---@return string
 function Prompt:read()
