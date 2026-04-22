@@ -25,16 +25,20 @@
 - [x] Format git commit tool calls to show commit message
 - [x] Format TodoWrite to look like a nice todo list
 - [x] Interrupt current turn via stream-json control_request (keeps session alive)
-- [ ] Add per tool call statusline (Running... (32s timeout 2m))
 - [x] Fix statusline thinking spinner (doesn't spin)
 - [x] Remove turn spinners
-- [ ] Add true e2e tests (requires brainstorming)
-- [ ] Fix missing mode in statusline on startup
-- [ ] Get rid of full line background highlight for folded lines (especially distracting on Output lines)
-- [ ] Identify most complex/fragile code and simplify (requires brainstorming)
-- [ ] Support "queued" prompts (submitted while agent is thinking or working)
 - [ ] Add support for /remote-control
 - [ ] Add support for session naming (/rename)
+- [ ] Support "queued" prompts (submitted while agent is thinking or working)
+- [ ] Add syntax highlighting for code blocks in output
+- [ ] Explore potentially using foldcolumn
+- [ ] Add true e2e tests (requires brainstorming)
+- [ ] Fix missing mode in statusline on startup
+- [x] Get rid of full line background highlight for folded lines (especially distracting on Output lines)
+- [ ] Identify most complex/fragile code and simplify (requires brainstorming)
+- [ ] Add config option to turn off tool icons
+- [ ] Add per tool call statusline (Running... (32s timeout 2m))
+- [ ] Ensure system prompt additions are not hard-coded (instead user config)
 - [ ] Enable window config 
   - [x] hide line numbers by default
   - [x] wrap output by default
@@ -48,3 +52,4 @@
 - [ ] Autosize prompt window to fit content (with configurable min/max heights)
 - [ ] Add support plan mode toggle
 - [ ] Add support for todo lists (requires brainstorming)
+- [ ] Add support for /compact (requires brainstorming)

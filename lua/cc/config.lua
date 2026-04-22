@@ -43,6 +43,17 @@ local defaults = {
     prompt = true, -- soft-wrap lines in the prompt window
   },
 
+  -- Highlight overrides for cc-owned groups. When left nil, built-in
+  -- defaults apply (and colorschemes defining the same group still win).
+  -- When set, the spec is applied unconditionally — use this to force
+  -- a look regardless of the active colorscheme.
+  highlights = {
+    -- Folded line in the output window. Builtin default is { bg = 'NONE' }
+    -- so the fold inherits the normal background (keeps folds visually
+    -- quiet). Accepts any nvim_set_hl spec: { fg, bg, italic, link, ... }.
+    fold = nil,
+  },
+
   -- Statusline on the output window.
   -- format = function(state) -> string (Neovim statusline syntax).
   -- state fields: is_thinking, spinner_frame, total_tokens, input_tokens,
@@ -90,6 +101,9 @@ M.options = vim.deepcopy(defaults)
 ---@param opts table?
 function M.setup(opts)
   M.options = vim.tbl_deep_extend('force', vim.deepcopy(defaults), opts or {})
+  -- Re-apply highlight defaults so config.highlights overrides from setup()
+  -- take effect (plugin/cc.lua ran set_defaults before setup was called).
+  pcall(require('cc.highlight').set_defaults)
 end
 
 return M

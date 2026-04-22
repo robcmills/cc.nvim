@@ -35,6 +35,20 @@ function M.set_defaults()
       vim.api.nvim_set_hl(0, name, vim.tbl_extend('keep', spec, { default = true }))
     end
   end
+
+  -- CcFolded: if the user provided highlights.fold in setup(), apply it
+  -- unconditionally (user override wins over colorschemes). Otherwise
+  -- seed a default spec that colorschemes can still override.
+  local ok, config = pcall(require, 'cc.config')
+  local user_fold = ok and config.options.highlights and config.options.highlights.fold or nil
+  if user_fold then
+    vim.api.nvim_set_hl(0, 'CcFolded', user_fold)
+  else
+    local existing = vim.api.nvim_get_hl(0, { name = 'CcFolded', link = false })
+    if not existing or vim.tbl_isempty(existing) then
+      vim.api.nvim_set_hl(0, 'CcFolded', { bg = 'NONE', default = true })
+    end
+  end
 end
 
 --- Apply buffer-local syntax matches so our tree gets colored.

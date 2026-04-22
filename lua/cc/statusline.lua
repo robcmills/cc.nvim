@@ -159,14 +159,12 @@ function M.attach(instance, winid)
   winid_to_instance[winid] = instance
   vim.wo[winid].statusline =
     "%!v:lua.require'cc.statusline'.render_for(" .. winid .. ')'
-  -- stl fillchar (─) is set by output.lua's window-opts autocmd so the
-  -- statusline's trailing unused columns render as a horizontal rule.
-  --
-  -- Keep the statusline stable when focus moves to the prompt: without
-  -- this, Neovim swaps to StatusLineNC (dimmer) and some terminals
-  -- briefly drop the fill cells, causing the flicker the user reported.
-  -- winhighlight is per-window, so this doesn't affect other windows.
-  vim.wo[winid].winhighlight = 'StatusLine:CcStl,StatusLineNC:CcStl'
+  -- stl fillchar (─) and winhighlight (StatusLine:CcStl,StatusLineNC:CcStl
+  -- alongside Folded:CcFolded) are both owned by output.lua's window-opts
+  -- autocmd, which composes them based on cc.config.statusline.enabled.
+  -- Mapping StatusLineNC→CcStl keeps the statusline stable when focus
+  -- moves to the prompt (otherwise some terminals drop the trailing ─
+  -- fill cells on the NC swap).
   local group = vim.api.nvim_create_augroup('cc.statusline.win.' .. winid, { clear = true })
   vim.api.nvim_create_autocmd('WinClosed', {
     group = group,

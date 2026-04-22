@@ -115,6 +115,16 @@ function Output:_setup_window_opts_for_buffer()
       vim.wo[winid].foldtext = "v:lua.require'cc.output'.foldtext()"
       local sl_cfg = config.statusline or {}
       vim.wo[winid].fillchars = sl_cfg.enabled and 'fold: ,stl:─,stlnc:─' or 'fold: '
+      -- Scope fold styling to the output window via winhighlight so the
+      -- user's colorscheme Folded group is untouched elsewhere. Statusline
+      -- mappings (StatusLine/StatusLineNC) are composed here too — this is
+      -- the single owner of winhighlight for output windows.
+      local wh = { 'Folded:CcFolded' }
+      if sl_cfg.enabled then
+        table.insert(wh, 'StatusLine:CcStl')
+        table.insert(wh, 'StatusLineNC:CcStl')
+      end
+      vim.wo[winid].winhighlight = table.concat(wh, ',')
       vim.wo[winid].number = config.line_numbers and config.line_numbers.output or false
       vim.wo[winid].relativenumber = false
       vim.wo[winid].wrap = config.wrap == nil or config.wrap.output ~= false
