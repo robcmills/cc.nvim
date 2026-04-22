@@ -916,6 +916,8 @@ local function default_tool_body(tool_name, input)
   for k, v in pairs(input) do
     local skip = k == 'description'
       or (tool_name == 'Read' and read_skip[k])
+      or (tool_name == 'Glob' and k == 'pattern')
+      or (tool_name == 'Grep' and k == 'pattern')
       or (tool_name == 'WebFetch' and k == 'url')
       or (tool_name == 'WebSearch' and k == 'query')
       or (tool_name == 'Skill' and k == 'skill')
