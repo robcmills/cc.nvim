@@ -53,6 +53,10 @@ function M.create()
     cc.history(opts.bang)
   end, { bang = true, desc = 'Pick a session to resume (! for all projects)' })
 
+  vim.api.nvim_create_user_command('CcRename', function(opts)
+    cc.rename(opts.args)
+  end, { nargs = '?', desc = 'Rename current cc.nvim session (no arg shows current)' })
+
   vim.api.nvim_create_user_command('CcDumpNdjson', function(opts)
     local inst = cc._get_instance()
     if not inst or not inst.process then

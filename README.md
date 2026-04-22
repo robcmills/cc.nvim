@@ -148,6 +148,7 @@ on the bottom. Type your message, then press `<CR>` in normal mode (or run
 | `:CcResume [id]` | Resume a session (picker if no id) |
 | `:CcContinue` | Resume most recent session for current cwd |
 | `:CcHistory` / `:CcHistory!` | Pick a session (! = all projects) |
+| `:CcRename [name]` | Rename the current session (no arg = show current title) |
 | `:CcDumpNdjson [path]` | Tee raw NDJSON from the subprocess to a file (no arg = stop) |
 
 ## Default keymaps
@@ -291,6 +292,9 @@ Sources (merged, project overrides user overrides session):
 1. Built-ins + skills from the running session's system/init message
 2. `~/.claude/commands/*.md` (YAML frontmatter `description:` used as detail)
 3. `<cwd>/.claude/commands/*.md`
+4. cc.nvim client-side commands (e.g. `/rename`), intercepted in the plugin
+   and not forwarded to the agent; yielded to upstream if the SDK ever
+   claims the same name
 
 Works with nvim-cmp (registered as source `cc_slash`) or via buffer-local
 `omnifunc` (`<C-x><C-o>`) for users without nvim-cmp.
@@ -332,6 +336,21 @@ Every conversation is stored by Claude Code at
 When resuming, the prior transcript is re-rendered into the output buffer
 (with inline diffs, tool calls, etc.) before the live session picks up.
 Records are capped at `history_max_records` to keep long sessions snappy.
+
+### Renaming a session
+
+Give the current session a custom title with either `/rename <name>` in
+the prompt buffer or `:CcRename <name>` from anywhere. The slash form is
+intercepted client-side (not forwarded to the agent); both share the same
+code path and append a `custom-title` record to the session's JSONL file —
+the same format the upstream Claude Code TUI uses, so renames round-trip
+between the two. The new title surfaces in:
+
+- the statusline `session_name` segment
+- the `:CcHistory` picker (preferring `custom-title` > `ai-title` > first
+  user message)
+- the prompt buffer name (`cc-<name>`), since it's the only buflisted
+  surface and therefore the one your buffer list sees
 
 ## Highlights
 

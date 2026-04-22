@@ -747,6 +747,20 @@ function M._handle_rename(inst, args)
   require('cc.statusline').refresh(inst)
 end
 
+--- Public: rename the current session (same code path as `/rename <name>`).
+--- Writes a `custom-title` JSONL record so the rename round-trips with the
+--- upstream Claude Code TUI. Passing an empty/nil name reports the current
+--- title instead of erroring.
+---@param name string?
+function M.rename(name)
+  local inst = get_current_instance()
+  if not inst then
+    vim.notify('cc.nvim: not open. Run :CcOpen first.', vim.log.levels.WARN)
+    return
+  end
+  M._handle_rename(inst, name or '')
+end
+
 --- Public: interrupt the current turn without killing the CLI process.
 --- Sends a stream-json control_request; the "Interrupted" notice is rendered
 --- once the CLI acknowledges with a control_response (see router).
