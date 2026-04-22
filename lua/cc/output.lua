@@ -908,6 +908,7 @@ local function default_tool_body(tool_name, input)
       or (tool_name == 'Read' and read_skip[k])
       or (tool_name == 'WebFetch' and k == 'url')
       or (tool_name == 'WebSearch' and k == 'query')
+      or (tool_name == 'Skill' and k == 'skill')
     if not skip then
       filtered[k] = v
     end
@@ -1064,6 +1065,8 @@ function M.summarize_tool_input(tool_name, input)
     return (input.todos and ('#' .. #input.todos)) or ''
   elseif tool_name == 'Agent' then
     return input.description or ''
+  elseif tool_name == 'Skill' then
+    return input.skill or ''
   end
   local ok, s = pcall(vim.json.encode, input)
   if ok and s then
