@@ -89,9 +89,14 @@ function M.omnifunc(findstart, base)
   return matches
 end
 
+--- Options cc overrides on the prompt window. Saved on entry, restored on
+--- BufWinLeave so they don't leak to buffers that later occupy the window.
+local PROMPT_WIN_OPTS = { 'number', 'relativenumber', 'wrap' }
+
 --- Configure window-local options on windows showing this prompt buffer.
 function Prompt:_setup_window_opts_for_buffer()
   local bufnr = self.bufnr
+  local winopts = require('cc.winopts')
   local group = vim.api.nvim_create_augroup('cc.prompt.win.' .. bufnr, { clear = true })
   vim.api.nvim_create_autocmd({ 'BufWinEnter', 'WinEnter' }, {
     group = group,
@@ -102,9 +107,17 @@ function Prompt:_setup_window_opts_for_buffer()
         return
       end
       local config = require('cc.config').options
+      winopts.save(winid, 'prompt', PROMPT_WIN_OPTS)
       vim.wo[winid].number = config.line_numbers and config.line_numbers.prompt or false
       vim.wo[winid].relativenumber = false
       vim.wo[winid].wrap = config.wrap == nil or config.wrap.prompt ~= false
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufWinLeave', {
+    group = group,
+    buffer = bufnr,
+    callback = function()
+      winopts.restore(vim.api.nvim_get_current_win(), 'prompt', PROMPT_WIN_OPTS)
     end,
   })
 end

@@ -97,10 +97,18 @@ function Output:ensure_buffer()
   return self.bufnr
 end
 
+--- Options cc overrides on the output window. Saved on entry, restored on
+--- BufWinLeave so they don't leak to buffers that later occupy the window.
+local OUTPUT_WIN_OPTS = {
+  'foldmethod', 'foldexpr', 'foldenable', 'foldtext', 'foldlevel',
+  'fillchars', 'number', 'relativenumber', 'wrap',
+}
+
 --- Configure fold options and caret refresh on windows showing this buffer.
 function Output:_setup_window_opts_for_buffer()
   local bufnr = self.bufnr
   local config = require('cc.config').options
+  local winopts = require('cc.winopts')
   local group = vim.api.nvim_create_augroup('cc.output.win.' .. bufnr, { clear = true })
   vim.api.nvim_create_autocmd({ 'BufWinEnter', 'WinEnter' }, {
     group = group,
@@ -110,6 +118,7 @@ function Output:_setup_window_opts_for_buffer()
       if vim.api.nvim_win_get_buf(winid) ~= bufnr then
         return
       end
+      winopts.save(winid, 'output', OUTPUT_WIN_OPTS)
       vim.wo[winid].foldmethod = 'expr'
       vim.wo[winid].foldexpr = "v:lua.require'cc.output'.foldexpr(v:lnum)"
       vim.wo[winid].foldenable = true
@@ -160,6 +169,20 @@ function Output:_setup_window_opts_for_buffer()
           require('cc.statusline').attach(inst, winid)
         end
       end
+    end,
+  })
+  -- BufWinLeave fires when the cc buffer is replaced in a window (e.g. gf,
+  -- :edit). Restore the window's prior options so the incoming buffer
+  -- doesn't inherit cc's overrides. Does NOT fire on mere focus changes
+  -- between windows, so cc windows keep their overrides while idle.
+  vim.api.nvim_create_autocmd('BufWinLeave', {
+    group = group,
+    buffer = bufnr,
+    callback = function()
+      local winid = vim.api.nvim_get_current_win()
+      require('cc.statusline').detach(winid)
+      winopts.restore(winid, 'output', OUTPUT_WIN_OPTS)
+      vim.w[winid].cc_output_fold_initialized = nil
     end,
   })
 end

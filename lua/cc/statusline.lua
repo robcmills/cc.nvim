@@ -153,6 +153,8 @@ end
 -- Expose for vimscript callback.
 _G.__cc_statusline_render_for = M.render_for
 
+local STATUSLINE_WIN_OPTS = { 'statusline', 'winhighlight' }
+
 --- Attach the cc statusline to the given output window. Idempotent.
 ---@param instance cc.Instance
 ---@param winid integer
@@ -167,6 +169,7 @@ function M.attach(instance, winid)
     vim.o.laststatus = 2
   end
   winid_to_instance[winid] = instance
+  require('cc.winopts').save(winid, 'statusline', STATUSLINE_WIN_OPTS)
   vim.wo[winid].statusline =
     "%!v:lua.require'cc.statusline'.render_for(" .. winid .. ')'
   -- stl fillchar (─) and winhighlight (StatusLine:CcStl,StatusLineNC:CcStl
@@ -184,6 +187,17 @@ function M.attach(instance, winid)
       pcall(vim.api.nvim_del_augroup_by_name, 'cc.statusline.win.' .. winid)
     end,
   })
+end
+
+--- Undo attach: restore the window's prior statusline/winhighlight. Called
+--- when the cc buffer is replaced in the window so the statusline callback
+--- doesn't keep rendering for an unrelated buffer.
+---@param winid integer
+function M.detach(winid)
+  if not winid or not vim.api.nvim_win_is_valid(winid) then return end
+  winid_to_instance[winid] = nil
+  require('cc.winopts').restore(winid, 'statusline', STATUSLINE_WIN_OPTS)
+  pcall(vim.api.nvim_del_augroup_by_name, 'cc.statusline.win.' .. winid)
 end
 
 --- Force a statusline/winbar redraw for any window tied to this instance.
