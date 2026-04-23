@@ -29,6 +29,7 @@
 - [x] Remove turn spinners
 - [ ] Add support for /remote-control
 - [x] Add support for session naming (/rename)
+- [ ] Add rename with ai generated name
 - [ ] Support "queued" prompts (submitted while agent is thinking or working)
 - [ ] Add syntax highlighting for code blocks in output
 - [ ] Explore potentially using foldcolumn
@@ -46,10 +47,10 @@
 - [ ] Add a "theme viewer/switcher" to show visually mock examples of what each type of tool looks like, and user can interactively switch themes and see what it looks like live
 - [ ] Make resume history picker window larger
 - [ ] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
-- [ ] Rename CcNew -> CcClear and CcOpen -> CcNew
+- [x] Rename CcNew -> CcClear and CcOpen -> CcNew
 - [ ] Fix :BuffersNext/Prev not working in output window
 - [ ] Improve lua types
-- [ ] Autosize prompt window to fit content (with configurable min/max heights)
+- [ ] Add config option to autosize prompt window to fit content (with configurable min/max heights)
 - [ ] Add support plan mode toggle
 - [ ] Add support for todo lists (requires brainstorming)
 - [ ] Add support for /compact (requires brainstorming)

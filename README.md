@@ -125,7 +125,7 @@ require('cc').setup()
 ## Quick start
 
 ```vim
-:CcOpen
+:CcNew
 ```
 
 This opens a horizontal split: output buffer on top, editable markdown prompt
@@ -136,10 +136,10 @@ on the bottom. Type your message, then press `<CR>` in normal mode (or run
 
 | Command | Description |
 |---|---|
-| `:CcOpen` | Open cc.nvim (spawn process, create buffers) |
+| `:CcNew` | Open cc.nvim (spawn process, create buffers) |
 | `:CcClose` | Close cc.nvim (kill process, close windows) |
 | `:CcToggle` | Toggle visibility |
-| `:CcNew` | Start a fresh session in the current windows |
+| `:CcClear` | Start a fresh session in the current windows |
 | `:CcSend` | Submit the prompt buffer to the agent |
 | `:CcStop` | Interrupt current turn (stream-json `control_request`) |
 | `:CcFold {n}` | Set output fold level (0..3) |

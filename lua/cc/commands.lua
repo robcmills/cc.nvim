@@ -5,7 +5,7 @@ local M = {}
 function M.create()
   local cc = require('cc')
 
-  vim.api.nvim_create_user_command('CcOpen', function() cc.open() end,
+  vim.api.nvim_create_user_command('CcNew', function() cc.open() end,
     { desc = 'Open cc.nvim' })
 
   vim.api.nvim_create_user_command('CcClose', function() cc.close() end,
@@ -14,8 +14,8 @@ function M.create()
   vim.api.nvim_create_user_command('CcToggle', function() cc.toggle() end,
     { desc = 'Toggle cc.nvim' })
 
-  vim.api.nvim_create_user_command('CcNew', function() cc.new_session() end,
-    { desc = 'Start a new cc.nvim session in the current windows' })
+  vim.api.nvim_create_user_command('CcClear', function() cc.new_session() end,
+    { desc = 'Start a fresh cc.nvim session in the current windows' })
 
   vim.api.nvim_create_user_command('CcSend', function() cc.submit() end,
     { desc = 'Submit prompt to Claude' })

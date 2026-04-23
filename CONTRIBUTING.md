@@ -36,7 +36,7 @@ git submodule update --init --recursive   # pulls in mini.nvim for tests
 
 Point your Neovim config at the local checkout (see
 [Installation](README.md#installation) in the README). Changes take effect
-on the next `:CcOpen` / Neovim restart.
+on the next `:CcNew` / Neovim restart.
 
 ## Running tests
 

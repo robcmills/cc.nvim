@@ -426,7 +426,7 @@ function M.plan()
 end
 
 --- Public: start a fresh session inside the current windows.
---- Equivalent to :CcClose + :CcOpen but preserves the existing window layout.
+--- Equivalent to :CcClose + :CcNew but preserves the existing window layout.
 function M.new_session()
   local inst = get_current_instance()
   if not inst then
@@ -652,7 +652,7 @@ end
 function M.submit()
   local inst = get_current_instance()
   if not inst or not inst.process or not inst.process:is_alive() then
-    vim.notify('cc.nvim: not open. Run :CcOpen first.', vim.log.levels.WARN)
+    vim.notify('cc.nvim: not open. Run :CcNew first.', vim.log.levels.WARN)
     return
   end
   if not inst.prompt:has_content() then
@@ -755,7 +755,7 @@ end
 function M.rename(name)
   local inst = get_current_instance()
   if not inst then
-    vim.notify('cc.nvim: not open. Run :CcOpen first.', vim.log.levels.WARN)
+    vim.notify('cc.nvim: not open. Run :CcNew first.', vim.log.levels.WARN)
     return
   end
   M._handle_rename(inst, name or '')
