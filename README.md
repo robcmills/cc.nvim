@@ -546,6 +546,10 @@ sources its `plugin/cc.lua`, or fall back to `<C-x><C-o>` manually.
 
 If carets don't appear: you need Neovim 0.10+ for inline `virt_text`.
 
+## Is this a pile of vibe coded slop?
+
+Yes. Help me improve it: [CONTRIBUTING.md](CONTRIBUTING.md)
+
 ## Status
 
 Feature-complete against the original plan. Small known gaps:
