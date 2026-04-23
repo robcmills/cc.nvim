@@ -382,6 +382,47 @@ T['result_line']['turn_cost_format returning nil falls back to default'] = funct
   eq(found:find('4 out', 1, true) ~= nil, true)
 end
 
+T['result_line']['anchors to end of agent turn when tail has moved past'] = function()
+  -- Simulates: resume prerender -> user submits new message before the
+  -- subprocess result lands. Cost line should insert at end of agent turn,
+  -- not at buffer tail (which is now inside the new user fold).
+  _G.child.lua([[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    require('cc.config').setup({})
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-output')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+
+    output:render_historical_record({ type = 'user_text', text = 'hello' })
+    output:render_historical_record({
+      type = 'assistant',
+      blocks = { { type = 'text', text = 'Hi there' } },
+    })
+    output:render_user_turn('new question')
+    output:render_result({
+      total_cost_usd = 0.5734,
+      usage = { input_tokens = 5, output_tokens = 111 },
+    })
+
+    _G._test_bufnr = bufnr
+  ]])
+  local lines = helpers.get_buffer_lines(_G.child)
+  local cost_idx, user2_idx, agent_content_idx
+  for i, l in ipairs(lines) do
+    if l:match('── %$0%.5734') then cost_idx = i end
+    if l:match('new question') then user2_idx = i end
+    if l:match('Hi there') then agent_content_idx = i end
+  end
+  assert(cost_idx, 'expected cost line')
+  assert(user2_idx, 'expected new user content')
+  assert(agent_content_idx, 'expected agent content')
+  -- Cost line must sit between the agent content and the new user turn.
+  eq(cost_idx > agent_content_idx, true)
+  eq(cost_idx < user2_idx, true)
+end
+
 T['result_line']['turn_cost_format errors fall back to default'] = function()
   _G.child.lua([[
     local Output = require('cc.output')

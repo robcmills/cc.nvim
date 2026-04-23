@@ -67,6 +67,7 @@ function M.new(session, buf_name)
     streaming_tool_id = nil,
     last_turn_role = nil, ---@type 'user'|'agent'|nil tracks consecutive turns
     agent_header_lnum = nil, ---@type integer? header line of current agent fold
+    agent_end_lnum = nil, ---@type integer? last line of the most recent agent turn (anchor for the result/cost line)
   }, Output)
 end
 
@@ -525,6 +526,9 @@ function Output:_insert_lines(start_lnum, lines, fold_levels, is_header)
   if self.agent_header_lnum and self.agent_header_lnum >= start_lnum then
     self.agent_header_lnum = self.agent_header_lnum + n
   end
+  if self.agent_end_lnum and self.agent_end_lnum >= start_lnum then
+    self.agent_end_lnum = self.agent_end_lnum + n
+  end
 
   for i = 1, n do
     local lnum = start_lnum + i - 1
@@ -719,6 +723,7 @@ function Output:begin_assistant_turn()
   self.last_turn_role = 'agent'
   self.streaming_block_type = nil
   self.streaming_tool_id = nil
+  self.agent_end_lnum = nil
 
   if is_continuation and self.agent_header_lnum then
     -- Consecutive agent turn: skip the header, stay inside existing fold.
@@ -732,6 +737,16 @@ function Output:begin_assistant_turn()
   local header_lnum = self:_append({ 'Agent:' }, { '>1' }, true)
   self.agent_header_lnum = header_lnum
   return header_lnum
+end
+
+--- Mark the end of the current assistant turn. Records the tail line as the
+--- anchor for the upcoming result/cost line, so that if the buffer tail moves
+--- past this point (e.g. user submits a new message before the result lands),
+--- the cost line still renders at the end of this agent turn rather than
+--- inside the next fold.
+function Output:end_assistant_turn()
+  local bufnr = self:ensure_buffer()
+  self.agent_end_lnum = vim.api.nvim_buf_line_count(bufnr)
 end
 
 --- Content block started (text, thinking, or tool_use).
@@ -1149,7 +1164,21 @@ function Output:render_result(result)
   end
   if text == nil then text = default_turn_cost_format(result) end
   if text == nil or text == '' then return end
-  self:_append({ '  ── ' .. text .. ' ──' }, { 0 }, false)
+
+  local line = '  ── ' .. text .. ' ──'
+  local bufnr = self:ensure_buffer()
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  local anchor = self.agent_end_lnum
+  if anchor and anchor < line_count then
+    -- Tail moved past the end of the agent turn (e.g. user submitted again
+    -- while the result was in flight). Insert at the agent turn's tail so
+    -- the cost line stays associated with the correct turn.
+    self:_insert_lines(anchor + 1, { line }, { 0 }, false)
+    self.agent_end_lnum = anchor + 1
+  else
+    self:_append({ line }, { 0 }, false)
+    self.agent_end_lnum = vim.api.nvim_buf_line_count(bufnr)
+  end
 end
 
 M._default_turn_cost_format = default_turn_cost_format
@@ -1218,6 +1247,8 @@ function Output:render_historical_record(rec)
     -- Stamp the turn so subsequent tool_results find their tool_use.
     self.streaming_block_type = nil
     self.streaming_tool_id = nil
+    -- Anchor any later-arriving result/cost line to the end of this turn.
+    self:end_assistant_turn()
   end
 end
 

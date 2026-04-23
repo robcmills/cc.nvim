@@ -133,6 +133,7 @@ function Router:_handle_stream_event(msg)
     self.output:on_content_block_stop(block)
   elseif et == 'message_stop' then
     self.session:end_message()
+    self.output:end_assistant_turn()
   end
 end
 
