@@ -197,7 +197,8 @@ require('cc').setup({
 
   -- Display
   show_thinking = false,       -- show thinking blocks
-  show_cost = true,            -- show cost/usage after each turn
+  show_turn_cost = true,       -- show per-turn cost/usage line in the output buffer
+  turn_cost_format = nil,      -- function(result) -> string | nil; nil uses default
   tool_icons = {
     use_nerdfont = nil,        -- nil = auto-detect; true/false forces
     default = nil,             -- icon for unknown tools

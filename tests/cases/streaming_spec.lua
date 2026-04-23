@@ -258,6 +258,151 @@ T['result_cost']['session tracks usage'] = function()
 end
 
 -- ---------------------------------------------------------------------------
+-- Result line: cache tokens, show_cost, cost_format
+-- ---------------------------------------------------------------------------
+--- Render a result line directly in the child with the given config.
+--- Returns the text of the rendered line (or nil if nothing was rendered).
+local function render_result_line(child, cfg_opts, result)
+  child.lua(string.format([==[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    local config = require('cc.config')
+    config.setup(%s)
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-output')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+    output:render_result(%s)
+    _G._test_bufnr = bufnr
+  ]==], vim.inspect(cfg_opts or {}), vim.inspect(result)))
+  local lines = helpers.get_buffer_lines(child)
+  for _, line in ipairs(lines) do
+    if line:match('──') then return line end
+  end
+  return nil
+end
+
+T['result_line'] = MiniTest.new_set()
+
+T['result_line']['shows cache_creation and cache_read tokens (compact)'] = function()
+  local line = render_result_line(_G.child, {}, {
+    total_cost_usd = 0.5734,
+    usage = {
+      input_tokens = 5,
+      output_tokens = 111,
+      cache_creation_input_tokens = 76626,
+      cache_read_input_tokens = 16257,
+    },
+  })
+  assert(line, 'expected a result line')
+  eq(line:find('5 in', 1, true) ~= nil, true)
+  eq(line:find('111 out', 1, true) ~= nil, true)
+  eq(line:find('76.6k cache write', 1, true) ~= nil, true)
+  eq(line:find('16.3k cache read', 1, true) ~= nil, true)
+end
+
+T['result_line']['compact format strips .0 and keeps sub-1k raw'] = function()
+  local line = render_result_line(_G.child, {}, {
+    total_cost_usd = 0.01,
+    usage = {
+      input_tokens = 1,
+      output_tokens = 1,
+      cache_creation_input_tokens = 5000,
+      cache_read_input_tokens = 999,
+    },
+  })
+  assert(line, 'expected a result line')
+  eq(line:find('5k cache write', 1, true) ~= nil, true)
+  eq(line:find('999 cache read', 1, true) ~= nil, true)
+end
+
+T['result_line']['omits cache parts when zero'] = function()
+  local line = render_result_line(_G.child, {}, {
+    total_cost_usd = 0.01,
+    usage = {
+      input_tokens = 5,
+      output_tokens = 10,
+      cache_creation_input_tokens = 0,
+      cache_read_input_tokens = 0,
+    },
+  })
+  assert(line, 'expected a result line')
+  eq(line:find('cache write', 1, true), nil)
+  eq(line:find('cache read', 1, true), nil)
+end
+
+T['result_line']['show_turn_cost = false suppresses the line'] = function()
+  local line = render_result_line(_G.child, { show_turn_cost = false }, {
+    total_cost_usd = 0.01,
+    usage = { input_tokens = 5, output_tokens = 10 },
+  })
+  eq(line, nil)
+end
+
+T['result_line']['turn_cost_format overrides the default text'] = function()
+  _G.child.lua([[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    require('cc.config').setup({
+      turn_cost_format = function(r)
+        return string.format('custom: $%.2f', r.total_cost_usd)
+      end,
+    })
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-output')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+    output:render_result({ total_cost_usd = 1.23, usage = { input_tokens = 1, output_tokens = 2 } })
+    _G._test_bufnr = bufnr
+  ]])
+  local lines = helpers.get_buffer_lines(_G.child)
+  local found
+  for _, l in ipairs(lines) do if l:match('custom: %$1%.23') then found = l; break end end
+  assert(found, 'expected custom cost_format output')
+  eq(found:find('1 in', 1, true), nil)
+end
+
+T['result_line']['turn_cost_format returning nil falls back to default'] = function()
+  _G.child.lua([[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    require('cc.config').setup({ turn_cost_format = function() return nil end })
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-output')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+    output:render_result({ total_cost_usd = 0.5, usage = { input_tokens = 3, output_tokens = 4 } })
+    _G._test_bufnr = bufnr
+  ]])
+  local lines = helpers.get_buffer_lines(_G.child)
+  local found
+  for _, l in ipairs(lines) do if l:match('%$0%.5000') then found = l; break end end
+  assert(found, 'expected default format fallback')
+  eq(found:find('3 in', 1, true) ~= nil, true)
+  eq(found:find('4 out', 1, true) ~= nil, true)
+end
+
+T['result_line']['turn_cost_format errors fall back to default'] = function()
+  _G.child.lua([[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    require('cc.config').setup({ turn_cost_format = function() error('boom') end })
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-output')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+    output:render_result({ total_cost_usd = 0.25, usage = { input_tokens = 7, output_tokens = 8 } })
+    _G._test_bufnr = bufnr
+  ]])
+  local lines = helpers.get_buffer_lines(_G.child)
+  local found
+  for _, l in ipairs(lines) do if l:match('%$0%.2500') then found = l; break end end
+  assert(found, 'expected default format fallback after error')
+  eq(found:find('7 in', 1, true) ~= nil, true)
+  eq(found:find('8 out', 1, true) ~= nil, true)
+end
+
+-- ---------------------------------------------------------------------------
 -- Multi-block (text + multiple tools in sequence)
 -- ---------------------------------------------------------------------------
 T['multi_block'] = MiniTest.new_set()

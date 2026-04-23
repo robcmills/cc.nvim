@@ -28,7 +28,16 @@ local defaults = {
 
   -- Display
   show_thinking = false,
-  show_cost = true,
+  -- Per-turn cost/usage line appended to the output buffer after each turn.
+  -- (Distinct from the session-cumulative tokens shown in the statusline.)
+  show_turn_cost = true,
+  -- Formatter for that line. function(result) -> string | nil
+  -- `result` is the raw CLI result message; relevant fields are
+  -- result.total_cost_usd and result.usage.{input_tokens, output_tokens,
+  -- cache_creation_input_tokens, cache_read_input_tokens}. Return a string
+  -- (the inner text — the `  ── ... ──` wrapping is added by the renderer)
+  -- or nil to fall back to the default format.
+  turn_cost_format = nil,
   tool_icons = {
     use_nerdfont = nil, -- nil = auto-detect (nvim-web-devicons / mini.icons); true/false to force
     default = nil, -- icon for unknown tools; nil uses built-in fallback
