@@ -82,6 +82,13 @@ On my todo list is to extensively audit claude code functionality and
 determine what subset of that cc.nvim will support. In my opinion, claude
 code is getting bloated.
 
+## Spread the word
+
+One of the most valuable ways to help is simply getting more people using
+this plugin. More users means more bug reports, more fixtures, more edge
+cases flushed out, and more eyes on the defaults. If you genuinely like
+cc.nvim, tell a fellow Neovim user about it.
+
 ## Code of conduct
 
 Be kind. Assume good faith. If someone's PR is rough, help them improve
