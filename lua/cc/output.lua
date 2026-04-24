@@ -765,6 +765,8 @@ function Output:on_content_block_start(block)
   elseif block.type == 'tool_use' then
     local icon = require('cc.icons').for_tool(block.name or '')
     local header_text = '  ' .. icon .. ' ' .. display_tool_name(block.name) .. ':'
+    -- Blank separator (may be collapsed if buffer already ends with blank).
+    self:_append({ '' }, { 1 }, false)
     local header_lnum = self:_append({ header_text }, { '>2' }, true)
     self.streaming_block_type = 'tool_use'
     self.streaming_tool_id = block.id
@@ -1032,9 +1034,14 @@ function Output:_render_tool_result_for(meta, content, is_error)
 
   local lines = { '    ' .. (is_error and 'Error:' or 'Output:') }
   local levels = { '>3' }
-  for _, l in ipairs(display_lines) do
-    table.insert(lines, '      ' .. l)
-    table.insert(levels, 3)
+  -- Skip rendering content lines when the result is empty; otherwise
+  -- vim.split('', '\n') yields {''} and we'd append a 6-space "blank"
+  -- line that creates inconsistent visual spacing between tool blocks.
+  if not (#display_lines == 1 and display_lines[1] == '') then
+    for _, l in ipairs(display_lines) do
+      table.insert(lines, '      ' .. l)
+      table.insert(levels, 3)
+    end
   end
   if truncated then
     table.insert(lines, string.format('      [... %d more lines]', #all_lines - max_lines))
