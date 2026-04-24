@@ -69,7 +69,7 @@ function M.apply_buffer_syntax(bufnr)
     -- glyphs, then a name starting with uppercase or the "mcp__" prefix,
     -- followed immediately by ":". Hook / Permission rules below override
     -- for lines that also match their own patterns.
-    vim.cmd([[syntax match CcTool    /^\s\+\S\+\s\+\%(\u\w*\|mcp__\w\+\):.*$/ containedin=ALL]])
+    vim.cmd([[syntax match CcTool    /^\s\+\S\+\s\+\%(\u\w*\|mcp__[[:alnum:]_-]\+\):.*$/ containedin=ALL]])
 
     -- Output: or Error: sub-headers under tools
     vim.cmd([[syntax match CcOutput  /^\s\+Output:\s*$/ containedin=ALL]])

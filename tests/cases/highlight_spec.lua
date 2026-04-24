@@ -65,6 +65,22 @@ T['highlight_groups']['CcTool on tool header line'] = function()
   error('No Read tool header found')
 end
 
+-- Regression: MCP tool headers contain hyphens in the server name
+-- (e.g. `mcp__claude-in-chrome__navigate`). The CcTool syntax pattern must
+-- match those hyphens, not just \w.
+T['highlight_groups']['CcTool on mcp__ tool header with hyphens'] = function()
+  helpers.render_fixture(_G.child, 'mcp_chrome')
+  local lines = helpers.get_buffer_lines(_G.child)
+  for i, line in ipairs(lines) do
+    local col = line:find('mcp__claude%-in%-chrome__')
+    if col and line:match('^%s+%S+%s+mcp__claude%-in%-chrome__') then
+      assert_hl_in_stack(_G.child, i, col, 'CcTool')
+      return
+    end
+  end
+  error('No mcp__claude-in-chrome__ tool header found')
+end
+
 T['highlight_groups']['CcOutput on Output: line'] = function()
   helpers.render_fixture(_G.child, 'tool_read')
   local lines = helpers.get_buffer_lines(_G.child)
