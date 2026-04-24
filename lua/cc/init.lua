@@ -658,6 +658,12 @@ function M.submit()
   if not inst.prompt:has_content() then
     return
   end
+  if inst.session.turn_active or inst.session.is_streaming then
+    vim.notify(
+      'cc.nvim: agent turn in progress — wait for it to finish or interrupt first',
+      vim.log.levels.WARN)
+    return
+  end
   local text = inst.prompt:read()
 
   -- Intercept client-side slash commands before forwarding to the agent.

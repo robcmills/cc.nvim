@@ -97,6 +97,10 @@ end
 
 ---@param message table anthropic message object
 function Session:begin_message(message)
+  -- An autonomous turn (e.g., agent wake-up via ScheduleWakeup) arrives as a
+  -- message_start without a preceding user submit. Flip turn_active on so
+  -- interrupt, submit-guards, and statusline see the live turn.
+  self.turn_active = true
   self.is_streaming = true
   self.current_message = {
     id = message and message.id or nil,

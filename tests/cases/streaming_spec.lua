@@ -93,6 +93,43 @@ T['simple_text']['session is not streaming after message_stop'] = function()
   eq(state.is_streaming, false)
 end
 
+T['simple_text']['turn_active is false after result'] = function()
+  helpers.replay_streaming(_G.child, 'simple_text')
+  local state = helpers.get_session_state(_G.child)
+  eq(state.turn_active, false)
+end
+
+-- ---------------------------------------------------------------------------
+-- Autonomous turns (e.g. ScheduleWakeup): a message_start arrives without a
+-- preceding user submit. turn_active must still flip on so the submit guard,
+-- interrupt logic, and statusline see a live turn.
+-- ---------------------------------------------------------------------------
+T['autonomous_turn'] = MiniTest.new_set()
+
+T['autonomous_turn']['begin_message sets turn_active without a user submit'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    _G._before = { turn_active = s.turn_active, is_streaming = s.is_streaming }
+    s:begin_message({ id = 'msg_auto', role = 'assistant' })
+    _G._after = { turn_active = s.turn_active, is_streaming = s.is_streaming }
+  ]])
+  eq(_G.child.lua_get('_G._before'), { turn_active = false, is_streaming = false })
+  eq(_G.child.lua_get('_G._after'), { turn_active = true, is_streaming = true })
+end
+
+T['autonomous_turn']['on_result clears turn_active for autonomous turns'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s:begin_message({ id = 'msg_auto', role = 'assistant' })
+    s:end_message()
+    s:on_result({ total_cost_usd = 0.01, usage = { input_tokens = 1, output_tokens = 1 } })
+    _G._state = { turn_active = s.turn_active, is_streaming = s.is_streaming }
+  ]])
+  eq(_G.child.lua_get('_G._state'), { turn_active = false, is_streaming = false })
+end
+
 -- ---------------------------------------------------------------------------
 -- Tool use (Bash) with streaming
 -- ---------------------------------------------------------------------------

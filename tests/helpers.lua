@@ -282,6 +282,7 @@ function M.get_session_state(child)
       input_tokens = s.input_tokens,
       output_tokens = s.output_tokens,
       is_streaming = s.is_streaming,
+      turn_active = s.turn_active,
       turn_count = #s.turns,
     }
   ]==])
