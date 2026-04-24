@@ -27,18 +27,20 @@
 - [x] Interrupt current turn via stream-json control_request (keeps session alive)
 - [x] Fix statusline thinking spinner (doesn't spin)
 - [x] Remove turn spinners
-- [ ] Add support for /remote-control
 - [x] Add support for session naming (/rename)
+- [x] Prevent user prompt submission while agent turn is active
+- [x] Get rid of full line background highlight for folded lines (especially distracting on Output lines)
+- [x] Rename CcNew -> CcClear and CcOpen -> CcNew
+- [ ] Add support for /remote-control
+- [ ] Add per tool call statusline (Running... (32s timeout 2m))
 - [ ] Add rename with ai generated name
-- [ ] Support "queued" prompts (submitted while agent is thinking or working)
+- [ ] `zt` bug is resurfacing
 - [ ] Add syntax highlighting for code blocks in output
 - [ ] Explore potentially using foldcolumn
 - [ ] Add true e2e tests (requires brainstorming)
 - [ ] Fix missing mode in statusline on startup
-- [x] Get rid of full line background highlight for folded lines (especially distracting on Output lines)
 - [ ] Identify most complex/fragile code and simplify (requires brainstorming)
 - [ ] Add config option to turn off tool icons
-- [ ] Add per tool call statusline (Running... (32s timeout 2m))
 - [ ] Ensure system prompt additions are not hard-coded (instead user config)
 - [ ] Enable window config 
   - [x] hide line numbers by default
@@ -47,10 +49,10 @@
 - [ ] Add a "theme viewer/switcher" to show visually mock examples of what each type of tool looks like, and user can interactively switch themes and see what it looks like live
 - [ ] Make resume history picker window larger
 - [ ] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
-- [x] Rename CcNew -> CcClear and CcOpen -> CcNew
 - [ ] Fix :BuffersNext/Prev not working in output window
 - [ ] Improve lua types
 - [ ] Add config option to autosize prompt window to fit content (with configurable min/max heights)
 - [ ] Add support plan mode toggle
 - [ ] Add support for todo lists (requires brainstorming)
 - [ ] Add support for /compact (requires brainstorming)
+- [ ] Support "queued" prompts (submitted while agent is thinking or working)
