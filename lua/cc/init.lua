@@ -725,31 +725,31 @@ function M._handle_rename(inst, args)
   local history = require('cc.history')
   local session_id = inst.last_session_id
   if not session_id or session_id == '' then
-    inst.output:render_notice('/rename: no session id yet — wait for first response')
+    vim.notify('cc.nvim /rename: no session id yet — wait for first response', vim.log.levels.WARN)
     return
   end
   if name == '' then
     local current = inst.session_name
     if current and current ~= '' then
-      inst.output:render_notice('/rename: current title is "' .. current .. '" — usage: /rename <name>')
+      vim.notify('cc.nvim /rename: current title is "' .. current .. '" — usage: /rename <name>', vim.log.levels.INFO)
     else
-      inst.output:render_notice('/rename: usage: /rename <name>')
+      vim.notify('cc.nvim /rename: usage: /rename <name>', vim.log.levels.INFO)
     end
     return
   end
   local path = history.session_path(session_id)
   if not path then
-    inst.output:render_notice('/rename: transcript not yet on disk — try again after next turn')
+    vim.notify('cc.nvim /rename: transcript not yet on disk — try again after next turn', vim.log.levels.WARN)
     return
   end
   local ok, err = history.append_custom_title(path, session_id, name)
   if not ok then
-    inst.output:render_notice('/rename: failed to write title: ' .. tostring(err))
+    vim.notify('cc.nvim /rename: failed to write title: ' .. tostring(err), vim.log.levels.ERROR)
     return
   end
   inst.session_name = name
   M._apply_session_buf_names(inst, name)
-  inst.output:render_notice('Session renamed to: ' .. name)
+  vim.notify('cc.nvim: session renamed to "' .. name .. '"', vim.log.levels.INFO)
   require('cc.statusline').refresh(inst)
 end
 

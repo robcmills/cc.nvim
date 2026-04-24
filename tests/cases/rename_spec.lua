@@ -145,14 +145,14 @@ T['dispatch']['handler parses name and sets instance.session_name'] = function()
     history.session_path = function(sid) if sid == session_id then return path end end
 
     local notices = {}
+    local orig_notify = vim.notify
+    vim.notify = function(text, _level) table.insert(notices, text) end
     local prompt_name_calls = {}
     local inst = {
       last_session_id = session_id,
       session_name = nil,
       session = {},
-      output = {
-        render_notice = function(self, text) table.insert(notices, text) end,
-      },
+      output = {},
       prompt = {
         set_buf_name = function(self, name) table.insert(prompt_name_calls, name) end,
       },
@@ -162,6 +162,7 @@ T['dispatch']['handler parses name and sets instance.session_name'] = function()
     cc._handle_rename(inst, 'my-new-name')
 
     history.session_path = orig
+    vim.notify = orig_notify
     local lines = vim.fn.readfile(path)
     local last_rec = vim.json.decode(lines[#lines])
     return {
@@ -175,20 +176,23 @@ T['dispatch']['handler parses name and sets instance.session_name'] = function()
   eq(result.session_name, 'my-new-name')
   eq(result.last_type, 'custom-title')
   eq(result.last_title, 'my-new-name')
-  eq(result.notice, 'Session renamed to: my-new-name')
+  eq(result.notice, 'cc.nvim: session renamed to "my-new-name"')
   eq(result.prompt_name, 'cc-my-new-name')
 end
 
 T['dispatch']['empty args prints usage'] = function()
   local notice = _G.child.lua_get([[(function()
     local notices = {}
+    local orig_notify = vim.notify
+    vim.notify = function(text, _level) table.insert(notices, text) end
     local inst = {
       last_session_id = 'abc',
       session_name = nil,
       session = {},
-      output = { render_notice = function(self, text) table.insert(notices, text) end },
+      output = {},
     }
     require('cc')._handle_rename(inst, '')
+    vim.notify = orig_notify
     return notices[1]
   end)()]])
   local ok = notice and notice:match('usage') ~= nil
@@ -197,12 +201,16 @@ end
 
 T['dispatch']['try_handle matches /rename'] = function()
   local handled = _G.child.lua_get([[(function()
+    local orig_notify = vim.notify
+    vim.notify = function() end
     local inst = {
       last_session_id = nil,
       session = {},
-      output = { render_notice = function() end },
+      output = {},
     }
-    return require('cc')._try_handle_client_command(inst, '/rename foo')
+    local result = require('cc')._try_handle_client_command(inst, '/rename foo')
+    vim.notify = orig_notify
+    return result
   end)()]])
   eq(handled, true)
 end
@@ -212,7 +220,7 @@ T['dispatch']['try_handle ignores non-client commands'] = function()
     local inst = {
       last_session_id = nil,
       session = {},
-      output = { render_notice = function() end },
+      output = {},
     }
     return require('cc')._try_handle_client_command(inst, '/clear')
   end)()]])
