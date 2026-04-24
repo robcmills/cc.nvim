@@ -257,16 +257,37 @@ local function build_fold_info(bufnr, foldstart, foldend)
   return info
 end
 
+--- Pick the primary highlight group for a fold's content text based on role.
+---@param info table
+---@return string
+local function role_hl(info)
+  if info.role == 'user' then return 'CcUser' end
+  if info.role == 'agent' then return 'CcAgent' end
+  if info.role == 'tool' then return 'CcTool' end
+  if info.role == 'result' then
+    if info.header and info.header:match('^%s*Error:') then return 'CcError' end
+    return 'CcOutput'
+  end
+  return 'CcFolded'
+end
+
 --- Default fold text function. Exposed as M.default_foldtext for use in
 --- custom foldtext callbacks that want to extend rather than replace it.
+--- Returns a list of { text, hl_group } chunks so the collapsed line keeps
+--- its semantic color (Vim only applies the Folded group to plain-string
+--- foldtext, which would otherwise drop our syntax highlighting).
 ---@param info table fold context from build_fold_info
----@return string
+---@return table list of { text, hl } chunks
 function M.default_foldtext(info)
+  local hl = role_hl(info)
   if info.role == 'user' then
+    local body
     if info.first_text and #info.first_text > 0 then
-      return '▸ User: ' .. info.first_text
+      body = 'User: ' .. info.first_text
+    else
+      body = 'User:  ⟨' .. info.line_count .. ' lines⟩'
     end
-    return '▸ User:  ⟨' .. info.line_count .. ' lines⟩'
+    return { { '▸ ', 'CcCaret' }, { body, hl } }
   elseif info.role == 'agent' then
     local parts = {}
     if info.tool_count > 0 then
@@ -275,24 +296,31 @@ function M.default_foldtext(info)
     if info.first_text and #info.first_text > 0 then
       table.insert(parts, info.first_text)
     end
+    local body
     if #parts > 0 then
-      return '▸ Agent: ' .. table.concat(parts, ' ')
+      body = 'Agent: ' .. table.concat(parts, ' ')
+    else
+      body = 'Agent:  ⟨' .. info.line_count .. ' lines⟩'
     end
-    return '▸ Agent:  ⟨' .. info.line_count .. ' lines⟩'
+    return { { '▸ ', 'CcCaret' }, { body, hl } }
   elseif info.role == 'tool' then
     local stripped = info.header:gsub('^%s*', '')
-    return '  ▸ ' .. stripped
+    return { { '  ▸ ', 'CcCaret' }, { stripped, hl } }
   elseif info.role == 'result' then
     local stripped = info.header:gsub('^%s*', '')
-    return '    ▸ ' .. stripped .. '  ⟨' .. info.line_count .. ' lines⟩'
+    return {
+      { '    ▸ ', 'CcCaret' },
+      { stripped, hl },
+      { '  ⟨' .. info.line_count .. ' lines⟩', 'CcFolded' },
+    }
   end
-  -- Fallback for unknown fold types.
-  return info.header .. '  ⟨' .. info.line_count .. ' lines⟩'
+  return { { info.header .. '  ⟨' .. info.line_count .. ' lines⟩', 'CcFolded' } }
 end
 
 --- Custom foldtext: builds context info and delegates to config.foldtext
---- or the default implementation.
----@return string
+--- or the default implementation. Returns either a string or a list of
+--- { text, hl } chunks (Neovim draws the list like overlay virt_text).
+---@return string|table
 function M.foldtext()
   local bufnr = vim.api.nvim_get_current_buf()
   local info = build_fold_info(bufnr, vim.v.foldstart, vim.v.foldend)
@@ -300,8 +328,15 @@ function M.foldtext()
   local config = require('cc.config').options
   if config.foldtext then
     local ok, result = pcall(config.foldtext, info)
-    if ok and type(result) == 'string' then
-      return result
+    if ok then
+      if type(result) == 'table' then
+        return result
+      end
+      if type(result) == 'string' then
+        -- Wrap the user's plain string with the role's highlight so it
+        -- doesn't lose color when the fold is closed.
+        return { { result, role_hl(info) } }
+      end
     end
   end
   return M.default_foldtext(info)
@@ -394,6 +429,23 @@ function Output:_append(lines, fold_levels, is_header)
     local last_buf_line = vim.api.nvim_buf_get_lines(bufnr, line_count - 1, line_count, false)[1] or ''
     if vim.trim(last_buf_line) == '' then
       while #lines > 0 and lines[1] == '' do
+        -- Preserve separator intent across the collapse. If the dropped
+        -- blank wanted a lower fold level than the existing trailing
+        -- blank (e.g. a turn-boundary separator at level 0 meeting a
+        -- level-1 trailing blank from the prior fold's content), demote
+        -- the existing blank so it survives when its enclosing fold
+        -- collapses.
+        local dropped_fl = fold_levels and fold_levels[1]
+        if dropped_fl ~= nil then
+          local function to_num(v)
+            if type(v) == 'number' then return v end
+            if type(v) == 'string' then return tonumber(v:match('[>%<]?(%d+)')) or 0 end
+            return 0
+          end
+          if to_num(dropped_fl) < to_num(state.fold_levels[line_count]) then
+            state.fold_levels[line_count] = dropped_fl
+          end
+        end
         table.remove(lines, 1)
         if fold_levels and #fold_levels > 0 then
           table.remove(fold_levels, 1)

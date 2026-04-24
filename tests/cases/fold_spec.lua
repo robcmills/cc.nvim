@@ -227,4 +227,106 @@ T['manual_open']['new tool call is folded after user opens a prior fold'] = func
   eq(_G.child.lua_get('_G._t1_still_open'), true)
 end
 
+T['foldtext'] = MiniTest.new_set()
+
+-- Collapsed folds would render with only the Folded highlight (plain text)
+-- if foldtext returned a string. Returning a list of {text, hl} chunks keeps
+-- the semantic color when collapsed.
+T['foldtext']['returns chunk list with role highlights'] = function()
+  _G.child.lua([[
+    local Output = require('cc.output')
+    _G._ft_user   = Output.default_foldtext({ role = 'user',   header = 'User:',        line_count = 3, first_text = 'hi' })
+    _G._ft_agent  = Output.default_foldtext({ role = 'agent',  header = 'Agent:',       line_count = 5, tool_count = 0, first_text = 'ok' })
+    _G._ft_tool   = Output.default_foldtext({ role = 'tool',   header = '  ▶ Read:',    line_count = 2 })
+    _G._ft_out    = Output.default_foldtext({ role = 'result', header = '    Output:',  line_count = 4 })
+    _G._ft_err    = Output.default_foldtext({ role = 'result', header = '    Error:',   line_count = 4 })
+  ]])
+  local function chunk_hls(name)
+    local chunks = _G.child.lua_get('_G.' .. name)
+    local hls = {}
+    for _, c in ipairs(chunks) do table.insert(hls, c[2]) end
+    return hls
+  end
+  eq(chunk_hls('_ft_user'),  { 'CcCaret', 'CcUser' })
+  eq(chunk_hls('_ft_agent'), { 'CcCaret', 'CcAgent' })
+  eq(chunk_hls('_ft_tool'),  { 'CcCaret', 'CcTool' })
+  eq(chunk_hls('_ft_out'),   { 'CcCaret', 'CcOutput', 'CcFolded' })
+  eq(chunk_hls('_ft_err'),   { 'CcCaret', 'CcError',  'CcFolded' })
+end
+
+-- config.foldtext may return a plain string; wrap it with the role highlight
+-- so user-supplied foldtext doesn't lose color when collapsed.
+T['foldtext']['wraps user string return with role highlight'] = function()
+  _G.child.lua([[
+    local Output = require('cc.output')
+    local config = require('cc.config')
+    config.setup({ foldtext = function(info) return '>> ' .. info.role end })
+    local session = require('cc.session').new()
+    local output = Output.new(session, 'cc-test-foldtext-wrap')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+    output:render_user_turn('hello')
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local user_lnum
+    for i, l in ipairs(lines) do if l == 'User:' then user_lnum = i; break end end
+    vim.v.foldstart, vim.v.foldend = user_lnum, user_lnum + 1
+    _G._ft_wrapped = Output.foldtext()
+  ]])
+  local chunks = _G.child.lua_get('_G._ft_wrapped')
+  eq(#chunks, 1)
+  eq(chunks[1][2], 'CcUser')
+  eq(chunks[1][1]:sub(1, 3), '>> ')
+end
+
+T['separator'] = MiniTest.new_set()
+
+-- When a user turn's text ends with a trailing newline, the last content line
+-- is an indent-only blank at fold level 1. The next turn's level-0 separator
+-- gets collapsed by the consecutive-blanks dedup. The remaining blank must
+-- be demoted to level 0 so it survives when the user fold closes — otherwise
+-- the collapsed user header butts directly against the next Agent: header.
+T['separator']['blank before next turn stays at level 0 after dedup'] = function()
+  _G.child.lua([[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    local config = require('cc.config')
+    config.setup({})
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-separator')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+
+    -- Trailing newline produces an indent-only blank as the last content line.
+    output:render_user_turn('hello\n')
+    output:begin_assistant_turn()
+
+    local state = Output._buf_state[bufnr]
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    _G._user_lnum, _G._agent_lnum = nil, nil
+    for i, l in ipairs(lines) do
+      if l == 'User:' then _G._user_lnum = i end
+      if l == 'Agent:' then _G._agent_lnum = i end
+    end
+    _G._sep_lnum = _G._agent_lnum - 1
+    _G._sep_line = lines[_G._sep_lnum]
+    _G._sep_level = state.fold_levels[_G._sep_lnum]
+
+    -- Also verify live fold behavior: at foldlevel=0 the separator must
+    -- remain visible between the two closed turn folds.
+    local winid = vim.api.nvim_get_current_win()
+    vim.wo[winid].foldlevel = 0
+    vim.api.nvim_win_call(winid, function()
+      _G._sep_foldclosed = vim.fn.foldclosed(_G._sep_lnum)
+      _G._sep_foldlevel  = vim.fn.foldlevel(_G._sep_lnum)
+    end)
+  ]])
+  -- A blank line physically sits between User content and Agent header.
+  eq(_G.child.lua_get('vim.trim(_G._sep_line)'), '')
+  -- Its recorded foldexpr level is 0 (not inherited from level-1 content).
+  eq(_G.child.lua_get('_G._sep_level'), 0)
+  -- Vim agrees: the separator is outside any fold.
+  eq(_G.child.lua_get('_G._sep_foldclosed'), -1)
+  eq(_G.child.lua_get('_G._sep_foldlevel'), 0)
+end
+
 return T
