@@ -31,19 +31,20 @@
 - [x] Prevent user prompt submission while agent turn is active
 - [x] Get rid of full line background highlight for folded lines (especially distracting on Output lines)
 - [x] Rename CcNew -> CcClear and CcOpen -> CcNew
+- [x] Add effort level to statusline
+- [x] `zt` bug is resurfacing
+- [x] Add true e2e tests (requires brainstorming)
+- [x] Fix :BuffersNext/Prev not working in output window
 
 
-- [ ] Add effort level to statusline
+- [ ] Fix missing mode in statusline on startup
 - [ ] Add support for /remote-control
 - [ ] Add per tool call statusline (Running... (32s timeout 2m)) -> resolves to (42s)
 - [ ] Add session timing info
 - [ ] Add rename with ai generated name
-- [ ] `zt` bug is resurfacing
 - [ ] Add syntax highlighting for code blocks in output
   + [ ] mcp__claude-in-chrome__javascript_tool.text (contains javascript)
 - [ ] Explore potentially using foldcolumn
-- [ ] Add true e2e tests (requires brainstorming)
-- [ ] Fix missing mode in statusline on startup
 - [ ] Identify most complex/fragile code and simplify (requires brainstorming)
 - [ ] Add config option to turn off tool icons
 - [ ] Ensure system prompt additions are not hard-coded (instead user config)
@@ -54,7 +55,6 @@
 - [ ] Add a "theme viewer/switcher" to show visually mock examples of what each type of tool looks like, and user can interactively switch themes and see what it looks like live
 - [ ] Make resume history picker window larger
 - [ ] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
-- [ ] Fix :BuffersNext/Prev not working in output window
 - [ ] Improve lua types
 - [ ] Add config option to autosize prompt window to fit content (with configurable min/max heights)
 - [ ] Add support plan mode toggle
