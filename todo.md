@@ -37,6 +37,8 @@
 - [x] Fix :BuffersNext/Prev not working in output window
 
 
+- [ ] Add emoji art splash screen (configurable visibility)
+- [ ] Turn thinking back on with timer
 - [ ] Fix missing mode in statusline on startup
 - [ ] Add support for /remote-control
 - [ ] Add per tool call statusline (Running... (32s timeout 2m)) -> resolves to (42s)

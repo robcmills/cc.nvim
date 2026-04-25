@@ -13,12 +13,18 @@ local M = {}
 ---@field current_blocks table<integer, table>
 ---@field is_streaming boolean
 ---@field turn_active boolean true from user submit through the final result
+---@field turn_started_at integer? ms timestamp from vim.uv.now() while turn_active
 ---@field interrupt_pending boolean
 ---@field cost_usd number
 ---@field input_tokens integer
 ---@field output_tokens integer
 local Session = {}
 Session.__index = Session
+
+---@return integer
+local function now_ms()
+  return (vim.uv or vim.loop).now()
+end
 
 function M.new()
   return setmetatable({
@@ -31,6 +37,7 @@ function M.new()
     current_blocks = {},
     is_streaming = false,
     turn_active = false,
+    turn_started_at = nil,
     interrupt_pending = false,
     cost_usd = 0,
     input_tokens = 0,
@@ -89,6 +96,7 @@ end
 function Session:add_user_turn(text)
   self.interrupt_pending = false
   self.turn_active = true
+  self.turn_started_at = now_ms()
   table.insert(self.turns, {
     role = 'user',
     text = text,
@@ -101,6 +109,9 @@ function Session:begin_message(message)
   -- message_start without a preceding user submit. Flip turn_active on so
   -- interrupt, submit-guards, and statusline see the live turn.
   self.turn_active = true
+  if not self.turn_started_at then
+    self.turn_started_at = now_ms()
+  end
   self.is_streaming = true
   self.current_message = {
     id = message and message.id or nil,
@@ -186,6 +197,10 @@ end
 function Session:on_result(msg)
   self.interrupt_pending = false
   self.turn_active = false
+  if self.turn_started_at then
+    msg.turn_elapsed_ms = now_ms() - self.turn_started_at
+    self.turn_started_at = nil
+  end
   if msg.total_cost_usd then
     self.cost_usd = msg.total_cost_usd
   end

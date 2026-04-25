@@ -1250,12 +1250,28 @@ local function fmt_cache_tokens(n)
   return tostring(n)
 end
 
+---@param ms integer
+---@return string
+local function fmt_duration(ms)
+  local total_s = math.max(0, math.floor(ms / 1000))
+  if total_s < 60 then return string.format('%ds', total_s) end
+  local minutes = math.floor(total_s / 60)
+  local seconds = total_s % 60
+  if minutes < 60 then return string.format('%dm %ds', minutes, seconds) end
+  local hours = math.floor(minutes / 60)
+  minutes = minutes % 60
+  return string.format('%dh %dm', hours, minutes)
+end
+
 --- Default formatter for the per-turn result line. Returns the inner text
 --- (without the leading/trailing "──" separators) or nil if nothing to show.
 ---@param result table
 ---@return string?
 local function default_turn_cost_format(result)
   local parts = {}
+  if type(result.turn_elapsed_ms) == 'number' then
+    table.insert(parts, fmt_duration(result.turn_elapsed_ms))
+  end
   if result.total_cost_usd then
     table.insert(parts, string.format('$%.4f', result.total_cost_usd))
   end
@@ -1470,17 +1486,25 @@ function Output:update_tool_elapsed(tool_use_id, elapsed_seconds)
   if meta.header_lnum > vim.api.nvim_buf_line_count(bufnr) then return end
   local lines = vim.api.nvim_buf_get_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false)
   if not lines[1] then return end
-  local new_secs = math.floor(elapsed_seconds)
+  local new_ms = math.floor(elapsed_seconds * 1000)
   -- Elapsed time only goes up; if a larger value is already displayed
   -- (e.g. SDK tool_progress reported 5s while the local timer still says 0s
   -- in synchronous fixture replay), keep the larger value.
-  local cur = tonumber(lines[1]:match(' %((%d+)s%)$'))
-  if cur and new_secs < cur then return end
-  local base = lines[1]:gsub(' %(%d+s%)$', '')
+  local cur_secs = tonumber(lines[1]:match(' %((%d+)s%)$'))
+  local cur_ms_val = tonumber(lines[1]:match(' %((%d+)ms%)$'))
+  local cur_ms = cur_ms_val or (cur_secs and cur_secs * 1000) or nil
+  if cur_ms and new_ms < cur_ms then return end
+  local base = lines[1]:gsub(' %(%d+m?s%)$', '')
+  local suffix
+  if new_ms < 1000 then
+    suffix = string.format('(%dms)', new_ms)
+  else
+    suffix = string.format('(%ds)', math.floor(new_ms / 1000))
+  end
   self:_with_tail_anchor(function()
     vim.bo[bufnr].modifiable = true
     vim.api.nvim_buf_set_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false,
-      { string.format('%s (%ds)', base, new_secs) })
+      { string.format('%s %s', base, suffix) })
     vim.bo[bufnr].modifiable = false
   end)
 end

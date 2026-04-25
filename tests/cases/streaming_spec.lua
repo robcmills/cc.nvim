@@ -131,6 +131,75 @@ T['autonomous_turn']['on_result clears turn_active for autonomous turns'] = func
 end
 
 -- ---------------------------------------------------------------------------
+-- Turn timing: turn_started_at lifecycle and elapsed attached to result.
+-- ---------------------------------------------------------------------------
+T['turn_timing'] = MiniTest.new_set()
+
+T['turn_timing']['add_user_turn sets turn_started_at'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    _G._before = s.turn_started_at
+    s:add_user_turn('hi')
+    _G._after = s.turn_started_at
+  ]])
+  eq(_G.child.lua_get('_G._before'), vim.NIL)
+  local after = _G.child.lua_get('_G._after')
+  eq(type(after) == 'number' and after > 0, true)
+end
+
+T['turn_timing']['autonomous begin_message sets turn_started_at when nil'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s:begin_message({ id = 'msg_auto', role = 'assistant' })
+    _G._after = s.turn_started_at
+  ]])
+  local after = _G.child.lua_get('_G._after')
+  eq(type(after) == 'number' and after > 0, true)
+end
+
+T['turn_timing']['begin_message preserves turn_started_at from add_user_turn'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s:add_user_turn('hi')
+    _G._t1 = s.turn_started_at
+    vim.wait(15, function() return false end)
+    s:begin_message({ id = 'm', role = 'assistant' })
+    _G._t2 = s.turn_started_at
+  ]])
+  eq(_G.child.lua_get('_G._t1'), _G.child.lua_get('_G._t2'))
+end
+
+T['turn_timing']['on_result attaches turn_elapsed_ms and clears start'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s:add_user_turn('hi')
+    vim.wait(20, function() return false end)
+    local msg = { total_cost_usd = 0.01, usage = { input_tokens = 1, output_tokens = 1 } }
+    s:on_result(msg)
+    _G._elapsed = msg.turn_elapsed_ms
+    _G._cleared = s.turn_started_at
+  ]])
+  local elapsed = _G.child.lua_get('_G._elapsed')
+  eq(type(elapsed) == 'number' and elapsed >= 15, true)
+  eq(_G.child.lua_get('_G._cleared'), vim.NIL)
+end
+
+T['turn_timing']['on_result without preceding start does not attach elapsed'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    local msg = { total_cost_usd = 0.01, usage = { input_tokens = 1, output_tokens = 1 } }
+    s:on_result(msg)
+    _G._elapsed = msg.turn_elapsed_ms
+  ]])
+  eq(_G.child.lua_get('_G._elapsed'), vim.NIL)
+end
+
+-- ---------------------------------------------------------------------------
 -- Tool use (Bash) with streaming
 -- ---------------------------------------------------------------------------
 T['tool_bash'] = MiniTest.new_set()
@@ -488,6 +557,41 @@ T['result_line']['anchors to end of agent turn when tail has moved past'] = func
   -- Cost line must sit between the agent content and the new user turn.
   eq(cost_idx > agent_content_idx, true)
   eq(cost_idx < user2_idx, true)
+end
+
+T['result_line']['default format prepends turn duration when elapsed is set'] = function()
+  local line = render_result_line(_G.child, {}, {
+    total_cost_usd = 0.5,
+    turn_elapsed_ms = 51000,
+    usage = { input_tokens = 5, output_tokens = 10 },
+  })
+  assert(line, 'expected a result line')
+  eq(line:find('51s', 1, true) ~= nil, true)
+  -- Duration sits before the cost segment.
+  local d = line:find('51s', 1, true)
+  local c = line:find('%$0%.5000')
+  assert(d and c and d < c, 'expected duration to appear before cost')
+end
+
+T['result_line']['default format formats minutes for >=60s'] = function()
+  local line = render_result_line(_G.child, {}, {
+    total_cost_usd = 0.01,
+    turn_elapsed_ms = 90 * 1000,
+    usage = { input_tokens = 1, output_tokens = 1 },
+  })
+  assert(line, 'expected a result line')
+  eq(line:find('1m 30s', 1, true) ~= nil, true)
+end
+
+T['result_line']['default format omits duration when elapsed is missing'] = function()
+  local line = render_result_line(_G.child, {}, {
+    total_cost_usd = 0.01,
+    usage = { input_tokens = 1, output_tokens = 1 },
+  })
+  assert(line, 'expected a result line')
+  -- No "Ns" segment should appear; assert by ruling out the seconds suffix
+  -- after the leading "── " border.
+  eq(line:match('── %d+s'), nil)
 end
 
 T['result_line']['turn_cost_format errors fall back to default'] = function()
