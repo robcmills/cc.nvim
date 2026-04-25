@@ -1,0 +1,33 @@
+{"type":"system","subtype":"init","session_id":"test-many-lines-001","tools":["Bash","Read"],"model":"claude-sonnet-4-20250514","permissionMode":"auto"}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_many01","role":"assistant","type":"message","model":"claude-sonnet-4-20250514"}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let me walk through this step by step.\n"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\nFirst, "}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"we need to inspect the configuration files "}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"because they hold the relevant flags.\n"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Second, the schema migrations live in a separate package.\n"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Third, the test runner orchestrates all of this.\n"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\nHere is the plan:\n"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"- Step 1: enumerate the affected files\n"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"- Step 2: stage the rollout behind a feature gate\n"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"- Step 3: backfill the join table without locking writes\n"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"- Step 4: flip the gate, observe metrics, decide rollback\n"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\nNow I will read the relevant file."}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_many_1","name":"Read","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":\"/repo/path/to/long/file/name/that/might/wrap/in/narrow/windows.lua\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":1}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_many_1","content":"line 1: imports and module setup\nline 2: configuration constants\nline 3: helper function declarations\nline 4: state initialization with default values that span multiple words to ensure wrapping in narrow windows\nline 5: more state\nline 6: even more state — note this is also a long line that we expect will wrap when the column count is small enough to force that behavior\nline 7: final initialization\nline 8: exports","is_error":false}]}}
+{"type":"stream_event","event":{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"\n\nGot it. "}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Now let me run a check.\n"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":2}}
+{"type":"stream_event","event":{"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"toolu_many_2","name":"Bash","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"echo running diagnostic\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":3}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_many_2","content":"running diagnostic\nstep a: ok\nstep b: ok\nstep c: ok with a long explanation that might also wrap\nstep d: ok\ndone","is_error":false}]}}
+{"type":"stream_event","event":{"type":"content_block_start","index":4,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"\n\nAll checks pass."}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":4}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"result","total_cost_usd":0.0234,"usage":{"input_tokens":1500,"output_tokens":340}}

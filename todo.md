@@ -35,10 +35,12 @@
 
 - [ ] Add effort level to statusline
 - [ ] Add support for /remote-control
-- [ ] Add per tool call statusline (Running... (32s timeout 2m))
+- [ ] Add per tool call statusline (Running... (32s timeout 2m)) -> resolves to (42s)
+- [ ] Add session timing info
 - [ ] Add rename with ai generated name
 - [ ] `zt` bug is resurfacing
 - [ ] Add syntax highlighting for code blocks in output
+  + [ ] mcp__claude-in-chrome__javascript_tool.text (contains javascript)
 - [ ] Explore potentially using foldcolumn
 - [ ] Add true e2e tests (requires brainstorming)
 - [ ] Fix missing mode in statusline on startup
@@ -59,3 +61,4 @@
 - [ ] Add support for todo lists (requires brainstorming)
 - [ ] Add support for /compact (requires brainstorming)
 - [ ] Support "queued" prompts (submitted while agent is thinking or working)
+

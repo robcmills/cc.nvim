@@ -1,0 +1,48 @@
+{"type":"system","subtype":"init","session_id":"hostile-001","tools":["Bash","Read","Grep","Edit"],"model":"claude-sonnet-4-20250514","permissionMode":"auto"}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_h1","role":"assistant","type":"message","model":"claude-sonnet-4-20250514"}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll work through this step by step.\n"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\nFirst, "}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"let me search for the relevant files in the project — this might wrap depending on the column count, "}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"and I want to make sure the search covers all the affected modules.\n"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_h1","name":"Grep","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"pattern\":\"some_long_search_pattern_with_enough_content_to_stress_wrap_behavior\",\"path\":\"src/components/widgets/forms/inputs/text_inputs.lua\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":1}}
+{"type":"tool_progress","tool_use_id":"toolu_h1","elapsed_time_seconds":0.4}
+{"type":"tool_progress","tool_use_id":"toolu_h1","elapsed_time_seconds":1.1}
+{"type":"tool_progress","tool_use_id":"toolu_h1","elapsed_time_seconds":2.0}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_h1","content":"src/components/widgets/forms/inputs/text_inputs.lua:42: matched here\nsrc/components/widgets/forms/inputs/text_inputs.lua:97: another match in a function with a relatively long descriptive name\nsrc/components/widgets/forms/inputs/text_inputs.lua:154: third match in initialization helper\nsrc/components/widgets/forms/inputs/text_inputs.lua:201: fourth match\nsrc/components/widgets/forms/inputs/text_inputs.lua:233: fifth match in the cleanup logic","is_error":false}]}}
+{"type":"stream_event","event":{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"\n\nNow let me read each of these in parallel:\n"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":2}}
+{"type":"stream_event","event":{"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"toolu_h2","name":"Read","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":\"/repo/src/components/widgets/forms/inputs/text_inputs.lua\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":3}}
+{"type":"stream_event","event":{"type":"content_block_start","index":4,"content_block":{"type":"tool_use","id":"toolu_h3","name":"Read","input":{}}}}
+{"type":"tool_progress","tool_use_id":"toolu_h2","elapsed_time_seconds":0.5}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_h2","content":"line 1: first content\nline 2: second\nline 3: a longer line that exists in this file and may wrap depending on column count\nline 4: another\nline 5: short\nline 6: another long line of content that probably will wrap when columns are narrow enough to force that behavior\nline 7: end","is_error":false}]}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":\"/repo/src/components/widgets/forms/inputs/select_inputs.lua\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":4}}
+{"type":"tool_progress","tool_use_id":"toolu_h3","elapsed_time_seconds":0.3}
+{"type":"tool_progress","tool_use_id":"toolu_h3","elapsed_time_seconds":0.9}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_h3","content":"alpha\nbeta\ngamma\ndelta\nepsilon - this line is long enough to cause wrapping in a narrow window setup with maybe 60 columns or fewer\nzeta","is_error":false}]}}
+{"type":"stream_event","event":{"type":"content_block_start","index":5,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"\n\n"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"All files look fine. "}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"Let me run a final check to make sure everything compiles.\n"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":5}}
+{"type":"stream_event","event":{"type":"content_block_start","index":6,"content_block":{"type":"tool_use","id":"toolu_h4","name":"Bash","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":6,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"yarn typecheck && yarn lint\",\"description\":\"verify everything is clean\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":6}}
+{"type":"tool_progress","tool_use_id":"toolu_h4","elapsed_time_seconds":1.0}
+{"type":"tool_progress","tool_use_id":"toolu_h4","elapsed_time_seconds":2.5}
+{"type":"tool_progress","tool_use_id":"toolu_h4","elapsed_time_seconds":4.2}
+{"type":"tool_progress","tool_use_id":"toolu_h4","elapsed_time_seconds":6.0}
+{"type":"tool_progress","tool_use_id":"toolu_h4","elapsed_time_seconds":8.1}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_h4","content":"checking dependencies...\ntypechecking 124 files...\nall types pass\nlinting 124 files...\nlint: 0 errors, 0 warnings\nbuild: ok","is_error":false}]}}
+{"type":"stream_event","event":{"type":"content_block_start","index":7,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":7,"delta":{"type":"text_delta","text":"\n\nDone."}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":7}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"result","total_cost_usd":0.0789,"usage":{"input_tokens":4500,"output_tokens":900}}

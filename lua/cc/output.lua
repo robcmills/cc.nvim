@@ -504,14 +504,16 @@ function Output:_append(lines, fold_levels, is_header)
     end
   end
 
+  -- Close any folds that have just become closeable (a header followed by
+  -- ≥1 content line) BEFORE the next redraw, so the user never sees a
+  -- briefly-expanded tool-result block flash open and then collapse.
+  -- Then anchor — fold close shrinks visible content above, so the
+  -- previously-anchored view is no longer at the bottom.
+  M._flush_pending_fold_closes(bufnr)
   if was_following then
     self:_follow_tail()
   end
-  -- Defer caret refresh so the fold engine has evaluated the new lines.
-  vim.schedule(function()
-    M._flush_pending_fold_closes(bufnr)
-    M.refresh_carets(bufnr)
-  end)
+  vim.schedule(function() M.refresh_carets(bufnr) end)
   return first_lnum
 end
 
@@ -611,13 +613,11 @@ function Output:_insert_lines(start_lnum, lines, fold_levels, is_header)
     end
   end
 
+  M._flush_pending_fold_closes(bufnr)
   if was_following then
     self:_follow_tail()
   end
-  vim.schedule(function()
-    M._flush_pending_fold_closes(bufnr)
-    M.refresh_carets(bufnr)
-  end)
+  vim.schedule(function() M.refresh_carets(bufnr) end)
 end
 
 --- Close any deferred new fold headers whose depth exceeds foldlevel in
@@ -718,10 +718,22 @@ function Output:follow_tail()
   self:_follow_tail()
 end
 
---- Advance cursor to the new last line and keep it in view. Uses
---- nvim_win_call so topline calc and fold handling run in the target
---- window's own context (works correctly even when the output window
---- is not currently focused).
+--- Advance cursor to the new last line and anchor the view to the bottom.
+---
+--- `G` alone scrolls "just enough" to keep the cursor visible — with the
+--- cursor previously on the bottom screen row, an append shifts topline by
+--- one *buffer* line regardless of whether neighboring lines wrap, leaving
+--- a gap between the cursor and the bottom edge. The drift is permanent
+--- across subsequent appends. `Gzb` re-anchors. `zb` may still leave an
+--- unavoidable gap when the surrounding content's wrap layout doesn't sum
+--- to exactly winheight, but that's a fundamental layout constraint, not
+--- the kind of permanent topline drift that produces "snap to top/middle".
+---
+--- The other half of the fix lives in `_with_tail_anchor`: in-place mutations
+--- to lines *above* the cursor (tool header summaries, elapsed-time updates)
+--- change the screen layout without growing the buffer, and previously had
+--- no path back through `_follow_tail` — the view was left misanchored until
+--- the next append.
 function Output:_follow_tail()
   if not self.winid or not vim.api.nvim_win_is_valid(self.winid) then
     return
@@ -730,8 +742,23 @@ function Output:_follow_tail()
     return
   end
   pcall(vim.api.nvim_win_call, self.winid, function()
-    vim.cmd('normal! G')
+    vim.cmd('normal! Gzb')
   end)
+end
+
+--- Run an in-place buffer mutation that may change a line's *wrap row count*
+--- (e.g. updating a tool header to include a summary or elapsed timer).
+--- Such mutations don't grow the buffer, but if the modified line ends up
+--- wrapping to more screen rows, the viewport's anchor drifts under the
+--- cursor. Wrap the mutation so we re-anchor to the tail when we were
+--- already following it.
+---@param mutate fun()
+function Output:_with_tail_anchor(mutate)
+  local was_following = self:_is_following_tail()
+  mutate()
+  if was_following then
+    self:_follow_tail()
+  end
 end
 
 --- Render a user turn header + content.
@@ -883,11 +910,13 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary)
   if not lnum then return end
   local bufnr = self.bufnr
   if lnum > vim.api.nvim_buf_line_count(bufnr) then return end
-  vim.bo[bufnr].modifiable = true
-  local icon = require('cc.icons').for_tool(tool_name)
-  local new_text = '  ' .. icon .. ' ' .. display_tool_name(tool_name) .. ': ' .. summary
-  vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_text })
-  vim.bo[bufnr].modifiable = false
+  self:_with_tail_anchor(function()
+    vim.bo[bufnr].modifiable = true
+    local icon = require('cc.icons').for_tool(tool_name)
+    local new_text = '  ' .. icon .. ' ' .. display_tool_name(tool_name) .. ': ' .. summary
+    vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_text })
+    vim.bo[bufnr].modifiable = false
+  end)
 end
 
 --- Render a YAML-ish representation of a Lua value.
@@ -1265,12 +1294,14 @@ function Output:render_permission_outcome(behavior, tool_name)
   local icon = behavior == 'allow' and '✓' or '✗'
   local verb = behavior == 'allow' and 'Allowed' or 'Denied'
   local bufnr = self:ensure_buffer()
-  vim.bo[bufnr].modifiable = true
-  local line_count = vim.api.nvim_buf_line_count(bufnr)
-  local last_row = line_count - 1
-  vim.api.nvim_buf_set_lines(bufnr, last_row, last_row + 1, false,
-    { '  ' .. icon .. ' ' .. verb .. ': ' .. tool_name })
-  vim.bo[bufnr].modifiable = false
+  self:_with_tail_anchor(function()
+    vim.bo[bufnr].modifiable = true
+    local line_count = vim.api.nvim_buf_line_count(bufnr)
+    local last_row = line_count - 1
+    vim.api.nvim_buf_set_lines(bufnr, last_row, last_row + 1, false,
+      { '  ' .. icon .. ' ' .. verb .. ': ' .. tool_name })
+    vim.bo[bufnr].modifiable = false
+  end)
 end
 
 --- Render a transcript record (from history.read_transcript) without the
@@ -1347,10 +1378,12 @@ function Output:update_tool_elapsed(tool_use_id, elapsed_seconds)
   local lines = vim.api.nvim_buf_get_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false)
   if not lines[1] then return end
   local base = lines[1]:gsub(' %[%d+s%]$', '')
-  vim.bo[bufnr].modifiable = true
-  vim.api.nvim_buf_set_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false,
-    { string.format('%s [%ds]', base, math.floor(elapsed_seconds)) })
-  vim.bo[bufnr].modifiable = false
+  self:_with_tail_anchor(function()
+    vim.bo[bufnr].modifiable = true
+    vim.api.nvim_buf_set_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false,
+      { string.format('%s [%ds]', base, math.floor(elapsed_seconds)) })
+    vim.bo[bufnr].modifiable = false
+  end)
 end
 
 --- Set window-local foldlevel for the output window.

@@ -1,0 +1,14 @@
+{"type":"system","subtype":"init","session_id":"large-read-001","tools":["Read","Bash"],"model":"claude-sonnet-4-20250514","permissionMode":"auto"}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_lr","role":"assistant","type":"message","model":"claude-sonnet-4-20250514"}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Reading the file.\n"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_lr1","name":"Read","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":\"/repo/large_file.lua\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":1}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_lr1","content":"  1\tlocal M = {}\n  2\tlocal config = require('config')\n  3\tlocal helpers = require('helpers')\n  4\t\n  5\tfunction M.init()\n  6\t  config.setup()\n  7\t  helpers.bootstrap()\n  8\tend\n  9\t\n 10\tfunction M.reset()\n 11\t  config.reset()\n 12\tend\n 13\t\n 14\tfunction M.run(opts)\n 15\t  opts = opts or {}\n 16\t  if not config.is_ready() then return end\n 17\t  for k, v in pairs(opts) do\n 18\t    helpers.handle(k, v)\n 19\t  end\n 20\tend\n 21\t\n 22\tfunction M.status()\n 23\t  return {\n 24\t    ready = config.is_ready(),\n 25\t    runs = helpers.run_count(),\n 26\t    last = helpers.last_run(),\n 27\t  }\n 28\tend\n 29\t\n 30\tfunction M.cleanup()\n 31\t  helpers.cleanup()\n 32\tend\n 33\t\n 34\tfunction M.export(name)\n 35\t  return helpers.export(name)\n 36\tend\n 37\t\n 38\tfunction M.import(name, data)\n 39\t  return helpers.import(name, data)\n 40\tend\n 41\t\n 42\treturn M","is_error":false}]}}
+{"type":"stream_event","event":{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"\n\nThe module exports init, run, status, cleanup, export, and import."}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":2}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"result","total_cost_usd":0.0145,"usage":{"input_tokens":800,"output_tokens":200}}

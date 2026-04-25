@@ -2,8 +2,10 @@
 # cc.nvim test runner — agent entrypoint
 #
 # Usage:
-#   ./tests/run.sh                         # Run all specs (minimal config)
-#   ./tests/run.sh output_rendering        # Filter by pattern
+#   ./tests/run.sh                         # Run all unit specs (minimal config)
+#   ./tests/run.sh output_rendering        # Filter unit specs by pattern
+#   ./tests/run.sh --e2e                   # Run e2e specs (real child nvim, slow)
+#   ./tests/run.sh --e2e viewport          # Filter e2e specs by pattern
 #   ./tests/run.sh --visual simple_text    # Render fixture, dump visual output
 #   ./tests/run.sh --capture my_feature    # Launch nvim with :CcDumpNdjson pre-armed
 #   ./tests/run.sh --config=rob            # Run with Rob's config
@@ -18,6 +20,7 @@ CONFIG="minimal"
 PATTERN=""
 VISUAL=""
 CAPTURE=""
+E2E=""
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -33,6 +36,10 @@ while [[ $# -gt 0 ]]; do
     --capture)
       CAPTURE="$2"
       shift 2
+      ;;
+    --e2e)
+      E2E="1"
+      shift
       ;;
     *)
       PATTERN="$1"
@@ -208,7 +215,15 @@ fi
 
 # Run tests via mini.test
 cd "$REPO_ROOT"
-echo "=== cc.nvim tests (config=$CONFIG) ==="
+
+# Choose spec dir: e2e vs unit
+if [[ -n "$E2E" ]]; then
+  SPEC_GLOB="tests/e2e/cases/*_spec.lua"
+  echo "=== cc.nvim e2e tests (config=$CONFIG) ==="
+else
+  SPEC_GLOB="tests/cases/*_spec.lua"
+  echo "=== cc.nvim tests (config=$CONFIG) ==="
+fi
 
 # Build file filter
 if [[ -n "$PATTERN" ]]; then
@@ -225,9 +240,10 @@ fi
 nvim --headless $CLEAN_FLAG -u "$INIT_FILE" +"lua (function()
   local test = require('mini.test')
   local pattern = '$FILE_PATTERN'
+  local glob = '$SPEC_GLOB'
   local collect_opts = {
     find_files = function()
-      local files = vim.fn.glob('tests/cases/*_spec.lua', false, true)
+      local files = vim.fn.glob(glob, false, true)
       if pattern ~= '' then
         files = vim.tbl_filter(function(f) return f:find(pattern, 1, true) end, files)
       end
