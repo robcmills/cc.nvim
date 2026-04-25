@@ -153,7 +153,10 @@ end
 -- Expose for vimscript callback.
 _G.__cc_statusline_render_for = M.render_for
 
-local STATUSLINE_WIN_OPTS = { 'statusline', 'winhighlight' }
+-- winhighlight is owned by output.lua's window-opts autocmd (see comment
+-- below). Saving it here would snapshot cc's value rather than the user's,
+-- because attach() runs after that autocmd has already overwritten it.
+local STATUSLINE_WIN_OPTS = { 'statusline' }
 
 --- Attach the cc statusline to the given output window. Idempotent.
 ---@param instance cc.Instance
@@ -189,9 +192,10 @@ function M.attach(instance, winid)
   })
 end
 
---- Undo attach: restore the window's prior statusline/winhighlight. Called
---- when the cc buffer is replaced in the window so the statusline callback
---- doesn't keep rendering for an unrelated buffer.
+--- Undo attach: restore the window's prior statusline. Called when the cc
+--- buffer is replaced in the window so the statusline callback doesn't
+--- keep rendering for an unrelated buffer. winhighlight is restored by
+--- output.lua's BufWinLeave handler, not here.
 ---@param winid integer
 function M.detach(winid)
   if not winid or not vim.api.nvim_win_is_valid(winid) then return end

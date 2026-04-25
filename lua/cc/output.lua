@@ -101,7 +101,7 @@ end
 --- BufWinLeave so they don't leak to buffers that later occupy the window.
 local OUTPUT_WIN_OPTS = {
   'foldmethod', 'foldexpr', 'foldenable', 'foldtext', 'foldlevel',
-  'fillchars', 'number', 'relativenumber', 'wrap',
+  'fillchars', 'winhighlight', 'number', 'relativenumber', 'signcolumn', 'wrap',
 }
 
 --- Configure fold options and caret refresh on windows showing this buffer.
@@ -137,6 +137,7 @@ function Output:_setup_window_opts_for_buffer()
       vim.wo[winid].winhighlight = table.concat(wh, ',')
       vim.wo[winid].number = config.line_numbers and config.line_numbers.output or false
       vim.wo[winid].relativenumber = false
+      vim.wo[winid].signcolumn = 'no'
       vim.wo[winid].wrap = config.wrap == nil or config.wrap.output ~= false
       -- foldlevel is user-adjustable (via :CcFold / zM / zR). Only seed it the
       -- first time this window shows the buffer so re-focusing doesn't undo

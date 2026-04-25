@@ -91,7 +91,7 @@ end
 
 --- Options cc overrides on the prompt window. Saved on entry, restored on
 --- BufWinLeave so they don't leak to buffers that later occupy the window.
-local PROMPT_WIN_OPTS = { 'number', 'relativenumber', 'wrap' }
+local PROMPT_WIN_OPTS = { 'number', 'relativenumber', 'signcolumn', 'wrap' }
 
 --- Configure window-local options on windows showing this prompt buffer.
 function Prompt:_setup_window_opts_for_buffer()
@@ -110,6 +110,7 @@ function Prompt:_setup_window_opts_for_buffer()
       winopts.save(winid, 'prompt', PROMPT_WIN_OPTS)
       vim.wo[winid].number = config.line_numbers and config.line_numbers.prompt or false
       vim.wo[winid].relativenumber = false
+      vim.wo[winid].signcolumn = 'no'
       vim.wo[winid].wrap = config.wrap == nil or config.wrap.prompt ~= false
     end,
   })
