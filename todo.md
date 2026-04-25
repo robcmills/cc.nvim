@@ -31,6 +31,9 @@
 - [x] Prevent user prompt submission while agent turn is active
 - [x] Get rid of full line background highlight for folded lines (especially distracting on Output lines)
 - [x] Rename CcNew -> CcClear and CcOpen -> CcNew
+
+
+- [ ] Add effort level to statusline
 - [ ] Add support for /remote-control
 - [ ] Add per tool call statusline (Running... (32s timeout 2m))
 - [ ] Add rename with ai generated name
