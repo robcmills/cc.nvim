@@ -413,22 +413,35 @@ for full isolation.
 ### Running tests
 
 ```bash
-./tests/run.sh                        # all specs (minimal config)
-./tests/run.sh output_rendering       # filter by spec file pattern
+./tests/run.sh                        # all unit specs (minimal config, ~12s)
+./tests/run.sh output_rendering       # filter unit specs by spec file pattern
 ./tests/run.sh --config=rob           # run with Rob's full Neovim config
+./tests/run.sh --e2e                  # all e2e specs (real child nvim, slower)
+./tests/run.sh --e2e viewport         # filter e2e specs by pattern
 ./tests/run.sh --visual simple_text   # render a fixture, print visual dump
 ./tests/run.sh --capture my_feature   # launch nvim with :CcDumpNdjson pre-armed
 ```
+
+The suite has two tiers:
+
+- **Unit specs** (`tests/cases/`) — fast, child-process isolation per case
+  via `mini.test`. Drive cc.nvim modules directly through their public Lua
+  API. Default `./tests/run.sh` runs these.
+- **End-to-end specs** (`tests/e2e/cases/`) — drive a real child Neovim
+  process over RPC, exercise the full event loop (autocmds, vim.schedule,
+  vim.defer_fn, redraw cycles), and assert against actual viewport state
+  (topline, line('w$'), winline). Opt-in with `--e2e` because each case
+  spawns a subprocess and waits on real timing.
 
 ### Test structure
 
 ```
 tests/
-├── run.sh                  # entrypoint — supports --config, --visual, --capture, pattern filter
+├── run.sh                  # entrypoint — supports --config, --e2e, --visual, --capture, pattern filter
 ├── minimal_init.lua        # clean rtp: only cc.nvim + mini.nvim + $VIMRUNTIME
 ├── rob_init.lua            # sources ~/.config/nvim/init.lua (full user config)
 ├── helpers.lua             # render_fixture(), replay_streaming(), visual_dump(), assertion helpers
-├── cases/
+├── cases/                                  # unit specs (mini.test, in-process child)
 │   ├── output_rendering_spec.lua    # user/agent turn headers, text rendering
 │   ├── fold_spec.lua                # fold levels 0-3, :CcFold, foldtext summaries
 │   ├── diff_rendering_spec.lua      # Edit/Write/MultiEdit diffs
@@ -442,10 +455,19 @@ tests/
 │   ├── streaming_spec.lua           # streaming-only types: hooks, tool_progress, api_retry, etc.
 │   ├── history_resume_spec.lua      # :CcResume transcript re-rendering
 │   └── process_integration_spec.lua # full pipeline via fake_claude.sh subprocess
+├── e2e/                                    # end-to-end specs (RPC-driven child nvim)
+│   ├── harness.lua                  # spawn(), wait_for(), viewport(), sample_during_stream()
+│   └── cases/
+│       ├── viewport_spec.lua            # terminal-state after open/stream/resume cycle
+│       ├── viewport_stress_spec.lua     # continuous viewport sampling during streaming
+│       ├── sweep_spec.lua               # hostile fixture × {height,cols,delay,config} sweep
+│       ├── fold_flash_spec.lua          # tool-Output fold flash + view drift regression
+│       └── captured_replay_spec.lua     # generic replay (gated by CC_REPLAY_FIXTURE env)
 ├── fixtures/
 │   ├── jsonl/              # 18 JSONL fixtures (resume path — curated from real sessions)
-│   ├── ndjson/             # 11 NDJSON fixtures (streaming path — captured via :CcDumpNdjson)
-│   ├── fake_claude.sh      # bash replay script for process-level integration tests
+│   ├── ndjson/             # 15 NDJSON fixtures (streaming path — captured via :CcDumpNdjson)
+│   ├── fake_claude.sh      # bash replay script — emits an entire fixture in one go
+│   ├── fake_claude_slow.sh # variant with CC_TEST_DELAY_MS between lines (real streaming timing)
 │   └── fake_claude.lua     # nvim-l replay script (alternative)
 ├── CLAUDE_CODE_FEATURES.md # raw Claude Code feature set audit
 └── FEATURE_AUDIT.md        # cross-reference: CC features × cc.nvim coverage × test tiers
@@ -531,6 +553,78 @@ return T
 Available assertion helpers in `tests/helpers.lua`: `get_buffer_lines()`,
 `get_fold_levels()`, `get_extmarks()`, `get_hl_at()`, `get_syn_stack()`,
 `get_session_state()`.
+
+### Writing e2e tests
+
+E2E specs use a different harness because viewport behavior (topline,
+fold collapse timing, follow-tail anchoring) only emerges from a real
+event loop. The harness spawns `nvim --headless --listen <sock>` and
+talks to it over an RPC channel. A typical e2e test:
+
+```lua
+local h = dofile('tests/e2e/harness.lua')
+local T = MiniTest.new_set({
+  hooks = {
+    pre_case = function() _G.child = nil end,
+    post_case = function()
+      if _G.child then _G.child:close(); _G.child = nil end
+    end,
+  },
+})
+
+T['view stays bottom-pinned during stream'] = function()
+  _G.child = h.spawn({ lines = 20, columns = 100 })
+  h.open_with_fixture(_G.child, 'large_read', { slow_delay_ms = 8 })
+  _G.child:wait_for(function(c) return c:find_winid_for_buf('cc-output') end)
+  local winid = _G.child:find_winid_for_buf('cc-output')
+
+  local samples = h.sample_during_stream(_G.child, winid, { interval_ms = 8 })
+  h.assert_trace_pinned(samples)             -- check invariant on every stable sample
+  h.assert_pinned_to_bottom(_G.child, winid) -- final state
+end
+
+return T
+```
+
+Harness API surface (`tests/e2e/harness.lua`):
+
+- `h.spawn({ config, lines, columns, env })` → child handle.
+- `child:lua(code, args)` / `:eval(expr)` / `:cmd(cmd)` / `:keys(keys)` —
+  send work into the child.
+- `child:viewport(winid)` — snapshot `topline`, `botline`, `winline`,
+  `cursor_line`, `last_line` after a `:redraw!`.
+- `child:wait_for(predicate, timeout_ms)` / `:sleep(ms)` — block without
+  draining the parent's `vim.schedule` queue (uses `fast_only=true` so
+  mini.test's reporter doesn't `cquit` the child mid-test).
+- `h.open_with_fixture(child, name, { slow_delay_ms })` — drive a real
+  subprocess via `fake_claude.sh` (whole-fixture replay) or
+  `fake_claude_slow.sh` (one NDJSON line at a time, configurable delay).
+- `h.sample_during_stream(...)` + `h.assert_trace_pinned(...)` — sample
+  viewport continuously; assert the bottom-pin invariant on every
+  stable sample.
+- `h.assert_pinned_to_bottom(child, winid)` — checks `botline ==
+  last_line` and `cursor == last_line`. Deliberately does NOT assert
+  `winline == winheight` because wrap=on can leave unavoidable empty
+  rows that aren't drift.
+
+Two non-obvious harness choices:
+
+1. **No `nvim_ui_attach`** — calling it over the sockconnect channel
+   turns it into a UI channel and breaks subsequent RPC requests.
+   Viewport math (`line('w0')`, `winsaveview`, etc.) works correctly
+   without a UI as long as `:redraw!` runs before sampling, which
+   `child:viewport()` does internally.
+2. **All wait paths use `vim.wait(..., fast_only=true)`**. Otherwise
+   the parent's `vim.schedule` queue (notably mini.test's
+   `reporter.finish`) drains while we wait — which calls `cquit` and
+   SIGTERMs the child mid-test.
+
+One headless-mode artifact worth knowing about: in `nvim --headless
+--listen` without UI attach, foldexpr is never invoked even after
+`:redraw!`, so `foldclosed()` returns `-1` for folds that should
+exist. If you need to query fold state in an e2e spec, force
+re-evaluation first via `vim.fn.win_execute(winid, 'silent! normal!
+zX', true)` — see the comment in `fold_flash_spec.lua` for context.
 
 ## Troubleshooting
 

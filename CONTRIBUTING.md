@@ -41,15 +41,17 @@ on the next `:CcNew` / Neovim restart.
 ## Running tests
 
 ```bash
-./tests/run.sh                        # all specs
+./tests/run.sh                        # all unit specs
 ./tests/run.sh output_rendering       # pattern filter by spec filename
+./tests/run.sh --e2e                  # all e2e specs (real child nvim, slower)
 ./tests/run.sh --visual simple_text   # render a fixture, print visual dump
 ./tests/run.sh --capture my_feature   # capture a new NDJSON fixture
 ```
 
 New behavior should come with a test. The [Testing section of the
-README](README.md#testing) covers the two fixture paths (JSONL resume vs.
-NDJSON streaming) and how to write specs against them.
+README](README.md#testing) covers the two test tiers (unit specs vs. e2e
+specs), the two fixture paths (JSONL resume vs. NDJSON streaming), and
+how to write specs against them.
 
 ## Style
 
