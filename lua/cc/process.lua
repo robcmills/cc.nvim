@@ -85,6 +85,7 @@ function Process:spawn()
     args = args,
     stdio = { self.stdin, self.stdout, self.stderr },
     cwd = self.opts.cwd or vim.fn.getcwd(),
+    env = require('cc.effort').spawn_env(),
   }, function(code, signal)
     vim.schedule(function()
       self.alive = false

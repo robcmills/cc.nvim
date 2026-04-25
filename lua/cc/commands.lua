@@ -57,6 +57,22 @@ function M.create()
     cc.rename(opts.args)
   end, { nargs = '?', desc = 'Rename current cc.nvim session (no arg shows current)' })
 
+  vim.api.nvim_create_user_command('CcEffort', function(opts)
+    cc.effort(opts.args)
+  end, {
+    nargs = '?',
+    complete = function(arg_lead)
+      local out = {}
+      for _, l in ipairs(require('cc.effort').levels()) do
+        if l:sub(1, #arg_lead) == arg_lead then
+          table.insert(out, l)
+        end
+      end
+      return out
+    end,
+    desc = 'Set reasoning effort level (low|medium|high|xhigh|max|auto)',
+  })
+
   vim.api.nvim_create_user_command('CcDumpNdjson', function(opts)
     local inst = cc._get_instance()
     if not inst or not inst.process then

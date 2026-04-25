@@ -701,7 +701,48 @@ function M._try_handle_client_command(inst, text)
     M._handle_rename(inst, args or '')
     return true
   end
+  if cmd == 'effort' then
+    M._handle_effort(inst, args or '')
+    return true
+  end
   return false
+end
+
+--- Set or report the reasoning effort level. Persisted across sessions and
+--- applied to the next spawned claude process via CLAUDE_CODE_EFFORT_LEVEL.
+---@param inst cc.Instance?
+---@param args string raw arguments after `/effort` or `:CcEffort`
+function M._handle_effort(inst, args)
+  local Effort = require('cc.effort')
+  local arg = (args or ''):match('^%s*(.-)%s*$')
+  if arg == '' then
+    vim.notify(
+      'cc.nvim effort: ' .. Effort.get() ..
+      '  (levels: ' .. table.concat(Effort.levels(), ', ') .. ')',
+      vim.log.levels.INFO)
+    return
+  end
+  if not Effort.is_valid(arg) then
+    vim.notify(
+      'cc.nvim effort: invalid level "' .. arg .. '". ' ..
+      'Use one of: ' .. table.concat(Effort.levels(), ', '),
+      vim.log.levels.WARN)
+    return
+  end
+  Effort.set(arg)
+  vim.notify(
+    'cc.nvim: effort set to ' .. arg ..
+    ' (applies to next claude spawn — :CcClear or restart to take effect)',
+    vim.log.levels.INFO)
+  if inst then
+    require('cc.statusline').refresh(inst)
+  end
+end
+
+--- Public: set or report the reasoning effort level (same as `/effort`).
+---@param level string?
+function M.effort(level)
+  M._handle_effort(get_current_instance(), level or '')
 end
 
 --- Apply the session-name-derived buffer name to the prompt buffer. Only

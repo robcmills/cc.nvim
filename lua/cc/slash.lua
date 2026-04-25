@@ -18,6 +18,7 @@ local M = {}
 ---@type cc.SlashCmd[]
 local CLIENT_COMMANDS = {
   { name = 'rename', description = 'Rename the current conversation', source = 'client' },
+  { name = 'effort', description = 'Set reasoning effort: low|medium|high|xhigh|max|auto', source = 'client' },
 }
 
 --- Parse YAML-frontmatter `description` from a markdown file.

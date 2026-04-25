@@ -23,7 +23,8 @@ local defaults = {
   -- backgrounds; override by defining these groups in your colorscheme.
   CcStl         = { fg = '#9aa5b1' },
   CcStlTokens   = { fg = '#a9e39a' }, -- light green
-  CcStlMode     = { fg = '#e6c07b' }, -- yellow
+  CcStlMode     = { fg = '#e6c07b' }, -- yellow (warm/orange-ish)
+  CcStlEffort   = { fg = '#ece95a' }, -- yellow (cool, clearly distinct from mode)
   CcStlBranch   = { fg = '#c3a6ff' }, -- light purple
   CcStlSession  = { fg = '#8ecae6' }, -- light blue
 }

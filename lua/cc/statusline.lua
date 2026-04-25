@@ -29,6 +29,7 @@ end
 local HL_LINE    = '%#CcStl#'
 local HL_TOKENS  = '%#CcStlTokens#'
 local HL_MODE    = '%#CcStlMode#'
+local HL_EFFORT  = '%#CcStlEffort#'
 local HL_BRANCH  = '%#CcStlBranch#'
 local HL_SESSION = '%#CcStlSession#'
 local SEP = HL_LINE .. ' ── '
@@ -50,6 +51,14 @@ local function default_format(state)
   end
   if state.mode and state.mode ~= '' then
     table.insert(segments, HL_MODE .. state.mode .. ' mode')
+  end
+  if state.effort and state.effort ~= '' then
+    local Effort = require('cc.effort')
+    local sym = Effort.symbol(state.effort)
+    local lbl = Effort.label(state.effort)
+    local seg = HL_EFFORT
+    if sym ~= '' then seg = seg .. sym .. ' ' end
+    table.insert(segments, seg .. lbl)
   end
   if state.branch and state.branch ~= '' then
     local b = HL_BRANCH .. ' ' .. state.branch
@@ -97,7 +106,7 @@ function M.build_state(instance)
     mode = session and session.permission_mode or nil,
     branch = require('cc.git').branch(on_update),
     pr = require('cc.git').pr(on_update),
-    effort = nil, -- not currently surfaced by CLI
+    effort = require('cc.effort').get(),
     model = session and session.model or nil,
     cli_version = require('cc.version').get(on_update),
     session_name = instance and instance.session_name or nil,
