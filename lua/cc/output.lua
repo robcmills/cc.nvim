@@ -1275,10 +1275,12 @@ end
 
 --- Render a transcript record (from history.read_transcript) without the
 --- streaming state machine. Used on resume to replay prior conversation.
----@param rec table one of { type='user_text'|'user_tool_result'|'assistant', ... }
+---@param rec table one of { type='user_text'|'synthetic_notice'|'user_tool_result'|'assistant', ... }
 function Output:render_historical_record(rec)
   if rec.type == 'user_text' then
     self:render_user_turn(rec.text or '')
+  elseif rec.type == 'synthetic_notice' then
+    self:render_notice(rec.text or '')
   elseif rec.type == 'user_tool_result' then
     if rec.tool_use_id then
       self:render_tool_result(rec.tool_use_id, rec.content, rec.is_error)

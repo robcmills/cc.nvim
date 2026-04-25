@@ -167,6 +167,7 @@ end
 --- Read an entire session transcript, returning records we care about in order.
 --- Each returned record is one of:
 ---   { type='user_text', text=string }
+---   { type='synthetic_notice', text=string }
 ---   { type='user_tool_result', tool_use_id=string, content=<str|array>, is_error=bool }
 ---   { type='assistant', blocks={<content blocks>} }
 ---@param path string
@@ -175,6 +176,7 @@ function M.read_transcript(path)
   local out = {}
   local f = io.open(path, 'r')
   if not f then return out end
+  local synthetic = require('cc.synthetic')
   for line in f:lines() do
     local ok, rec = pcall(vim.json.decode, line, { luanil = { object = true, array = true } })
     if ok and type(rec) == 'table' then
@@ -183,7 +185,12 @@ function M.read_transcript(path)
       if t == 'user' and type(msg) == 'table' then
         local c = msg.content
         if type(c) == 'string' then
-          table.insert(out, { type = 'user_text', text = c })
+          local kind, payload = synthetic.classify(c)
+          if kind == 'notice' then
+            table.insert(out, { type = 'synthetic_notice', text = payload })
+          else
+            table.insert(out, { type = 'user_text', text = payload })
+          end
         elseif type(c) == 'table' then
           for _, block in ipairs(c) do
             if type(block) == 'table' and block.type == 'tool_result' then
