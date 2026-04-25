@@ -163,8 +163,8 @@ end
 
 T['tool_bash']['tool_progress updates tool header with elapsed time'] = function()
   helpers.replay_streaming(_G.child, 'tool_bash')
-  -- The tool_progress events should update the header with [2s]
-  assert_any_line_matches(_G.child, '%[2s%]')
+  -- The tool_progress events should update the header with (2s)
+  assert_any_line_matches(_G.child, '%(2s%)')
 end
 
 -- ---------------------------------------------------------------------------
@@ -174,13 +174,43 @@ T['tool_progress'] = MiniTest.new_set()
 
 T['tool_progress']['updates elapsed time on tool header'] = function()
   helpers.replay_streaming(_G.child, 'tool_progress')
-  -- After 5 tool_progress events (1-5s), header should show [5s]
-  assert_any_line_matches(_G.child, '%[5s%]')
+  -- After 5 tool_progress events (1-5s), header should show (5s)
+  assert_any_line_matches(_G.child, '%(5s%)')
 end
 
 T['tool_progress']['renders tool result'] = function()
   helpers.replay_streaming(_G.child, 'tool_progress')
   assert_buffer_contains(_G.child, 'done')
+end
+
+-- Local-timer fallback: when the SDK does not emit tool_progress events,
+-- the plugin's own 1Hz timer should still tick the elapsed-time suffix.
+T['tool_progress']['local timer drives elapsed time without tool_progress events'] = function()
+  helpers.replay_streaming(_G.child, 'tool_no_progress')
+  -- Let the libuv timer tick at least once (it fires every 1000ms).
+  _G.child.lua('vim.wait(1500, function() return false end)')
+  assert_any_line_matches(_G.child, '%(%d+s%)')
+end
+
+-- Timeout rendering: when the agent sets Bash's timeout input, the tool
+-- header includes "timeout Ns" between the command and the (Ms) timer.
+T['tool_progress']['renders timeout when agent sets Bash timeout input'] = function()
+  helpers.replay_streaming(_G.child, 'tool_with_timeout')
+  assert_any_line_matches(_G.child, 'timeout 30s')
+end
+
+-- The timing chunk (icon + timeout + elapsed) gets its own CcToolTiming
+-- highlight so it can be styled distinctly from the tool name/summary.
+T['tool_progress']['timing chunk uses CcToolTiming highlight'] = function()
+  helpers.replay_streaming(_G.child, 'tool_with_timeout')
+  local lines = helpers.get_buffer_lines(_G.child)
+  local row, line
+  for i, l in ipairs(lines) do
+    if l:find('timeout 30s') then row = i; line = l; break end
+  end
+  if not row then error('no header line with timeout found') end
+  local col = line:find('timeout')
+  eq(helpers.get_hl_at(_G.child, row, col, false), 'CcToolTiming')
 end
 
 -- ---------------------------------------------------------------------------

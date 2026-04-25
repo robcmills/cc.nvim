@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"test-stream-no-progress","tools":["Bash"],"model":"claude-sonnet-4-20250514","permissionMode":"auto"}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_np01","role":"assistant","type":"message","model":"claude-sonnet-4-20250514"}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_np01","name":"Bash","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"echo hi\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}

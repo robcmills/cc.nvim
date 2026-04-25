@@ -84,8 +84,26 @@ function M.for_tool(tool_name)
   return set.default
 end
 
+-- Timing chunk icon (rendered between the tool summary and the elapsed-time
+-- suffix). Nerdfont: nf-md-timer_outline (U+F051B 󰔛). Fallback: U+23F1 ⏱.
+local TIMER_NF = '\xf3\xb0\x94\x9b'
+local TIMER_FALLBACK = '\xe2\x8f\xb1'
+
+--- Return the timing icon glyph appropriate for the active icon set.
+---@return string
+function M.timer_icon()
+  local cfg = require('cc.config').options.tool_icons or {}
+  local use_nerdfont = cfg.use_nerdfont
+  if use_nerdfont == nil then
+    use_nerdfont = M.detect_nerdfont()
+  end
+  return use_nerdfont and TIMER_NF or TIMER_FALLBACK
+end
+
 -- Exposed for tests / introspection.
 M._NERDFONT = NERDFONT
 M._UNICODE = UNICODE
+M._TIMER_NF = TIMER_NF
+M._TIMER_FALLBACK = TIMER_FALLBACK
 
 return M

@@ -41,6 +41,7 @@ M._buf_state = {}
 
 ---@class cc.OutputToolBlock
 ---@field bufnr integer
+---@field tool_use_id string id of the tool_use this block tracks
 ---@field header_lnum integer 1-indexed line number of the tool header (e.g. "  ▤ Read: /path")
 ---@field result_header_lnum integer? line where "▾ Output:" was inserted
 ---@field input_rendered boolean
@@ -876,6 +877,7 @@ function Output:on_content_block_start(block)
     local state = M._buf_state[self.bufnr]
     state.tool_blocks[block.id or ''] = {
       bufnr = self.bufnr,
+      tool_use_id = block.id or '',
       header_lnum = header_lnum,
       input_rendered = false,
     }
@@ -899,12 +901,11 @@ function Output:on_content_block_stop(block)
   if block and block.type == 'tool_use' then
     local state = M._buf_state[self.bufnr]
     local meta = state.tool_blocks[block.id or '']
-    -- Append a compact one-liner as tool summary extension
+    -- Update header with summary + timing prefix (icon + optional timeout).
+    -- Always called so the timer icon shows even when there's no summary.
     local summary = M.summarize_tool_input(block.name, block.input)
-    if summary and summary ~= '' then
-      -- Update header to append summary: "  ▶ Bash: git status"
-      self:_update_tool_header_summary(meta and meta.header_lnum or nil, block.name, summary)
-    end
+    self:_update_tool_header_summary(meta and meta.header_lnum or nil,
+      block.name, summary, block.input)
     -- Render the full input at fold level 2 (multi-line if needed)
     if meta and not meta.input_rendered then
       local last_lnum = self:_render_tool_input(block.name, block.input)
@@ -926,18 +927,41 @@ function Output:on_content_block_stop(block)
   self.streaming_tool_id = nil
 end
 
---- Update an existing tool header line with a " — summary" suffix.
+--- Build the static prefix written ahead of the elapsed-time `(Ns)` suffix
+--- on a tool header line: "<icon>" plus, when the agent set Bash's timeout
+--- input, " timeout Ns".
+---@param tool_name string
+---@param input table?
+---@return string
+local function tool_timing_prefix(tool_name, input)
+  local icons = require('cc.icons')
+  local prefix = ' ' .. icons.timer_icon()
+  if tool_name == 'Bash' and type(input) == 'table'
+      and type(input.timeout) == 'number' and input.timeout > 0 then
+    prefix = prefix .. string.format(' timeout %ds', math.floor(input.timeout / 1000))
+  end
+  return prefix
+end
+
+--- Rewrite a tool header line with the summary and the static timing prefix
+--- (icon + optional " timeout Ns"). The dynamic " (Ns)" suffix is layered on
+--- by update_tool_elapsed and can co-exist on the same line.
 ---@param lnum integer?
 ---@param tool_name string
----@param summary string
-function Output:_update_tool_header_summary(lnum, tool_name, summary)
+---@param summary string?
+---@param input table? raw tool_use input (used to read Bash's timeout)
+function Output:_update_tool_header_summary(lnum, tool_name, summary, input)
   if not lnum then return end
   local bufnr = self.bufnr
   if lnum > vim.api.nvim_buf_line_count(bufnr) then return end
   self:_with_tail_anchor(function()
     vim.bo[bufnr].modifiable = true
     local icon = require('cc.icons').for_tool(tool_name)
-    local new_text = '  ' .. icon .. ' ' .. display_tool_name(tool_name) .. ': ' .. summary
+    local new_text = '  ' .. icon .. ' ' .. display_tool_name(tool_name) .. ':'
+    if summary and summary ~= '' then
+      new_text = new_text .. ' ' .. summary
+    end
+    new_text = new_text .. tool_timing_prefix(tool_name, input)
     vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_text })
     vim.bo[bufnr].modifiable = false
   end)
@@ -1112,6 +1136,9 @@ end
 ---@param content string|table
 ---@param is_error boolean?
 function Output:_render_tool_result_for(meta, content, is_error)
+  if meta and meta.tool_use_id then
+    self:stop_tool_timer(meta.tool_use_id)
+  end
   local text_parts = {}
   if type(content) == 'string' then
     table.insert(text_parts, content)
@@ -1390,6 +1417,48 @@ function Output:render_task(phase, description)
   self:_append({ text }, { 2 }, false)
 end
 
+--- Start a local timer that ticks update_tool_elapsed every second so the
+--- tool header shows live progress regardless of whether the SDK emits
+--- tool_progress events. Stopped by stop_tool_timer when the result lands.
+---@param tool_use_id string
+function Output:start_tool_timer(tool_use_id)
+  if not tool_use_id or tool_use_id == '' then return end
+  self._tool_timers = self._tool_timers or {}
+  if self._tool_timers[tool_use_id] then return end
+  local uv = vim.uv or vim.loop
+  local timer = uv.new_timer()
+  if not timer then return end
+  local rec = { timer = timer, start_ms = uv.now() }
+  self._tool_timers[tool_use_id] = rec
+  timer:start(1000, 1000, vim.schedule_wrap(function()
+    if not vim.api.nvim_buf_is_valid(self.bufnr) then
+      self:stop_tool_timer(tool_use_id)
+      return
+    end
+    local elapsed = (uv.now() - rec.start_ms) / 1000
+    self:update_tool_elapsed(tool_use_id, elapsed)
+  end))
+end
+
+--- Stop and close the local timer for a tool, if any. Writes one final
+--- elapsed-time tick so even tools that finished in under a second show
+--- a (Ns) suffix matching their actual duration.
+---@param tool_use_id string
+function Output:stop_tool_timer(tool_use_id)
+  if not self._tool_timers then return end
+  local rec = self._tool_timers[tool_use_id]
+  if not rec then return end
+  self._tool_timers[tool_use_id] = nil
+  if vim.api.nvim_buf_is_valid(self.bufnr) then
+    local uv = vim.uv or vim.loop
+    self:update_tool_elapsed(tool_use_id, (uv.now() - rec.start_ms) / 1000)
+  end
+  if not rec.timer:is_closing() then
+    rec.timer:stop()
+    rec.timer:close()
+  end
+end
+
 --- Update a tool header line in-place with elapsed time during execution.
 ---@param tool_use_id string
 ---@param elapsed_seconds number
@@ -1401,11 +1470,17 @@ function Output:update_tool_elapsed(tool_use_id, elapsed_seconds)
   if meta.header_lnum > vim.api.nvim_buf_line_count(bufnr) then return end
   local lines = vim.api.nvim_buf_get_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false)
   if not lines[1] then return end
-  local base = lines[1]:gsub(' %[%d+s%]$', '')
+  local new_secs = math.floor(elapsed_seconds)
+  -- Elapsed time only goes up; if a larger value is already displayed
+  -- (e.g. SDK tool_progress reported 5s while the local timer still says 0s
+  -- in synchronous fixture replay), keep the larger value.
+  local cur = tonumber(lines[1]:match(' %((%d+)s%)$'))
+  if cur and new_secs < cur then return end
+  local base = lines[1]:gsub(' %(%d+s%)$', '')
   self:_with_tail_anchor(function()
     vim.bo[bufnr].modifiable = true
     vim.api.nvim_buf_set_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false,
-      { string.format('%s [%ds]', base, math.floor(elapsed_seconds)) })
+      { string.format('%s (%ds)', base, new_secs) })
     vim.bo[bufnr].modifiable = false
   end)
 end

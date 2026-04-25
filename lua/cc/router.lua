@@ -117,6 +117,9 @@ function Router:_handle_stream_event(msg)
       self.session:begin_tool_call(block.id, block.name)
     end
     self.output:on_content_block_start(block)
+    if block.type == 'tool_use' and block.id then
+      self.output:start_tool_timer(block.id)
+    end
   elseif et == 'content_block_delta' then
     local idx = event.index or 0
     local kind, chunk = self.session:apply_delta(idx, event.delta or {})

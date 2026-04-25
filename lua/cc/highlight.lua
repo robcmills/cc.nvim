@@ -10,6 +10,7 @@ local defaults = {
   CcAgent     = { link = 'String' },
   CcTool      = { link = 'Identifier' },
   CcToolInput = { link = 'Normal' },
+  CcToolTiming = { fg = '#9aa5b1' },
   CcOutput    = { link = 'Type' },
   CcError     = { link = 'ErrorMsg' },
   CcCost      = { link = 'Comment' },
@@ -58,7 +59,7 @@ end
 function M.apply_buffer_syntax(bufnr)
   vim.api.nvim_buf_call(bufnr, function()
     -- Clear any prior cc syntax to avoid duplicates on reopen.
-    pcall(vim.cmd, 'syntax clear CcUser CcAgent CcTool CcOutput CcError CcCost CcNotice CcHook CcPermission CcToolInput CcDiffAdd CcDiffDelete CcDiffHunk')
+    pcall(vim.cmd, 'syntax clear CcUser CcAgent CcTool CcOutput CcError CcCost CcNotice CcHook CcPermission CcToolInput CcToolTiming CcDiffAdd CcDiffDelete CcDiffHunk')
 
     -- containedin=ALL lets these matches override markdown regions (e.g.
     -- markdownCodeBlock opened by backticks in a tool result) that would
@@ -71,6 +72,11 @@ function M.apply_buffer_syntax(bufnr)
     -- followed immediately by ":". Hook / Permission rules below override
     -- for lines that also match their own patterns.
     vim.cmd([[syntax match CcTool    /^\s\+\S\+\s\+\%(\u\w*\|mcp__[[:alnum:]_-]\+\):.*$/ containedin=ALL]])
+
+    -- Tool timing chunk: "  ▶ Bash: cmd 󰔛 timeout 30s (5s)"
+    -- Matches from the timer icon (nerdfont 󰔛 or unicode ⏱) to end of line.
+    -- Declared after CcTool so it overrides that match for the timing chunk.
+    vim.cmd([[syntax match CcToolTiming /\%(󰔛\|⏱\).*$/ containedin=ALL]])
 
     -- Output: or Error: sub-headers under tools
     vim.cmd([[syntax match CcOutput  /^\s\+Output:\s*$/ containedin=ALL]])
