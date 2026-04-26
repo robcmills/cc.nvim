@@ -42,6 +42,8 @@ M._buf_state = {}
 ---@class cc.OutputToolBlock
 ---@field bufnr integer
 ---@field tool_use_id string id of the tool_use this block tracks
+---@field tool_name string? tool name (e.g. "Bash", "Agent") — set at content_block_start
+---@field input table? finalized tool_use input — set at content_block_stop
 ---@field header_lnum integer 1-indexed line number of the tool header (e.g. "  ▤ Read: /path")
 ---@field result_header_lnum integer? line where "▾ Output:" was inserted
 ---@field input_rendered boolean
@@ -878,6 +880,7 @@ function Output:on_content_block_start(block)
     state.tool_blocks[block.id or ''] = {
       bufnr = self.bufnr,
       tool_use_id = block.id or '',
+      tool_name = block.name,
       header_lnum = header_lnum,
       input_rendered = false,
     }
@@ -897,18 +900,27 @@ end
 
 --- Called when a content block completes. Renders tool input summary.
 ---@param block table
----@param opts table? { historical = boolean } skip the live-timer prefix when
+---@param opts table? { historical = boolean } skip the live-timer suffix when
 ---  replaying a transcript on session resume.
 function Output:on_content_block_stop(block, opts)
   opts = opts or {}
   if block and block.type == 'tool_use' then
     local state = M._buf_state[self.bufnr]
     local meta = state.tool_blocks[block.id or '']
-    -- Update header with summary + timing prefix (icon + optional timeout).
-    -- Always called so the timer icon shows even when there's no summary.
+    if meta then meta.input = block.input end
+    -- Rewrite the header with the summary (no timer suffix).
     local summary = M.summarize_tool_input(block.name, block.input)
     self:_update_tool_header_summary(meta and meta.header_lnum or nil,
-      block.name, summary, block.input, opts.historical)
+      block.name, summary)
+    -- Live path: re-layer the timer suffix that the rewrite above stripped,
+    -- so the (icon + duration) pair never disappears between content_block_stop
+    -- and the next 1-second tick.
+    if not opts.historical and meta and self._tool_timers
+        and self._tool_timers[block.id or ''] then
+      local rec = self._tool_timers[block.id or '']
+      local uv = vim.uv or vim.loop
+      self:update_tool_elapsed(block.id, (uv.now() - rec.start_ms) / 1000)
+    end
     -- Render the full input at fold level 2 (multi-line if needed)
     if meta and not meta.input_rendered then
       local last_lnum = self:_render_tool_input(block.name, block.input)
@@ -930,32 +942,13 @@ function Output:on_content_block_stop(block, opts)
   self.streaming_tool_id = nil
 end
 
---- Build the static prefix written ahead of the elapsed-time `(Ns)` suffix
---- on a tool header line: "<icon>" plus, when the agent set Bash's timeout
---- input, " timeout Ns".
----@param tool_name string
----@param input table?
----@return string
-local function tool_timing_prefix(tool_name, input)
-  local icons = require('cc.icons')
-  local prefix = ' ' .. icons.timer_icon()
-  if tool_name == 'Bash' and type(input) == 'table'
-      and type(input.timeout) == 'number' and input.timeout > 0 then
-    prefix = prefix .. string.format(' timeout %ds', math.floor(input.timeout / 1000))
-  end
-  return prefix
-end
-
---- Rewrite a tool header line with the summary and the static timing prefix
---- (icon + optional " timeout Ns"). The dynamic " (Ns)" suffix is layered on
---- by update_tool_elapsed and can co-exist on the same line.
+--- Rewrite a tool header line with the summary. The timer suffix
+--- (" <icon> [timeout Ns] (Ns)") is owned exclusively by update_tool_elapsed
+--- and layered on top of this base text.
 ---@param lnum integer?
 ---@param tool_name string
 ---@param summary string?
----@param input table? raw tool_use input (used to read Bash's timeout)
----@param historical boolean? when true, omit the timer icon + timeout prefix
----  (no live timer ticks for replayed transcript records).
-function Output:_update_tool_header_summary(lnum, tool_name, summary, input, historical)
+function Output:_update_tool_header_summary(lnum, tool_name, summary)
   if not lnum then return end
   local bufnr = self.bufnr
   if lnum > vim.api.nvim_buf_line_count(bufnr) then return end
@@ -966,12 +959,13 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary, input, his
     if summary and summary ~= '' then
       new_text = new_text .. ' ' .. summary
     end
-    if not historical then
-      new_text = new_text .. tool_timing_prefix(tool_name, input)
-    end
     vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_text })
     vim.bo[bufnr].modifiable = false
   end)
+  -- nvim_buf_set_lines drifts inline virt_text extmarks within the deleted
+  -- range down to the line below; refresh synchronously so the caret stays
+  -- visually anchored to the header.
+  M.refresh_carets(bufnr)
 end
 
 --- Render a YAML-ish representation of a Lua value.
@@ -1482,7 +1476,10 @@ function Output:stop_tool_timer(tool_use_id)
   end
 end
 
---- Update a tool header line in-place with elapsed time during execution.
+--- Update a tool header line in-place with the timer suffix
+--- (" <icon> [timeout Ns] (Ns)"). This function owns the entire timer
+--- suffix — icon and duration are written and stripped together so the
+--- two glyphs never appear apart.
 ---@param tool_use_id string
 ---@param elapsed_seconds number
 function Output:update_tool_elapsed(tool_use_id, elapsed_seconds)
@@ -1501,19 +1498,36 @@ function Output:update_tool_elapsed(tool_use_id, elapsed_seconds)
   local cur_ms_val = tonumber(lines[1]:match(' %((%d+)ms%)$'))
   local cur_ms = cur_ms_val or (cur_secs and cur_secs * 1000) or nil
   if cur_ms and new_ms < cur_ms then return end
-  local base = lines[1]:gsub(' %(%d+m?s%)$', '')
-  local suffix
+
+  local icons = require('cc.icons')
+  local timer_icon = icons.timer_icon()
+  -- Strip any prior timer suffix off the line. Match either "<icon>...(Ns)"
+  -- (the canonical form this function produces) or a stray "(Ns)" with no
+  -- icon (a transient state from prior buggy paths — kept defensive).
+  local base = lines[1]
+    :gsub(' ' .. vim.pesc(timer_icon) .. '.*$', '')
+    :gsub(' %(%d+m?s%)$', '')
+  local suffix = ' ' .. timer_icon
+  local input = meta.input
+  if meta.tool_name == 'Bash' and type(input) == 'table'
+      and type(input.timeout) == 'number' and input.timeout > 0 then
+    suffix = suffix .. string.format(' timeout %ds', math.floor(input.timeout / 1000))
+  end
   if new_ms < 1000 then
-    suffix = string.format('(%dms)', new_ms)
+    suffix = suffix .. string.format(' (%dms)', new_ms)
   else
-    suffix = string.format('(%ds)', math.floor(new_ms / 1000))
+    suffix = suffix .. string.format(' (%ds)', math.floor(new_ms / 1000))
   end
   self:_with_tail_anchor(function()
     vim.bo[bufnr].modifiable = true
     vim.api.nvim_buf_set_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false,
-      { string.format('%s %s', base, suffix) })
+      { base .. suffix })
     vim.bo[bufnr].modifiable = false
   end)
+  -- nvim_buf_set_lines drifts inline virt_text extmarks within the deleted
+  -- range down to the line below; refresh synchronously so the caret stays
+  -- visually anchored to the header.
+  M.refresh_carets(bufnr)
 end
 
 --- Set window-local foldlevel for the output window.
