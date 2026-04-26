@@ -28,6 +28,9 @@ local defaults = {
   CcStlEffort   = { fg = '#ece95a' }, -- yellow (cool, clearly distinct from mode)
   CcStlBranch   = { fg = '#c3a6ff' }, -- light purple
   CcStlSession  = { fg = '#8ecae6' }, -- light blue
+  -- Splash screen
+  CcSplashTitle = { fg = '#fff066', bold = true }, -- bright yellow
+  CcSplashKey   = { fg = '#c8a165' },               -- light brown
 }
 
 function M.set_defaults()

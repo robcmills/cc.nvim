@@ -11,6 +11,8 @@ local Router = require('cc.router')
 
 local M = {}
 
+M.VERSION = '0.1.0'
+
 -- ---------------------------------------------------------------------------
 -- Instance management
 -- ---------------------------------------------------------------------------
@@ -373,6 +375,7 @@ function M.open(opts)
   opts = opts or {}
 
   local inst = create_instance()
+  require('cc.splash').render(inst.output.bufnr)
 
   inst.router = Router.new({
     session = inst.session,
@@ -443,6 +446,7 @@ function M.new_session()
     reuse_prompt_winid = prompt_winid,
     reuse_output_winid = output_winid,
   })
+  require('cc.splash').render(new_inst.output.bufnr)
 
   new_inst.router = Router.new({
     session = new_inst.session,
@@ -674,6 +678,7 @@ function M.submit()
 
   inst.prompt:clear()
 
+  require('cc.splash').clear(inst.output.bufnr)
   inst.output:follow_tail()
   inst.session:add_user_turn(text)
   inst.output:render_user_turn(text)

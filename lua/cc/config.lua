@@ -26,6 +26,10 @@ local defaults = {
   -- History / resume
   history_max_records = 500, -- cap records rendered on resume; older collapsed into a notice
 
+  -- Splash screen shown in the output window for new instances. Cleared on
+  -- the first prompt submit. Set to false to suppress.
+  splash = true,
+
   -- Display
   show_thinking = false,
   -- Per-turn cost/usage line appended to the output buffer after each turn.
