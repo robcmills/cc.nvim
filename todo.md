@@ -35,13 +35,13 @@
 - [x] `zt` bug is resurfacing
 - [x] Add true e2e tests (requires brainstorming)
 - [x] Fix :BuffersNext/Prev not working in output window
+- [x] Add per tool call statusline (Running... (32s timeout 2m)) -> resolves to (42s)
+- [x] Add emoji art splash screen (configurable visibility)
 
 
-- [ ] Add emoji art splash screen (configurable visibility)
 - [ ] Turn thinking back on with timer
 - [ ] Fix missing mode in statusline on startup
 - [ ] Add support for /remote-control
-- [ ] Add per tool call statusline (Running... (32s timeout 2m)) -> resolves to (42s)
 - [ ] Add session timing info
 - [ ] Add rename with ai generated name
 - [ ] Add syntax highlighting for code blocks in output

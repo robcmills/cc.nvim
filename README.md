@@ -4,6 +4,8 @@ A Neovim-native coding agent plugin built on the Claude Code CLI. Replaces the
 Claude Code TUI with two Neovim buffers: an editable markdown prompt and a
 foldable, progressive-disclosure output buffer.
 
+<img src="assets/cc-nvim.png" alt="cc.nvim screenshot" width="800">
+
 ## Why
 
 I built this because I kept running into the same pain points using the
