@@ -897,7 +897,10 @@ end
 
 --- Called when a content block completes. Renders tool input summary.
 ---@param block table
-function Output:on_content_block_stop(block)
+---@param opts table? { historical = boolean } skip the live-timer prefix when
+---  replaying a transcript on session resume.
+function Output:on_content_block_stop(block, opts)
+  opts = opts or {}
   if block and block.type == 'tool_use' then
     local state = M._buf_state[self.bufnr]
     local meta = state.tool_blocks[block.id or '']
@@ -905,7 +908,7 @@ function Output:on_content_block_stop(block)
     -- Always called so the timer icon shows even when there's no summary.
     local summary = M.summarize_tool_input(block.name, block.input)
     self:_update_tool_header_summary(meta and meta.header_lnum or nil,
-      block.name, summary, block.input)
+      block.name, summary, block.input, opts.historical)
     -- Render the full input at fold level 2 (multi-line if needed)
     if meta and not meta.input_rendered then
       local last_lnum = self:_render_tool_input(block.name, block.input)
@@ -950,7 +953,9 @@ end
 ---@param tool_name string
 ---@param summary string?
 ---@param input table? raw tool_use input (used to read Bash's timeout)
-function Output:_update_tool_header_summary(lnum, tool_name, summary, input)
+---@param historical boolean? when true, omit the timer icon + timeout prefix
+---  (no live timer ticks for replayed transcript records).
+function Output:_update_tool_header_summary(lnum, tool_name, summary, input, historical)
   if not lnum then return end
   local bufnr = self.bufnr
   if lnum > vim.api.nvim_buf_line_count(bufnr) then return end
@@ -961,7 +966,9 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary, input)
     if summary and summary ~= '' then
       new_text = new_text .. ' ' .. summary
     end
-    new_text = new_text .. tool_timing_prefix(tool_name, input)
+    if not historical then
+      new_text = new_text .. tool_timing_prefix(tool_name, input)
+    end
     vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_text })
     vim.bo[bufnr].modifiable = false
   end)
@@ -1399,7 +1406,7 @@ function Output:render_historical_record(rec)
           end
         elseif block.type == 'tool_use' then
           self:on_content_block_start(block)
-          self:on_content_block_stop(block)
+          self:on_content_block_stop(block, { historical = true })
         end
       end
     end
