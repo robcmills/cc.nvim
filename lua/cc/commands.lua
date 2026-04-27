@@ -73,6 +73,19 @@ function M.create()
     desc = 'Set reasoning effort level (low|medium|high|xhigh|max|auto)',
   })
 
+  vim.api.nvim_create_user_command('CcPromptAutosize', function(opts)
+    local arg = (opts.args or ''):lower()
+    if arg ~= '' and arg ~= 'on' and arg ~= 'off' then
+      vim.notify('cc.nvim: :CcPromptAutosize [on|off]', vim.log.levels.WARN)
+      return
+    end
+    cc.prompt_autosize(arg == '' and nil or arg)
+  end, {
+    nargs = '?',
+    complete = function() return { 'on', 'off' } end,
+    desc = 'Toggle prompt window autosize (on|off)',
+  })
+
   vim.api.nvim_create_user_command('CcDumpNdjson', function(opts)
     local inst = cc._get_instance()
     if not inst or not inst.process then

@@ -73,6 +73,7 @@ local function setup_prompt_keymaps(inst)
     { buffer = bufnr, silent = true, desc = 'cc.nvim: interrupt' })
   vim.keymap.set('n', keys.clear_prompt, function()
     inst.prompt:clear()
+    require('cc.autosize').reset(inst)
   end, { buffer = bufnr, silent = true, desc = 'cc.nvim: clear prompt' })
   vim.keymap.set('n', keys.goto_output, function()
     if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
@@ -213,6 +214,8 @@ local function create_instance(opts)
     last_session_id = nil,
     last_plan_file = nil,
     session_name = nil,
+    autosize_disabled = false,
+    expected_prompt_height = Config.options.prompt_height,
   }
 
   inst.output = Output.new(inst.session, output_name)
@@ -260,6 +263,7 @@ local function create_instance(opts)
 
   -- Set up autocmds after layout to avoid double-trigger from initial BufWinEnter.
   setup_buffer_autocmds(inst)
+  require('cc.autosize').attach(inst)
 
   -- Register in instances table.
   instances[prompt_buf] = inst
@@ -311,6 +315,7 @@ local function teardown_instance_keep_windows(inst)
   end
   if inst.prompt and inst.prompt.bufnr > 0 then
     pcall(vim.api.nvim_del_augroup_by_name, 'cc.buffer_integration.' .. inst.prompt.bufnr)
+    require('cc.autosize').detach(inst.prompt.bufnr)
   end
   if inst.prompt and inst.prompt.bufnr > 0 then
     if vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
@@ -334,6 +339,7 @@ local function close_instance(inst)
   -- Clear per-instance autocmds before closing windows to avoid cascading.
   if inst.prompt and inst.prompt.bufnr > 0 then
     pcall(vim.api.nvim_del_augroup_by_name, 'cc.buffer_integration.' .. inst.prompt.bufnr)
+    require('cc.autosize').detach(inst.prompt.bufnr)
   end
   if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
     pcall(vim.api.nvim_win_close, inst.output_winid, true)
@@ -673,10 +679,12 @@ function M.submit()
   -- Intercept client-side slash commands before forwarding to the agent.
   if M._try_handle_client_command(inst, text) then
     inst.prompt:clear()
+    require('cc.autosize').reset(inst)
     return
   end
 
   inst.prompt:clear()
+  require('cc.autosize').reset(inst)
 
   require('cc.splash').clear(inst.output.bufnr)
   inst.output:follow_tail()
@@ -843,6 +851,19 @@ function M.toggle()
   else
     M.open()
   end
+end
+
+--- Public: toggle auto-sizing of the prompt window. Pass 'on' or 'off' to
+--- set explicitly; nil toggles. Notifies the new state.
+---@param state 'on'|'off'|nil
+function M.prompt_autosize(state)
+  local inst = get_current_instance()
+  if not inst then
+    vim.notify('cc.nvim: not in a cc buffer', vim.log.levels.WARN)
+    return
+  end
+  local enabled = require('cc.autosize').toggle(inst, state)
+  vim.notify('cc.nvim: prompt autosize ' .. (enabled and 'on' or 'off'), vim.log.levels.INFO)
 end
 
 --- Public: set fold level on the output buffer's window.

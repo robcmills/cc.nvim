@@ -11,6 +11,12 @@ local defaults = {
   -- Layout
   layout = 'horizontal', -- 'horizontal' | 'vertical'
   prompt_height = 10, -- lines for prompt buffer (horizontal layout)
+  -- Max lines the prompt window will auto-grow to when the prompt content
+  -- (counted as wrapped display rows) exceeds prompt_height. Set to the same
+  -- value as prompt_height to disable auto-growth. Manual `:resize` on the
+  -- prompt window disables autosize until the next prompt clear/submit; the
+  -- :CcPromptAutosize command toggles it explicitly.
+  prompt_max_height = 30,
 
   -- Folding
   default_fold_level = 2, -- 0=minimal, 1=summaries, 2=inputs, 3=all
