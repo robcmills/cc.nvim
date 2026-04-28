@@ -63,7 +63,7 @@ local function default_format(state)
   if state.branch and state.branch ~= '' then
     local b = HL_BRANCH .. ' ' .. state.branch
     if state.pr and state.pr ~= '' then
-      b = b .. '  ' .. state.pr
+      b = b .. ' ' .. state.pr
     end
     table.insert(segments, b)
   end
