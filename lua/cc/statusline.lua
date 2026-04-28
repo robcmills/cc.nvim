@@ -26,6 +26,20 @@ local function fmt_tokens(n)
   return tostring(n)
 end
 
+---@param ms number?
+---@return string
+local function fmt_elapsed(ms)
+  if type(ms) ~= 'number' or ms < 0 then return '' end
+  local total_s = math.floor(ms / 1000)
+  if total_s < 60 then return string.format('%ds', total_s) end
+  local minutes = math.floor(total_s / 60)
+  local seconds = total_s % 60
+  if minutes < 60 then return string.format('%dm %ds', minutes, seconds) end
+  local hours = math.floor(minutes / 60)
+  minutes = minutes % 60
+  return string.format('%dh %dm', hours, minutes)
+end
+
 local HL_LINE    = '%#CcStl#'
 local HL_TOKENS  = '%#CcStlTokens#'
 local HL_MODE    = '%#CcStlMode#'
@@ -43,7 +57,10 @@ local function default_format(state)
   elseif state.is_thinking then
     local glyph = state.spinner_frame
     if not glyph or glyph == '' then glyph = '⏳' end
-    table.insert(segments, HL_LINE .. glyph)
+    local seg = HL_LINE .. glyph
+    local elapsed = fmt_elapsed(state.turn_elapsed_ms)
+    if elapsed ~= '' then seg = seg .. ' (' .. elapsed .. ')' end
+    table.insert(segments, seg)
   end
   local toks = fmt_tokens(state.total_tokens)
   if toks ~= '' then
@@ -95,9 +112,15 @@ function M.build_state(instance)
     local ok, Spinner = pcall(require, 'cc.statusline_spinner')
     if ok then spinner_frame = Spinner.current_frame(instance) end
   end
+  local turn_elapsed_ms = nil
+  if session and session.turn_active and session.turn_started_at then
+    local uv = vim.uv or vim.loop
+    turn_elapsed_ms = uv.now() - session.turn_started_at
+  end
   return {
     is_thinking = session and session.turn_active or false,
     spinner_frame = spinner_frame,
+    turn_elapsed_ms = turn_elapsed_ms,
     interrupt_pending = session and session.interrupt_pending or false,
     total_tokens = input_tokens + output_tokens,
     input_tokens = input_tokens,
@@ -227,5 +250,6 @@ end
 
 M._default_format = default_format
 M._fmt_tokens = fmt_tokens
+M._fmt_elapsed = fmt_elapsed
 
 return M

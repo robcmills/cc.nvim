@@ -91,6 +91,27 @@ T['build_state']['is_streaming alone does not set is_thinking'] = function()
   eq(_G.child.lua_get('_G._state.is_thinking'), false)
 end
 
+T['build_state']['turn_elapsed_ms is nil when turn inactive'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    _G._state = require('cc.statusline').build_state({ session = s })
+  ]])
+  eq(_G.child.lua_get('_G._state.turn_elapsed_ms == nil'), true)
+end
+
+T['build_state']['turn_elapsed_ms grows while turn is active'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s:add_user_turn('hi')
+    vim.wait(20, function() return false end)
+    _G._state = require('cc.statusline').build_state({ session = s })
+  ]])
+  local elapsed = _G.child.lua_get('_G._state.turn_elapsed_ms')
+  eq(type(elapsed) == 'number' and elapsed >= 15, true)
+end
+
 T['build_state']['includes spinner_frame from statusline_spinner module'] = function()
   _G.child.lua([[
     require('cc.config').setup({
@@ -135,6 +156,45 @@ T['default_format']['shows provided spinner_frame while turn is active'] = funct
     })
   ]])
   eq(_G.child.lua_get("_G._out:find('SPIN', 1, true) ~= nil"), true)
+end
+
+T['default_format']['appends elapsed time next to spinner'] = function()
+  _G.child.lua([[
+    _G._out = require('cc.statusline')._default_format({
+      is_thinking = true,
+      spinner_frame = 'SPIN',
+      turn_elapsed_ms = 5000,
+      total_tokens = 0,
+    })
+  ]])
+  eq(_G.child.lua_get("_G._out:find('SPIN (5s)', 1, true) ~= nil"), true)
+end
+
+T['default_format']['omits elapsed when turn_elapsed_ms missing'] = function()
+  _G.child.lua([[
+    _G._out = require('cc.statusline')._default_format({
+      is_thinking = true,
+      spinner_frame = 'SPIN',
+      total_tokens = 0,
+    })
+  ]])
+  -- No "(0s)" or stray "(" right after spinner glyph
+  eq(_G.child.lua_get("_G._out:find('SPIN %(', 1, false) == nil"), true)
+end
+
+T['default_format']['hides elapsed during interrupting state'] = function()
+  _G.child.lua([[
+    _G._out = require('cc.statusline')._default_format({
+      interrupt_pending = true,
+      is_thinking = true,
+      spinner_frame = 'SPIN',
+      turn_elapsed_ms = 5000,
+      total_tokens = 0,
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('interrupting', 1, true) ~= nil, true)
+  eq(out:find('(5s)', 1, true) == nil, true)
 end
 
 T['default_format']['falls back to hourglass when no spinner_frame'] = function()
@@ -205,6 +265,31 @@ end
 T['fmt_tokens']['exactly 2000'] = function()
   _G.child.lua([[_G._v = require('cc.statusline')._fmt_tokens(2000)]])
   eq(_G.child.lua_get('_G._v'), '2k')
+end
+
+-- ---------------------------------------------------------------------------
+-- fmt_elapsed
+-- ---------------------------------------------------------------------------
+T['fmt_elapsed'] = MiniTest.new_set()
+
+T['fmt_elapsed']['nil returns empty'] = function()
+  _G.child.lua([[_G._v = require('cc.statusline')._fmt_elapsed(nil)]])
+  eq(_G.child.lua_get('_G._v'), '')
+end
+
+T['fmt_elapsed']['under 60 seconds shows seconds'] = function()
+  _G.child.lua([[_G._v = require('cc.statusline')._fmt_elapsed(5000)]])
+  eq(_G.child.lua_get('_G._v'), '5s')
+end
+
+T['fmt_elapsed']['between 1m and 1h shows minutes and seconds'] = function()
+  _G.child.lua([[_G._v = require('cc.statusline')._fmt_elapsed(62 * 1000)]])
+  eq(_G.child.lua_get('_G._v'), '1m 2s')
+end
+
+T['fmt_elapsed']['hour or more shows hours and minutes'] = function()
+  _G.child.lua([[_G._v = require('cc.statusline')._fmt_elapsed((3600 + 5 * 60) * 1000)]])
+  eq(_G.child.lua_get('_G._v'), '1h 5m')
 end
 
 -- ---------------------------------------------------------------------------
