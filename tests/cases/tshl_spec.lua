@@ -218,4 +218,71 @@ T['yaml_scalar']['returns nil when key absent'] = function()
   eq(_G.child.lua_get('_G._t_frag'), vim.NIL)
 end
 
+T['yaml_body'] = MiniTest.new_set()
+
+T['yaml_body']['full_body_fragment maps each line at col_offset 0'] = function()
+  _G.child.lua([[
+    local output = require('cc.output')
+    local lines = { 'actions:', '  -', '    name: computer' }
+    local frag = output._full_body_fragment(lines)
+    _G._t_text = frag and frag.text or nil
+    _G._t_n_rows = frag and #frag.row_map or 0
+    _G._t_first_idx = frag and frag.row_map[1].body_idx or nil
+    _G._t_first_off = frag and frag.row_map[1].col_offset or nil
+    _G._t_last_idx = frag and frag.row_map[3].body_idx or nil
+  ]])
+  eq(_G.child.lua_get('_G._t_text'), 'actions:\n  -\n    name: computer')
+  eq(_G.child.lua_get('_G._t_n_rows'), 3)
+  eq(_G.child.lua_get('_G._t_first_idx'), 0)
+  eq(_G.child.lua_get('_G._t_first_off'), 0)
+  eq(_G.child.lua_get('_G._t_last_idx'), 2)
+end
+
+T['yaml_body']['full_body_fragment returns nil for empty body'] = function()
+  _G.child.lua([[
+    local output = require('cc.output')
+    _G._t_empty = output._full_body_fragment({})
+    _G._t_nil = output._full_body_fragment(nil)
+  ]])
+  eq(_G.child.lua_get('_G._t_empty'), vim.NIL)
+  eq(_G.child.lua_get('_G._t_nil'), vim.NIL)
+end
+
+T['yaml_body']['default_tool_body emits yaml snippet for generic tools'] = function()
+  _G.child.lua([[
+    local output = require('cc.output')
+    local body = output._default_tool_body('mcp__claude-in-chrome__browser_batch', {
+      actions = {
+        { name = 'computer', input = { action = 'left_click', tabId = 42 } },
+      },
+    })
+    _G._t_is_table = type(body) == 'table' and body.lines ~= nil
+    _G._t_n_snips = body.snippets and #body.snippets or 0
+    _G._t_first_lang = body.snippets and body.snippets[1].lang or nil
+    -- The yaml fragment text should equal the joined body lines.
+    _G._t_yaml_matches = body.snippets[1].fragment.text == table.concat(body.lines, '\n')
+  ]])
+  eq(_G.child.lua_get('_G._t_is_table'), true)
+  eq(_G.child.lua_get('_G._t_n_snips') >= 1, true)
+  eq(_G.child.lua_get('_G._t_first_lang'), 'yaml')
+  eq(_G.child.lua_get('_G._t_yaml_matches'), true)
+end
+
+T['yaml_body']['javascript_tool keeps yaml + js snippet ordering'] = function()
+  _G.child.lua([[
+    local output = require('cc.output')
+    local body = output._default_tool_body('mcp__claude-in-chrome__javascript_tool', {
+      tabId = 42,
+      text = "fetch('/foo').then(r => r.status)",
+    })
+    _G._t_n = body.snippets and #body.snippets or 0
+    _G._t_first = body.snippets and body.snippets[1].lang or nil
+    _G._t_second = body.snippets and body.snippets[2] and body.snippets[2].lang or nil
+  ]])
+  -- yaml comes first (covers all body), javascript overlays the `text:` value.
+  eq(_G.child.lua_get('_G._t_n'), 2)
+  eq(_G.child.lua_get('_G._t_first'), 'yaml')
+  eq(_G.child.lua_get('_G._t_second'), 'javascript')
+end
+
 return T

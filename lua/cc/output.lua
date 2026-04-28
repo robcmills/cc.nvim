@@ -1044,6 +1044,20 @@ local TOOL_LANGS = {
   ['mcp__claude-in-chrome__javascript_tool'] = { input = { text = 'javascript' } },
 }
 
+--- Build a fragment covering every line of a YAML-ish body for top-level
+--- `yaml` highlighting. Each source row maps 1:1 to body_lines[i] at
+--- col_offset = 0; the surrounding renderer adds the buffer indent.
+---@param body_lines string[]
+---@return { text: string, row_map: table[] }?
+local function full_body_fragment(body_lines)
+  if not body_lines or #body_lines == 0 then return nil end
+  local row_map = {}
+  for i = 1, #body_lines do
+    row_map[i] = { body_idx = i - 1, col_offset = 0 }
+  end
+  return { text = table.concat(body_lines, '\n'), row_map = row_map }
+end
+
 --- Find a top-level `<key>: ...` scalar in a YAML-ish body and return a
 --- fragment {text, row_map} suitable for cc.tshl. Handles both the block
 --- form (`<key>: |` followed by 2-space-indented lines) and the inline form
@@ -1143,9 +1157,16 @@ local function default_tool_body(tool_name, input)
     end
   end
   local lines = render_yaml_ish(filtered, '')
+  local snippets = {}
+  -- Top-level YAML highlight for the whole body. Placed first so any
+  -- per-tool fine-grained snippet (e.g. javascript_tool's `text:` value)
+  -- overlays it.
+  local yaml_frag = full_body_fragment(lines)
+  if yaml_frag then
+    table.insert(snippets, { lang = 'yaml', fragment = yaml_frag })
+  end
   local lang_spec = TOOL_LANGS[tool_name]
   if lang_spec and lang_spec.input then
-    local snippets = {}
     for key, lang in pairs(lang_spec.input) do
       if filtered[key] ~= nil then
         local frag = extract_yaml_scalar(lines, key)
@@ -1154,9 +1175,9 @@ local function default_tool_body(tool_name, input)
         end
       end
     end
-    if #snippets > 0 then
-      return { lines = lines, snippets = snippets }
-    end
+  end
+  if #snippets > 0 then
+    return { lines = lines, snippets = snippets }
   end
   return lines
 end
@@ -1652,4 +1673,6 @@ end
 
 M.Output = Output
 M._extract_yaml_scalar = extract_yaml_scalar
+M._full_body_fragment = full_body_fragment
+M._default_tool_body = default_tool_body
 return M
