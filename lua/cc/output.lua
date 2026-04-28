@@ -1036,19 +1036,79 @@ local function todo_marker(status)
   return '☐'
 end
 
---- Default body formatter. Returns an array of body lines (without indent).
+--- Per-tool snippet language hints. Entries keyed by tool name; `input` maps
+--- input field names (top-level keys) to the TS language to highlight that
+--- field's value as. The renderer scans the YAML-ish body for `<key>: |` block
+--- scalars and applies highlights to their content.
+local TOOL_LANGS = {
+  ['mcp__claude-in-chrome__javascript_tool'] = { input = { text = 'javascript' } },
+}
+
+--- Find a `<key>: |` block scalar at the top level of a YAML-ish body and
+--- return a fragment {text, row_map} suitable for cc.tshl. row_map's body_idx
+--- entries are 0-indexed into `body_lines`.
+---@param body_lines string[]
+---@param key string
+---@return { text: string, row_map: table[] }?
+local function extract_yaml_block_scalar(body_lines, key)
+  local header = key .. ': |'
+  for i, l in ipairs(body_lines) do
+    if l == header then
+      local rows = {}
+      local row_map = {}
+      for j = i + 1, #body_lines do
+        local m = body_lines[j]
+        if m:sub(1, 2) == '  ' then
+          table.insert(rows, m:sub(3))
+          table.insert(row_map, { body_idx = j - 1, col_offset = 2 })
+        else
+          break
+        end
+      end
+      if #rows == 0 then return nil end
+      return { text = table.concat(rows, '\n'), row_map = row_map }
+    end
+  end
+  return nil
+end
+
+--- Default body formatter. Returns either `string[]` (lines only) or
+--- `{ lines, snippets }` where `snippets[i] = { lang, fragment = {text, row_map} }`
+--- and `row_map`'s body_idx is 0-indexed into `lines`.
 ---@param tool_name string
 ---@param input table
----@return string[]?
+---@return string[]|{ lines: string[], snippets: table[] }?
 local function default_tool_body(tool_name, input)
   if tool_name == 'Bash' and input.command then
     return vim.split(tostring(input.command), '\n', { plain = true })
   elseif tool_name == 'Edit' then
-    return require('cc.diff').render_edit(input.old_string, input.new_string)
+    local d = require('cc.diff').render_edit_with_fragments(input.old_string, input.new_string)
+    local snippets = {}
+    local lang = require('cc.tshl').lang_for_path(input.file_path)
+    if lang then
+      if d.after  then table.insert(snippets, { lang = lang, fragment = d.after  }) end
+      if d.before then table.insert(snippets, { lang = lang, fragment = d.before }) end
+    end
+    return { lines = d.lines, snippets = snippets }
   elseif tool_name == 'MultiEdit' then
-    return require('cc.diff').render_multiedit(input.edits)
+    local d = require('cc.diff').render_multiedit_with_fragments(input.edits)
+    local snippets = {}
+    local lang = require('cc.tshl').lang_for_path(input.file_path)
+    if lang then
+      for _, frag in ipairs(d.fragments) do
+        if frag.after  then table.insert(snippets, { lang = lang, fragment = frag.after  }) end
+        if frag.before then table.insert(snippets, { lang = lang, fragment = frag.before }) end
+      end
+    end
+    return { lines = d.lines, snippets = snippets }
   elseif tool_name == 'Write' then
-    return require('cc.diff').render_write(input.content)
+    local d = require('cc.diff').render_write_with_fragments(input.content)
+    local snippets = {}
+    local lang = require('cc.tshl').lang_for_path(input.file_path)
+    if lang and d.after then
+      table.insert(snippets, { lang = lang, fragment = d.after })
+    end
+    return { lines = d.lines, snippets = snippets }
   elseif tool_name == 'TodoWrite' and type(input.todos) == 'table' then
     local lines = {}
     for _, t in ipairs(input.todos) do
@@ -1072,7 +1132,23 @@ local function default_tool_body(tool_name, input)
       filtered[k] = v
     end
   end
-  return render_yaml_ish(filtered, '')
+  local lines = render_yaml_ish(filtered, '')
+  local lang_spec = TOOL_LANGS[tool_name]
+  if lang_spec and lang_spec.input then
+    local snippets = {}
+    for key, lang in pairs(lang_spec.input) do
+      if filtered[key] ~= nil then
+        local frag = extract_yaml_block_scalar(lines, key)
+        if frag then
+          table.insert(snippets, { lang = lang, fragment = frag })
+        end
+      end
+    end
+    if #snippets > 0 then
+      return { lines = lines, snippets = snippets }
+    end
+  end
+  return lines
 end
 
 --- Render tool input block at fold level 2 (below the tool header).
@@ -1082,7 +1158,7 @@ end
 function Output:_render_tool_input(tool_name, input)
   if not input then return nil end
   local config = require('cc.config').options
-  local body_lines
+  local body_lines, snippets
   if type(config.tool_input_format) == 'function' then
     local ok, result = pcall(config.tool_input_format, tool_name, input)
     if ok and type(result) == 'string' then
@@ -1090,7 +1166,13 @@ function Output:_render_tool_input(tool_name, input)
     end
   end
   if not body_lines then
-    body_lines = default_tool_body(tool_name, input)
+    local body = default_tool_body(tool_name, input)
+    if type(body) == 'table' and body.lines then
+      body_lines = body.lines
+      snippets = body.snippets
+    else
+      body_lines = body
+    end
   end
   if not body_lines or #body_lines == 0 then return nil end
 
@@ -1099,11 +1181,30 @@ function Output:_render_tool_input(tool_name, input)
   -- Diff renderers (Edit/MultiEdit/Write) already emit their own indentation
   -- via the cc.diff module; other bodies get a 4-space indent.
   local pre_indented = tool_name == 'Edit' or tool_name == 'MultiEdit' or tool_name == 'Write'
+  local extra_indent = pre_indented and 0 or 4
   for _, l in ipairs(body_lines) do
     table.insert(lines, pre_indented and l or ('    ' .. l))
     table.insert(levels, 2)
   end
   local first_lnum = self:_append(lines, levels, false)
+
+  if snippets and #snippets > 0 then
+    local tshl = require('cc.tshl')
+    for _, snip in ipairs(snippets) do
+      local frag = snip.fragment
+      if frag and frag.text and frag.row_map then
+        local row_map = {}
+        for i, m in ipairs(frag.row_map) do
+          row_map[i] = {
+            row = (first_lnum - 1) + m.body_idx,
+            col_offset = extra_indent + m.col_offset,
+          }
+        end
+        pcall(tshl.apply_fragment, self.bufnr, snip.lang, frag.text, row_map)
+      end
+    end
+  end
+
   return first_lnum + #lines - 1
 end
 
