@@ -167,7 +167,7 @@ T['default_format']['appends elapsed time next to spinner'] = function()
       total_tokens = 0,
     })
   ]])
-  eq(_G.child.lua_get("_G._out:find('SPIN (5s)', 1, true) ~= nil"), true)
+  eq(_G.child.lua_get("_G._out:find('SPIN 5s', 1, true) ~= nil"), true)
 end
 
 T['default_format']['omits elapsed when turn_elapsed_ms missing'] = function()
@@ -178,8 +178,8 @@ T['default_format']['omits elapsed when turn_elapsed_ms missing'] = function()
       total_tokens = 0,
     })
   ]])
-  -- No "(0s)" or stray "(" right after spinner glyph
-  eq(_G.child.lua_get("_G._out:find('SPIN %(', 1, false) == nil"), true)
+  -- No "0s" or stray digits right after spinner glyph
+  eq(_G.child.lua_get("_G._out:find('SPIN %d', 1, false) == nil"), true)
 end
 
 T['default_format']['hides elapsed during interrupting state'] = function()
@@ -194,7 +194,7 @@ T['default_format']['hides elapsed during interrupting state'] = function()
   ]])
   local out = _G.child.lua_get('_G._out')
   eq(out:find('interrupting', 1, true) ~= nil, true)
-  eq(out:find('(5s)', 1, true) == nil, true)
+  eq(out:find('5s', 1, true) == nil, true)
 end
 
 T['default_format']['falls back to hourglass when no spinner_frame'] = function()

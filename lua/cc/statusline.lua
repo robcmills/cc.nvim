@@ -59,7 +59,7 @@ local function default_format(state)
     if not glyph or glyph == '' then glyph = '⏳' end
     local seg = HL_LINE .. glyph
     local elapsed = fmt_elapsed(state.turn_elapsed_ms)
-    if elapsed ~= '' then seg = seg .. ' (' .. elapsed .. ')' end
+    if elapsed ~= '' then seg = seg .. ' ' .. elapsed end
     table.insert(segments, seg)
   end
   local toks = fmt_tokens(state.total_tokens)
