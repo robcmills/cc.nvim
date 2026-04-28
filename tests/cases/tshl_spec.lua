@@ -162,4 +162,60 @@ T['diff_fragments']['legacy render_edit returns lines only'] = function()
   eq(_G.child.lua_get('_G._t_first_is_string'), true)
 end
 
+T['yaml_scalar'] = MiniTest.new_set()
+
+T['yaml_scalar']['extracts block scalar (multi-line value)'] = function()
+  _G.child.lua([[
+    local output = require('cc.output')
+    local lines = {
+      'action: javascript_exec',
+      'tabId: 2101896151',
+      'text: |',
+      '  fetch(url).then(r => r.json()).then(spec => {',
+      '    return spec;',
+      '  })',
+    }
+    local frag = output._extract_yaml_scalar(lines, 'text')
+    _G._t_text = frag and frag.text or nil
+    _G._t_n_rows = frag and #frag.row_map or 0
+    _G._t_first_body_idx = frag and frag.row_map[1].body_idx or nil
+    _G._t_first_col_offset = frag and frag.row_map[1].col_offset or nil
+  ]])
+  eq(_G.child.lua_get('_G._t_text'),
+    'fetch(url).then(r => r.json()).then(spec => {\n  return spec;\n})')
+  eq(_G.child.lua_get('_G._t_n_rows'), 3)
+  eq(_G.child.lua_get('_G._t_first_body_idx'), 3)
+  eq(_G.child.lua_get('_G._t_first_col_offset'), 2)
+end
+
+T['yaml_scalar']['extracts inline scalar (single-line value)'] = function()
+  _G.child.lua([[
+    local output = require('cc.output')
+    local lines = {
+      'action: javascript_exec',
+      'tabId: 2101896151',
+      "text: fetch('/foo').then(r => r.status)",
+    }
+    local frag = output._extract_yaml_scalar(lines, 'text')
+    _G._t_text = frag and frag.text or nil
+    _G._t_n_rows = frag and #frag.row_map or 0
+    _G._t_body_idx = frag and frag.row_map[1].body_idx or nil
+    _G._t_col_offset = frag and frag.row_map[1].col_offset or nil
+  ]])
+  eq(_G.child.lua_get('_G._t_text'), "fetch('/foo').then(r => r.status)")
+  eq(_G.child.lua_get('_G._t_n_rows'), 1)
+  eq(_G.child.lua_get('_G._t_body_idx'), 2)
+  -- col_offset = #'text: ' = 6
+  eq(_G.child.lua_get('_G._t_col_offset'), 6)
+end
+
+T['yaml_scalar']['returns nil when key absent'] = function()
+  _G.child.lua([[
+    local output = require('cc.output')
+    local frag = output._extract_yaml_scalar({ 'foo: bar', 'baz: qux' }, 'text')
+    _G._t_frag = frag
+  ]])
+  eq(_G.child.lua_get('_G._t_frag'), vim.NIL)
+end
+
 return T

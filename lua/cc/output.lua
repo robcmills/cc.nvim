@@ -1044,16 +1044,19 @@ local TOOL_LANGS = {
   ['mcp__claude-in-chrome__javascript_tool'] = { input = { text = 'javascript' } },
 }
 
---- Find a `<key>: |` block scalar at the top level of a YAML-ish body and
---- return a fragment {text, row_map} suitable for cc.tshl. row_map's body_idx
---- entries are 0-indexed into `body_lines`.
+--- Find a top-level `<key>: ...` scalar in a YAML-ish body and return a
+--- fragment {text, row_map} suitable for cc.tshl. Handles both the block
+--- form (`<key>: |` followed by 2-space-indented lines) and the inline form
+--- (`<key>: <value>` on a single line, used when the value has no newlines).
+--- row_map body_idx entries are 0-indexed into `body_lines`.
 ---@param body_lines string[]
 ---@param key string
 ---@return { text: string, row_map: table[] }?
-local function extract_yaml_block_scalar(body_lines, key)
-  local header = key .. ': |'
+local function extract_yaml_scalar(body_lines, key)
+  local block_header = key .. ': |'
+  local inline_prefix = key .. ': '
   for i, l in ipairs(body_lines) do
-    if l == header then
+    if l == block_header then
       local rows = {}
       local row_map = {}
       for j = i + 1, #body_lines do
@@ -1067,6 +1070,13 @@ local function extract_yaml_block_scalar(body_lines, key)
       end
       if #rows == 0 then return nil end
       return { text = table.concat(rows, '\n'), row_map = row_map }
+    elseif l:sub(1, #inline_prefix) == inline_prefix then
+      local value = l:sub(#inline_prefix + 1)
+      if value == '' then return nil end
+      return {
+        text = value,
+        row_map = { { body_idx = i - 1, col_offset = #inline_prefix } },
+      }
     end
   end
   return nil
@@ -1138,7 +1148,7 @@ local function default_tool_body(tool_name, input)
     local snippets = {}
     for key, lang in pairs(lang_spec.input) do
       if filtered[key] ~= nil then
-        local frag = extract_yaml_block_scalar(lines, key)
+        local frag = extract_yaml_scalar(lines, key)
         if frag then
           table.insert(snippets, { lang = lang, fragment = frag })
         end
@@ -1641,4 +1651,5 @@ function Output:set_fold_level(level)
 end
 
 M.Output = Output
+M._extract_yaml_scalar = extract_yaml_scalar
 return M
