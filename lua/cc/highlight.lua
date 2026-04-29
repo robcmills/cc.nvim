@@ -20,6 +20,10 @@ local defaults = {
   CcDiffAdd    = { link = 'DiffAdd' },
   CcDiffDelete = { link = 'DiffDelete' },
   CcDiffHunk   = { link = 'DiffChange' },
+  -- TodoWrite item status icons
+  CcTodoCompleted  = { fg = '#a9e39a' }, -- light green
+  CcTodoInProgress = { fg = '#e6c07b' }, -- warm yellow
+  CcTodoIncomplete = { link = 'Comment' },
   -- Statusline segments. Colors chosen to stay readable on typical dark
   -- backgrounds; override by defining these groups in your colorscheme.
   CcStl         = { fg = '#9aa5b1' },
@@ -62,7 +66,7 @@ end
 function M.apply_buffer_syntax(bufnr)
   vim.api.nvim_buf_call(bufnr, function()
     -- Clear any prior cc syntax to avoid duplicates on reopen.
-    pcall(vim.cmd, 'syntax clear CcUser CcAgent CcTool CcOutput CcError CcCost CcNotice CcHook CcPermission CcToolInput CcToolTiming CcDiffAdd CcDiffDelete CcDiffHunk')
+    pcall(vim.cmd, 'syntax clear CcUser CcAgent CcTool CcOutput CcError CcCost CcNotice CcHook CcPermission CcToolInput CcToolTiming CcDiffAdd CcDiffDelete CcDiffHunk CcTodoCompleted CcTodoInProgress CcTodoIncomplete')
 
     -- containedin=ALL lets these matches override markdown regions (e.g.
     -- markdownCodeBlock opened by backticks in a tool result) that would
@@ -100,6 +104,11 @@ function M.apply_buffer_syntax(bufnr)
     vim.cmd([[syntax match CcDiffAdd    /^ \{8\}\zs+.*$/ containedin=ALL]])
     vim.cmd([[syntax match CcDiffDelete /^ \{8\}\zs-.*$/ containedin=ALL]])
     vim.cmd([[syntax match CcDiffHunk   /^ \{8\}\zs@@.*@@$/ containedin=ALL]])
+
+    -- TodoWrite item icons. Glyphs must match output.lua's todo_marker().
+    vim.cmd([[syntax match CcTodoCompleted  /^\s\+\zs✓\ze\s/ containedin=ALL]])
+    vim.cmd([[syntax match CcTodoInProgress /^\s\+\zs◐\ze\s/ containedin=ALL]])
+    vim.cmd([[syntax match CcTodoIncomplete /^\s\+\zs□\ze\s/ containedin=ALL]])
   end)
 end
 

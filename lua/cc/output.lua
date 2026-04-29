@@ -1029,11 +1029,13 @@ local function render_yaml_ish(value, indent)
   return out
 end
 
---- Status marker for a TodoWrite item.
+--- Status marker for a TodoWrite item. Glyphs chosen from blocks (Dingbats /
+--- Geometric Shapes) with reliable monospace-font coverage so the terminal
+--- doesn't fall back to a differently-sized fallback font.
 local function todo_marker(status)
-  if status == 'completed' then return '☑' end
+  if status == 'completed' then return '✓' end
   if status == 'in_progress' then return '◐' end
-  return '☐'
+  return '□'
 end
 
 --- Per-tool snippet language hints. Entries keyed by tool name; `input` maps

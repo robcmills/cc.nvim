@@ -39,6 +39,16 @@
 - [x] Add emoji art splash screen (configurable visibility)
 
 
+- [ ] Improve hightlights for todo lists
+  + [ ] completed task icons are green
+  + [ ] in progress task icons are yellow
+  + [ ] incomplete task icons are gray
+   TodoWrite: #5
+    ☑ Create cc.tshl module: TS string-parser highlighting helper
+    ☑ Refactor diff.lua to expose hunks (before/after fragments + line map) for Edit/MultiEdit/Write
+    ☑ Wire snippet highlighting into output.lua: javascript_tool input.text + Edit/MultiEdit/Write diffs
+    ◐ Run existing tests; ensure no regressions
+    ☐ Add focused tshl/diff tests if feasible
 - [ ] Turn thinking back on with timer
 - [ ] Fix missing mode in statusline on startup
 - [ ] Add support for /remote-control
