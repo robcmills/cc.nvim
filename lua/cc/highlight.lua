@@ -68,6 +68,15 @@ function M.apply_buffer_syntax(bufnr)
     -- Clear any prior cc syntax to avoid duplicates on reopen.
     pcall(vim.cmd, 'syntax clear CcUser CcAgent CcTool CcOutput CcError CcCost CcNotice CcHook CcPermission CcToolInput CcToolTiming CcDiffAdd CcDiffDelete CcDiffHunk CcTodoCompleted CcTodoInProgress CcTodoIncomplete')
 
+    -- markdown's runtime syntax does `runtime! syntax/html.vim`, which defines
+    -- multi-line regions (htmlComment, htmlTag, htmlEndTag, htmlPreProc, the
+    -- embedded javaScript/cssStyle blocks) plus a top-level htmlError match
+    -- on `[<>&]`. A stray `<!` in tool output or agent prose opens the
+    -- "bogus comment" region (`<!` … `>`), and every char inside renders as
+    -- htmlCommentError → htmlError → Error (red) until the next `>` closes
+    -- it. We don't want any HTML highlighting in the chat buffer; clear it.
+    pcall(vim.cmd, 'syntax clear htmlComment htmlCommentError htmlCommentNested htmlTag htmlEndTag htmlError htmlTagError htmlPreProc htmlPreError htmlPreAttr htmlPreStmt htmlPreProcAttrName htmlPreProcAttrError htmlSpecialChar htmlString htmlTagName htmlSpecialTagName htmlArg htmlValue htmlEvent htmlScriptTag htmlMath htmlSvg htmlMathTagName htmlSvgTagName htmlLink htmlH1 htmlH2 htmlH3 htmlH4 htmlH5 htmlH6 htmlHead htmlTitle htmlBold htmlItalic htmlStrike htmlUnderline htmlBoldItalic htmlBoldUnderline htmlBoldUnderlineItalic htmlItalicBold htmlItalicUnderline htmlItalicBoldUnderline htmlItalicUnderlineBold htmlUnderlineBold htmlUnderlineItalic htmlUnderlineBoldItalic htmlUnderlineItalicBold htmlLeadingSpace htmlCssDefinition htmlCssStyleComment cssStyle javaScript javaScriptExpression javaScriptNumber')
+
     -- containedin=ALL lets these matches override markdown regions (e.g.
     -- markdownCodeBlock opened by backticks in a tool result) that would
     -- otherwise engulf following header lines.

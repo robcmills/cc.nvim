@@ -158,6 +158,47 @@ T['highlight_groups']['CcDiffHunk syntax match is defined'] = function()
   eq(_G.child.lua_get('_G._test_syn_exists'), true)
 end
 
+-- Regression: the cc-output buffer is filetype=markdown, which loads vim's
+-- runtime html.vim. html.vim defines a "bogus comment" region (start `<!`,
+-- end `>`) whose contents render as htmlCommentError -> Error (red). When
+-- agent prose, tool output, or any prior buffer line contained `<!`, the
+-- region engulfed everything until the next `>` — e.g. a Bash command like
+-- `... 2>&1` would have everything up to the `>` painted red. We clear the
+-- html sub-syntax in apply_buffer_syntax to suppress this.
+T['highlight_groups']['no html error highlight bleeds across lines'] = function()
+  helpers.render_fixture(_G.child, 'simple_text')
+  _G.child.lua([==[
+    -- Inject lines that previously triggered the bug: `<!` opens the bogus
+    -- comment region, the next line's `>` closes it, painting the
+    -- intervening content red.
+    vim.bo[_G._test_bufnr].modifiable = true
+    vim.api.nvim_buf_set_lines(_G._test_bufnr, -1, -1, false, {
+      '    Some prior <! bogus content',
+      '    cd /tmp && git fetch origin foo 2>&1 | tail -5',
+    })
+    vim.bo[_G._test_bufnr].modifiable = false
+    vim.cmd('redraw')
+    -- Collect every syntax group on the cd line.
+    local last = vim.api.nvim_buf_line_count(_G._test_bufnr)
+    local line = vim.api.nvim_buf_get_lines(_G._test_bufnr, last - 1, last, false)[1]
+    local seen = {}
+    for col = 1, #line do
+      local ids = vim.fn.synstack(last, col)
+      for _, id in ipairs(ids) do
+        seen[vim.fn.synIDattr(id, 'name')] = true
+      end
+    end
+    _G._test_groups_seen = seen
+  ]==])
+  local seen = _G.child.lua_get('_G._test_groups_seen')
+  for _, bad in ipairs({ 'htmlError', 'htmlCommentError', 'htmlComment', 'htmlTag' }) do
+    if seen[bad] then
+      error(string.format('Expected no %s on cd line, but it was present. Groups seen: %s',
+        bad, vim.inspect(seen)))
+    end
+  end
+end
+
 T['highlight_groups']['all default groups exist'] = function()
   _G.child.lua([==[
     require('cc.config').setup({})
