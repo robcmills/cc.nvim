@@ -216,6 +216,13 @@ function M.foldexpr(lnum)
   return state.fold_levels[lnum] or 0
 end
 
+--- Tools whose summary should appear only in the foldtext when collapsed,
+--- never on the unfolded header line. The summary would otherwise duplicate
+--- a field already visible in the expanded YAML-ish body below the header.
+local SUMMARY_FOLD_ONLY = {
+  ToolSearch = true,
+}
+
 --- Build fold context info table for the foldtext callback.
 ---@param bufnr integer
 ---@param foldstart integer 1-indexed
@@ -249,7 +256,21 @@ local function build_fold_info(bufnr, foldstart, foldend)
     bufnr = bufnr,
     tool_count = 0,
     first_text = nil,
+    tool_name = nil,
+    tool_input = nil,
   }
+
+  -- For tool folds, attach the originating tool block's name and input so
+  -- foldtext can derive a fold-only summary for tools in SUMMARY_FOLD_ONLY.
+  if role == 'tool' and state and state.tool_blocks then
+    for _, block in pairs(state.tool_blocks) do
+      if block.header_lnum == foldstart then
+        info.tool_name = block.tool_name
+        info.tool_input = block.input
+        break
+      end
+    end
+  end
 
   -- For user/agent turns, scan content to count tools and find preview text.
   if state and (role == 'user' or role == 'agent') and foldend > foldstart then
@@ -332,6 +353,12 @@ function M.default_foldtext(info)
     return { { '▸ ', 'CcCaret' }, { body, hl } }
   elseif info.role == 'tool' then
     local stripped = info.header:gsub('^%s*', '')
+    if info.tool_name and SUMMARY_FOLD_ONLY[info.tool_name] and info.tool_input then
+      local summary = M.summarize_tool_input(info.tool_name, info.tool_input)
+      if summary and summary ~= '' then
+        stripped = stripped .. ' ' .. summary
+      end
+    end
     return { { '  ▸ ', 'CcCaret' }, { stripped, hl } }
   elseif info.role == 'result' then
     local stripped = info.header:gsub('^%s*', '')
@@ -956,7 +983,7 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary)
     vim.bo[bufnr].modifiable = true
     local icon = require('cc.icons').for_tool(tool_name)
     local new_text = '  ' .. icon .. ' ' .. display_tool_name(tool_name) .. ':'
-    if summary and summary ~= '' then
+    if summary and summary ~= '' and not SUMMARY_FOLD_ONLY[tool_name] then
       new_text = new_text .. ' ' .. summary
     end
     vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_text })
@@ -1368,6 +1395,15 @@ function M.summarize_tool_input(tool_name, input)
     return input.description or ''
   elseif tool_name == 'Skill' then
     return input.skill or ''
+  elseif tool_name == 'ToolSearch' then
+    local q = tostring(input.query or '')
+    if #q > 80 then q = q:sub(1, 77) .. '...' end
+    return q
+  end
+  -- MCP tools (mcp__*) render their input as a YAML-ish body below the
+  -- header; a JSON-encoded suffix would just duplicate that.
+  if tool_name:sub(1, 5) == 'mcp__' then
+    return ''
   end
   local ok, s = pcall(vim.json.encode, input)
   if ok and s then
