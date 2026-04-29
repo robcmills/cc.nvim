@@ -306,6 +306,9 @@ end
 
 --- Tear down an instance's process and buffer state, but leave its windows open
 --- so a replacement instance can swap its new buffers into the same layout.
+--- Wipes the old buffers so a renamed prompt buffer (e.g. `cc-foo`) does not
+--- linger and block a future :CcResume of the same session from claiming
+--- that name (E95: buffer with this name already exists).
 ---@param inst cc.Instance
 local function teardown_instance_keep_windows(inst)
   require('cc.statusline_spinner').stop(inst)
@@ -318,17 +321,20 @@ local function teardown_instance_keep_windows(inst)
     require('cc.autosize').detach(inst.prompt.bufnr)
   end
   if inst.prompt and inst.prompt.bufnr > 0 then
-    if vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
-      vim.bo[inst.prompt.bufnr].buflisted = false
-    end
     instances[inst.prompt.bufnr] = nil
+    if vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
+      pcall(vim.api.nvim_buf_delete, inst.prompt.bufnr, { force = true })
+    end
   end
   if inst.output and inst.output.bufnr and vim.api.nvim_buf_is_valid(inst.output.bufnr) then
-    vim.bo[inst.output.bufnr].buflisted = false
+    pcall(vim.api.nvim_buf_delete, inst.output.bufnr, { force = true })
   end
 end
 
---- Tear down an instance: kill process, close windows, unlist buffer, remove from table.
+--- Tear down an instance: kill process, close windows, wipe buffers, remove from table.
+--- Wiping (rather than just unlisting) frees the buffer name so a later
+--- :CcResume of a renamed session can rename its new prompt buffer to the
+--- same `cc-<title>` without colliding with the stale buffer.
 ---@param inst cc.Instance
 local function close_instance(inst)
   require('cc.statusline_spinner').stop(inst)
@@ -347,15 +353,14 @@ local function close_instance(inst)
   if inst.prompt_winid and vim.api.nvim_win_is_valid(inst.prompt_winid) then
     pcall(vim.api.nvim_win_close, inst.prompt_winid, true)
   end
-  -- Unlist buffers so they disappear from the sidebar; always remove from instances table.
   if inst.prompt and inst.prompt.bufnr > 0 then
-    if vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
-      vim.bo[inst.prompt.bufnr].buflisted = false
-    end
     instances[inst.prompt.bufnr] = nil
+    if vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
+      pcall(vim.api.nvim_buf_delete, inst.prompt.bufnr, { force = true })
+    end
   end
   if inst.output and inst.output.bufnr and vim.api.nvim_buf_is_valid(inst.output.bufnr) then
-    vim.bo[inst.output.bufnr].buflisted = false
+    pcall(vim.api.nvim_buf_delete, inst.output.bufnr, { force = true })
   end
   inst.output_winid = nil
   inst.prompt_winid = nil
