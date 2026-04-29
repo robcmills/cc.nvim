@@ -93,6 +93,9 @@ function Router:_handle_system(msg)
     if msg.session_id and self.on_session_id then
       self.on_session_id(msg.session_id)
     end
+    if self.instance then
+      require('cc')._flush_pending_rename(self.instance)
+    end
   elseif sub == 'compact_boundary' then
     self.output:render_notice('Context Compacted')
   elseif sub == 'status' then
@@ -159,6 +162,9 @@ end
 function Router:_handle_result(msg)
   self.session:on_result(msg)
   self.output:render_result(msg)
+  if self.instance then
+    require('cc')._flush_pending_rename(self.instance)
+  end
 end
 
 function Router:_handle_tool_progress(msg)

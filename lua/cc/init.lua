@@ -28,6 +28,7 @@ M.VERSION = '0.1.1'
 ---@field last_session_id string?
 ---@field last_plan_file string?
 ---@field session_name string? user-set session title (set via /rename)
+---@field pending_session_name string? rename requested before transcript exists; flushed by `_flush_pending_rename`
 ---@field remote_control_active boolean?
 
 local instances = {} -- keyed by prompt bufnr
@@ -214,6 +215,7 @@ local function create_instance(opts)
     last_session_id = nil,
     last_plan_file = nil,
     session_name = nil,
+    pending_session_name = nil,
     autosize_disabled = false,
     expected_prompt_height = Config.options.prompt_height,
   }
@@ -777,28 +779,36 @@ end
 
 --- Persist a user-chosen session title. Matches Claude Code's on-disk format
 --- (a `custom-title` JSONL record) so renames are visible from the TUI too.
+--- If invoked before the transcript exists (fresh session, no first turn yet),
+--- the name is stashed on the instance and flushed by `_flush_pending_rename`
+--- once the JSONL appears on disk.
 ---@param inst cc.Instance
 ---@param args string raw arguments after `/rename `
 function M._handle_rename(inst, args)
   local name = args:match('^%s*(.-)%s*$') or ''
   local history = require('cc.history')
   local session_id = inst.last_session_id
-  if not session_id or session_id == '' then
-    vim.notify('cc.nvim /rename: no session id yet — wait for first response', vim.log.levels.WARN)
-    return
-  end
   if name == '' then
     local current = inst.session_name
-    if current and current ~= '' then
+    local pending = inst.pending_session_name
+    if pending and pending ~= '' then
+      vim.notify('cc.nvim /rename: pending title is "' .. pending .. '" (will persist when session begins) — usage: /rename <name>', vim.log.levels.INFO)
+    elseif current and current ~= '' then
       vim.notify('cc.nvim /rename: current title is "' .. current .. '" — usage: /rename <name>', vim.log.levels.INFO)
     else
       vim.notify('cc.nvim /rename: usage: /rename <name>', vim.log.levels.INFO)
     end
     return
   end
-  local path = history.session_path(session_id)
+  local path = session_id and session_id ~= '' and history.session_path(session_id) or nil
   if not path then
-    vim.notify('cc.nvim /rename: transcript not yet on disk — try again after next turn', vim.log.levels.WARN)
+    -- Pre-begin or transcript not yet flushed: stash the name and rename the
+    -- buffer immediately for visual feedback. `_flush_pending_rename` will
+    -- persist it on the next router event that proves the file exists.
+    inst.pending_session_name = name
+    M._apply_session_buf_names(inst, name)
+    require('cc.statusline').refresh(inst)
+    vim.notify('cc.nvim: rename queued — will persist when session begins', vim.log.levels.INFO)
     return
   end
   local ok, err = history.append_custom_title(path, session_id, name)
@@ -807,8 +817,33 @@ function M._handle_rename(inst, args)
     return
   end
   inst.session_name = name
+  inst.pending_session_name = nil
   M._apply_session_buf_names(inst, name)
   vim.notify('cc.nvim: session renamed to "' .. name .. '"', vim.log.levels.INFO)
+  require('cc.statusline').refresh(inst)
+end
+
+--- Flush a pending pre-begin rename to disk if both the name and the
+--- transcript file are now available. Silent on no-op; warns only on
+--- write failure. Safe to call from any router event.
+---@param inst cc.Instance
+function M._flush_pending_rename(inst)
+  local name = inst and inst.pending_session_name
+  if not name or name == '' then return end
+  local session_id = inst.last_session_id
+  if not session_id or session_id == '' then return end
+  local history = require('cc.history')
+  local path = history.session_path(session_id)
+  if not path then return end
+  local ok, err = history.append_custom_title(path, session_id, name)
+  if not ok then
+    vim.notify('cc.nvim /rename: failed to write queued title: ' .. tostring(err), vim.log.levels.ERROR)
+    inst.pending_session_name = nil
+    return
+  end
+  inst.session_name = name
+  inst.pending_session_name = nil
+  M._apply_session_buf_names(inst, name)
   require('cc.statusline').refresh(inst)
 end
 

@@ -232,6 +232,28 @@ T['default_format']['shows mode, tokens, branch+pr, session name, remote'] = fun
   eq(out:find('%=', 1, true) ~= nil, true)
 end
 
+T['default_format']['shows pending_session_name when no persisted name'] = function()
+  _G.child.lua([[
+    _G._out = require('cc.statusline')._default_format({
+      pending_session_name = 'fresh-name',
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('fresh-name', 1, true) ~= nil, true)
+end
+
+T['default_format']['session_name takes precedence over pending'] = function()
+  _G.child.lua([[
+    _G._out = require('cc.statusline')._default_format({
+      session_name = 'persisted',
+      pending_session_name = 'queued',
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('persisted', 1, true) ~= nil, true)
+  eq(out:find('queued', 1, true) == nil, true)
+end
+
 T['default_format']['branch alone (no PR) renders without PR number'] = function()
   _G.child.lua([[
     _G._out = require('cc.statusline')._default_format({ branch = 'main', pr = nil })

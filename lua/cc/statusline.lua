@@ -84,8 +84,12 @@ local function default_format(state)
     end
     table.insert(segments, b)
   end
-  if state.session_name and state.session_name ~= '' then
-    table.insert(segments, HL_SESSION .. state.session_name)
+  local display_name = state.session_name
+  if not display_name or display_name == '' then
+    display_name = state.pending_session_name
+  end
+  if display_name and display_name ~= '' then
+    table.insert(segments, HL_SESSION .. display_name)
   end
   if state.remote_control then
     table.insert(segments, HL_LINE .. '⚡')
@@ -133,6 +137,7 @@ function M.build_state(instance)
     model = session and session.model or nil,
     cli_version = require('cc.version').get(on_update),
     session_name = instance and instance.session_name or nil,
+    pending_session_name = instance and instance.pending_session_name or nil,
     session_id = instance and instance.last_session_id or nil,
     remote_control = instance and instance.remote_control_active == true,
   }

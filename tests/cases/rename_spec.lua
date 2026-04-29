@@ -227,4 +227,171 @@ T['dispatch']['try_handle ignores non-client commands'] = function()
   eq(handled, false)
 end
 
+-- ---------------------------------------------------------------------------
+-- Pre-begin rename (queued + flushed by router events)
+-- ---------------------------------------------------------------------------
+T['pre_begin'] = MiniTest.new_set()
+
+T['pre_begin']['queues rename when no session id and applies buffer name'] = function()
+  local result = _G.child.lua_get([[(function()
+    local notices = {}
+    local orig_notify = vim.notify
+    vim.notify = function(text, _) table.insert(notices, text) end
+    local prompt_name_calls = {}
+    local inst = {
+      last_session_id = nil,
+      session_name = nil,
+      pending_session_name = nil,
+      session = {},
+      output = {},
+      prompt = {
+        set_buf_name = function(self, name) table.insert(prompt_name_calls, name) end,
+      },
+    }
+    require('cc')._handle_rename(inst, 'fresh-name')
+    vim.notify = orig_notify
+    return {
+      pending = inst.pending_session_name,
+      session_name = inst.session_name,
+      prompt_name = prompt_name_calls[1],
+      notice = notices[1],
+    }
+  end)()]])
+  eq(result.pending, 'fresh-name')
+  eq(result.session_name, nil)
+  eq(result.prompt_name, 'cc-fresh-name')
+  local ok = result.notice and result.notice:match('queued') ~= nil
+  eq(ok, true)
+end
+
+T['pre_begin']['queues rename when session id known but transcript missing'] = function()
+  local result = _G.child.lua_get([[(function()
+    local history = require('cc.history')
+    local orig = history.session_path
+    history.session_path = function(_) return nil end
+    local notices = {}
+    local orig_notify = vim.notify
+    vim.notify = function(text, _) table.insert(notices, text) end
+    local inst = {
+      last_session_id = 'abc-123',
+      session_name = nil,
+      pending_session_name = nil,
+      session = {},
+      output = {},
+      prompt = { set_buf_name = function(_, _) end },
+    }
+    require('cc')._handle_rename(inst, 'queued')
+    history.session_path = orig
+    vim.notify = orig_notify
+    return { pending = inst.pending_session_name, notice = notices[1] }
+  end)()]])
+  eq(result.pending, 'queued')
+  local ok = result.notice and result.notice:match('queued') ~= nil
+  eq(ok, true)
+end
+
+T['pre_begin']['empty args reports pending name when one is queued'] = function()
+  local notice = _G.child.lua_get([[(function()
+    local notices = {}
+    local orig_notify = vim.notify
+    vim.notify = function(text, _) table.insert(notices, text) end
+    local inst = {
+      last_session_id = nil,
+      session_name = nil,
+      pending_session_name = 'queued-name',
+      session = {},
+      output = {},
+    }
+    require('cc')._handle_rename(inst, '')
+    vim.notify = orig_notify
+    return notices[1]
+  end)()]])
+  local ok = notice and notice:match('pending') ~= nil
+  eq(ok, true)
+end
+
+T['pre_begin']['flush persists queued name once transcript exists'] = function()
+  local result = _G.child.lua_get([[(function()
+    local tmp_project = vim.fn.tempname()
+    vim.fn.mkdir(tmp_project, 'p')
+    local session_id = 'aaaa-bbbb-cccc-dddd'
+    local path = tmp_project .. '/' .. session_id .. '.jsonl'
+    local f = io.open(path, 'w')
+    f:write(vim.json.encode({ type='user', sessionId=session_id,
+      cwd=vim.fn.getcwd(), message={role='user',content='seed'} }) .. '\n')
+    f:close()
+
+    local history = require('cc.history')
+    local orig = history.session_path
+    history.session_path = function(sid) if sid == session_id then return path end end
+
+    local prompt_name_calls = {}
+    local inst = {
+      last_session_id = session_id,
+      session_name = nil,
+      pending_session_name = 'queued-title',
+      session = {},
+      output = {},
+      prompt = {
+        set_buf_name = function(self, name) table.insert(prompt_name_calls, name) end,
+      },
+    }
+    require('cc')._flush_pending_rename(inst)
+    history.session_path = orig
+
+    local lines = vim.fn.readfile(path)
+    local last = vim.json.decode(lines[#lines])
+    return {
+      session_name = inst.session_name,
+      pending = inst.pending_session_name,
+      last_type = last.type,
+      last_title = last.customTitle,
+      prompt_name = prompt_name_calls[1],
+    }
+  end)()]])
+  eq(result.session_name, 'queued-title')
+  eq(result.pending, nil)
+  eq(result.last_type, 'custom-title')
+  eq(result.last_title, 'queued-title')
+  eq(result.prompt_name, 'cc-queued-title')
+end
+
+T['pre_begin']['flush is no-op when nothing pending'] = function()
+  local result = _G.child.lua_get([[(function()
+    local inst = {
+      last_session_id = 'abc',
+      session_name = nil,
+      pending_session_name = nil,
+      session = {},
+      output = {},
+    }
+    require('cc')._flush_pending_rename(inst)
+    return { session_name = inst.session_name }
+  end)()]])
+  eq(result.session_name, nil)
+end
+
+T['pre_begin']['flush is no-op when transcript still missing'] = function()
+  local result = _G.child.lua_get([[(function()
+    local history = require('cc.history')
+    local orig = history.session_path
+    history.session_path = function(_) return nil end
+    local inst = {
+      last_session_id = 'abc',
+      session_name = nil,
+      pending_session_name = 'still-queued',
+      session = {},
+      output = {},
+    }
+    require('cc')._flush_pending_rename(inst)
+    history.session_path = orig
+    return {
+      session_name = inst.session_name,
+      pending = inst.pending_session_name,
+    }
+  end)()]])
+  eq(result.session_name, nil)
+  eq(result.pending, 'still-queued')
+end
+
 return T
