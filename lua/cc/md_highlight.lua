@@ -20,6 +20,11 @@ local M = {}
 ---@class cc.MdHl.State
 ---@field parser vim.treesitter.LanguageTree
 ---@field highlighter vim.treesitter.highlighter
+---@field streaming_idx integer? index into the parser's regions list of the
+---  currently in-flight streaming region (set by begin_streaming, cleared
+---  by end_streaming). The list order is stable across edits — on_bytes
+---  shifts ranges within regions but does not reorder regions — so the
+---  index remains valid for the life of the streaming block.
 
 ---@type table<integer, cc.MdHl.State>
 local buf_state = {}
@@ -109,6 +114,78 @@ function M.add_range(bufnr, start_lnum, end_lnum)
   -- without an immediate parse the regions evaporate at the next
   -- nvim_buf_set_lines.
   pcall(state.parser.parse, state.parser, true)
+end
+
+--- Begin tracking an in-flight streaming markdown range. Appends a 1-line
+--- region for the start line and records its index so subsequent
+--- update_streaming calls can extend it as the block grows.
+---@param bufnr integer
+---@param start_lnum integer 1-indexed first line of the streaming block
+function M.begin_streaming(bufnr, start_lnum)
+  if not vim.api.nvim_buf_is_valid(bufnr) then return end
+
+  local state = attach(bufnr)
+  if not state then return end
+
+  local last_line = vim.api.nvim_buf_get_lines(bufnr, start_lnum - 1, start_lnum, false)[1] or ''
+  local new_region = { { start_lnum - 1, 0, start_lnum - 1, #last_line } }
+
+  local current = state.parser:included_regions() or {}
+  local regions = {}
+  if not regions_are_void(current) then
+    for _, region in ipairs(current) do
+      table.insert(regions, region)
+    end
+  end
+  table.insert(regions, new_region)
+  state.streaming_idx = #regions
+  pcall(state.parser.set_included_regions, state.parser, regions)
+  pcall(state.parser.parse, state.parser, true)
+end
+
+--- Extend the in-flight streaming region's end to (end_lnum, end of line).
+--- No-op if begin_streaming wasn't called.
+---@param bufnr integer
+---@param end_lnum integer 1-indexed last line currently belonging to the block
+function M.update_streaming(bufnr, end_lnum)
+  local state = buf_state[bufnr]
+  if not state or not state.streaming_idx then return end
+  if not vim.api.nvim_buf_is_valid(bufnr) then return end
+
+  -- LanguageTree:included_regions() returns the parser's internal _regions
+  -- table by reference, NOT a copy. Mutating it directly (e.g. assigning to
+  -- current[idx]) updates the parser's state in place. set_included_regions
+  -- then sees no change vs its own internal table and skips invalidation —
+  -- so the markdown_inline child injection is never refreshed and bold/
+  -- italic etc. never appear during streaming. Deep-copying first means the
+  -- value passed to set_included_regions is a distinct table whose
+  -- streaming entry differs from the parser's stored copy, which correctly
+  -- triggers _iter_regions to invalidate the entry and re-run injections
+  -- against the freshly-parsed tree.
+  local current = state.parser:included_regions() or {}
+  if state.streaming_idx > #current then return end
+
+  local source_region = current[state.streaming_idx]
+  if not source_region or #source_region == 0 then return end
+  local first_range = source_region[1]
+  local start_row, start_col = first_range[1], first_range[2]
+
+  local last_line = vim.api.nvim_buf_get_lines(bufnr, end_lnum - 1, end_lnum, false)[1] or ''
+  local end_row = end_lnum - 1
+  if end_row < start_row then return end
+
+  local fresh = vim.deepcopy(current)
+  fresh[state.streaming_idx] = { { start_row, start_col, end_row, #last_line } }
+  pcall(state.parser.set_included_regions, state.parser, fresh)
+  pcall(state.parser.parse, state.parser, true)
+end
+
+--- Stop tracking the in-flight streaming region. The region itself is left
+--- in place so its highlighting persists; only the index is cleared.
+---@param bufnr integer
+function M.end_streaming(bufnr)
+  local state = buf_state[bufnr]
+  if state then state.streaming_idx = nil end
 end
 
 --- Detach parser/highlighter and drop tracked state for a buffer.

@@ -570,6 +570,8 @@ end
 --- Render a user turn header + content.
 ---@param text string
 function Output:render_user_turn(text)
+  local config = require('cc.config').options
+  local highlight_user = config.markdown_highlight and config.markdown_highlight.user
   local is_continuation = (self.last_turn_role == 'user')
   self.last_turn_role = 'user'
 
@@ -581,7 +583,12 @@ function Output:render_user_turn(text)
       table.insert(content_lines, '  ' .. l)
       table.insert(content_levels, 1)
     end
-    self:_append(content_lines, content_levels, false)
+    local first_lnum = self:_append(content_lines, content_levels, false)
+    if highlight_user and #content_lines > 1 then
+      -- Skip the leading blank separator at content_lines[1].
+      require('cc.md_highlight').add_range(self.bufnr,
+        first_lnum + 1, first_lnum + #content_lines - 1)
+    end
     return
   end
 
@@ -597,7 +604,11 @@ function Output:render_user_turn(text)
     table.insert(content_levels, 1)
   end
   if #content_lines > 0 then
-    self:_append(content_lines, content_levels, false)
+    local first_lnum = self:_append(content_lines, content_levels, false)
+    if highlight_user then
+      require('cc.md_highlight').add_range(self.bufnr,
+        first_lnum, first_lnum + #content_lines - 1)
+    end
   end
 end
 
@@ -637,15 +648,23 @@ end
 --- Content block started (text, thinking, or tool_use).
 ---@param block table
 function Output:on_content_block_start(block)
+  local config = require('cc.config').options
+  local highlight_agent = config.markdown_highlight and config.markdown_highlight.agent
   if block.type == 'text' then
     local lnum = self:_append({ '  ' }, { 1 }, false)
     self.streaming_block_type = 'text'
     self.streaming_prose_start_lnum = lnum
+    if highlight_agent then
+      require('cc.md_highlight').begin_streaming(self.bufnr, lnum)
+    end
   elseif block.type == 'thinking' then
-    if require('cc.config').options.show_thinking then
+    if config.show_thinking then
       local lnum = self:_append({ '  ∴ thinking:' }, { 1 }, false)
       self.streaming_block_type = 'thinking'
       self.streaming_prose_start_lnum = lnum
+      if highlight_agent then
+        require('cc.md_highlight').begin_streaming(self.bufnr, lnum)
+      end
     else
       self.streaming_block_type = 'thinking_hidden'
     end
@@ -672,11 +691,21 @@ end
 ---@param kind string 'text' | 'thinking'
 ---@param chunk string
 function Output:on_delta(kind, chunk)
+  local streaming
   if kind == 'text' and self.streaming_block_type == 'text' then
     self:_append_to_last_line(chunk)
+    streaming = true
   elseif kind == 'thinking' and self.streaming_block_type == 'thinking' then
     self:_append_to_last_line(chunk)
+    streaming = true
   end
+  if not streaming then return end
+  -- Extend the in-flight markdown region so the new bytes get parsed and
+  -- highlighted as they stream. Skipped when md_highlight isn't tracking
+  -- (begin_streaming wasn't called because config.markdown_highlight.agent
+  -- is off, or the parser failed to attach).
+  local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
+  require('cc.md_highlight').update_streaming(self.bufnr, end_lnum)
 end
 
 --- Called when a content block completes. Renders tool input summary.
@@ -687,8 +716,11 @@ function Output:on_content_block_stop(block, opts)
   opts = opts or {}
   if block and (block.type == 'text' or block.type == 'thinking')
       and self.streaming_prose_start_lnum then
-    local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
-    require('cc.md_highlight').add_range(self.bufnr, self.streaming_prose_start_lnum, end_lnum)
+    -- Streaming path: deltas already extended the in-flight region as content
+    -- arrived, so just stop tracking it. If begin_streaming was never called
+    -- (config.markdown_highlight.agent disabled, or parser unattached),
+    -- end_streaming is a no-op.
+    require('cc.md_highlight').end_streaming(self.bufnr)
     self.streaming_prose_start_lnum = nil
   end
   if block and block.type == 'tool_use' then
@@ -992,21 +1024,26 @@ function Output:render_historical_record(rec)
     end
   elseif rec.type == 'assistant' then
     self:begin_assistant_turn()
+    local config = require('cc.config').options
+    local highlight_agent = config.markdown_highlight and config.markdown_highlight.agent
     for _, block in ipairs(rec.blocks or {}) do
       if type(block) == 'table' then
         if block.type == 'text' then
           -- Append text paragraph at fold level 1.
           local start_lnum = self:_append({ '  ' }, { 1 }, false)
           self:_append_to_last_line(block.text or '')
-          local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
-          require('cc.md_highlight').add_range(self.bufnr, start_lnum, end_lnum)
+          if highlight_agent then
+            local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
+            require('cc.md_highlight').add_range(self.bufnr, start_lnum, end_lnum)
+          end
         elseif block.type == 'thinking' then
-          local config = require('cc.config').options
           if config.show_thinking then
             local start_lnum = self:_append({ '  ∴ thinking:' }, { 1 }, false)
             self:_append_to_last_line(block.thinking or '')
-            local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
-            require('cc.md_highlight').add_range(self.bufnr, start_lnum, end_lnum)
+            if highlight_agent then
+              local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
+              require('cc.md_highlight').add_range(self.bufnr, start_lnum, end_lnum)
+            end
           end
         elseif block.type == 'tool_use' then
           self:on_content_block_start(block)

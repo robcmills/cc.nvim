@@ -300,6 +300,160 @@ T['highlight_groups']['md_highlight scopes parser to agent prose ranges'] = func
   end
 end
 
+-- The user prompt content lines should be inside the markdown parser's
+-- regions when config.markdown_highlight.user is true, so things like
+-- `**bold**` or backticked code in a user message render as markdown.
+T['highlight_groups']['md_highlight covers user content when enabled'] = function()
+  _G.child.lua([==[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    require('cc.config').setup({ markdown_highlight = { agent = true, user = true } })
+
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-user-md')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+
+    output:render_user_turn('hello **world** with `code`')
+
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local user_content_lnum
+    for i, line in ipairs(lines) do
+      if line:find('hello %*%*world%*%*') then user_content_lnum = i end
+    end
+    _G._t_user_lnum = user_content_lnum
+
+    local ok, parser = pcall(vim.treesitter.get_parser, bufnr, 'markdown')
+    _G._t_has_parser = ok and parser ~= nil
+    if ok and parser then
+      local regions = parser:included_regions() or {}
+      local function row_covered(row)
+        for _, region in ipairs(regions) do
+          for _, range in ipairs(region) do
+            local sr = range[1]
+            local er = #range == 6 and range[4] or range[3]
+            local ec = #range == 6 and range[5] or range[4]
+            local is_void = sr == 0 and er == 0 and ec == 0
+            if not is_void and row >= sr and row <= er then return true end
+          end
+        end
+        return false
+      end
+      _G._t_user_covered = user_content_lnum and row_covered(user_content_lnum - 1)
+    end
+  ]==])
+  if not _G.child.lua_get('_G._t_user_lnum') then
+    error('user content line not found')
+  end
+  if not _G.child.lua_get('_G._t_has_parser') then
+    error('markdown parser was not attached')
+  end
+  if _G.child.lua_get('_G._t_user_covered') ~= true then
+    error('User content row is NOT covered by markdown regions when user=true')
+  end
+end
+
+-- When markdown_highlight.user = false, user content must NOT be inside any
+-- markdown region — preserves the pre-feature behavior for users who don't
+-- want their prompts re-rendered.
+T['highlight_groups']['md_highlight skips user content when disabled'] = function()
+  _G.child.lua([==[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    require('cc.config').setup({ markdown_highlight = { agent = true, user = false } })
+
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-user-md-off')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+
+    output:render_user_turn('hello **world**')
+
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local user_content_lnum
+    for i, line in ipairs(lines) do
+      if line:find('hello') then user_content_lnum = i end
+    end
+
+    local user_covered = false
+    local ok, parser = pcall(vim.treesitter.get_parser, bufnr, 'markdown')
+    if ok and parser and user_content_lnum then
+      local regions = parser:included_regions() or {}
+      for _, region in ipairs(regions) do
+        for _, range in ipairs(region) do
+          local sr = range[1]
+          local er = #range == 6 and range[4] or range[3]
+          local ec = #range == 6 and range[5] or range[4]
+          local is_void = sr == 0 and er == 0 and ec == 0
+          if not is_void and (user_content_lnum - 1) >= sr and (user_content_lnum - 1) <= er then
+            user_covered = true
+          end
+        end
+      end
+    end
+    _G._t_user_covered = user_covered
+  ]==])
+  if _G.child.lua_get('_G._t_user_covered') ~= false then
+    error('User content row IS covered by markdown regions when user=false')
+  end
+end
+
+-- Streaming markdown: while a text block is mid-stream (deltas have arrived
+-- but content_block_stop hasn't fired), inline markup like `**bold**` must
+-- already be parsed and captured. Regression: prior implementation passed
+-- parser:included_regions() (a reference to the parser's internal table)
+-- back into set_included_regions after mutating one entry. Because the new
+-- and stored regions were the same table, _iter_regions saw no diff and
+-- never invalidated, so the markdown_inline child injection's stale
+-- zero-length region (clamped by tree:edit) was never refreshed and bold/
+-- italic capture never appeared during streaming.
+T['highlight_groups']['md_highlight streams inline markup mid-delta'] = function()
+  _G.child.lua([==[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    require('cc.config').setup({ markdown_highlight = { agent = true, user = true } })
+
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-stream-md')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+
+    output:begin_assistant_turn()
+    output:on_content_block_start({ type = 'text' })
+    -- Deliver bold mid-stream; do NOT call content_block_stop yet.
+    output:on_delta('text', 'hello **bold** there')
+
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local lnum, bold_col
+    for i, line in ipairs(lines) do
+      local c = line:find('%*%*')
+      if c then lnum, bold_col = i, c; break end
+    end
+    _G._t_lnum = lnum
+    _G._t_bold_col = bold_col
+
+    if lnum and bold_col then
+      local caps = vim.treesitter.get_captures_at_pos(bufnr, lnum - 1, bold_col)
+      _G._t_capture_names = {}
+      for _, c in ipairs(caps) do
+        table.insert(_G._t_capture_names, c.capture)
+      end
+    end
+  ]==])
+
+  if not _G.child.lua_get('_G._t_lnum') then
+    error('mid-stream line with **bold** not found')
+  end
+  local names = _G.child.lua_get('_G._t_capture_names') or {}
+  local has_strong = false
+  for _, n in ipairs(names) do
+    if n == 'markup.strong' then has_strong = true end
+  end
+  if not has_strong then
+    error('Expected markup.strong capture mid-stream, got: ' .. vim.inspect(names))
+  end
+end
+
 T['highlight_groups']['all default groups exist'] = function()
   _G.child.lua([==[
     require('cc.config').setup({})
