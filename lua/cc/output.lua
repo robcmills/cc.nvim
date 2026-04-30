@@ -64,6 +64,7 @@ function M.new(session, buf_name)
     buf_name = buf_name or BUF_NAME_DEFAULT,
     streaming_block_type = nil,
     streaming_tool_id = nil,
+    streaming_prose_start_lnum = nil, ---@type integer? first line of the in-flight text/thinking block
     last_turn_role = nil, ---@type 'user'|'agent'|nil tracks consecutive turns
     agent_header_lnum = nil, ---@type integer? header line of current agent fold
     agent_end_lnum = nil, ---@type integer? last line of the most recent agent turn (anchor for the result/cost line)
@@ -80,7 +81,7 @@ function Output:ensure_buffer()
   vim.bo[self.bufnr].buftype = 'nofile'
   vim.bo[self.bufnr].bufhidden = 'hide'
   vim.bo[self.bufnr].swapfile = false
-  vim.bo[self.bufnr].filetype = 'markdown'
+  vim.bo[self.bufnr].filetype = 'cc-output'
   vim.bo[self.bufnr].modifiable = false
 
   M._buf_state[self.bufnr] = {
@@ -637,12 +638,14 @@ end
 ---@param block table
 function Output:on_content_block_start(block)
   if block.type == 'text' then
-    self:_append({ '  ' }, { 1 }, false)
+    local lnum = self:_append({ '  ' }, { 1 }, false)
     self.streaming_block_type = 'text'
+    self.streaming_prose_start_lnum = lnum
   elseif block.type == 'thinking' then
     if require('cc.config').options.show_thinking then
-      self:_append({ '  ∴ thinking:' }, { 1 }, false)
+      local lnum = self:_append({ '  ∴ thinking:' }, { 1 }, false)
       self.streaming_block_type = 'thinking'
+      self.streaming_prose_start_lnum = lnum
     else
       self.streaming_block_type = 'thinking_hidden'
     end
@@ -682,6 +685,12 @@ end
 ---  replaying a transcript on session resume.
 function Output:on_content_block_stop(block, opts)
   opts = opts or {}
+  if block and (block.type == 'text' or block.type == 'thinking')
+      and self.streaming_prose_start_lnum then
+    local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
+    require('cc.md_highlight').add_range(self.bufnr, self.streaming_prose_start_lnum, end_lnum)
+    self.streaming_prose_start_lnum = nil
+  end
   if block and block.type == 'tool_use' then
     local state = M._buf_state[self.bufnr]
     local meta = state.tool_blocks[block.id or '']
@@ -987,13 +996,17 @@ function Output:render_historical_record(rec)
       if type(block) == 'table' then
         if block.type == 'text' then
           -- Append text paragraph at fold level 1.
-          self:_append({ '  ' }, { 1 }, false)
+          local start_lnum = self:_append({ '  ' }, { 1 }, false)
           self:_append_to_last_line(block.text or '')
+          local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
+          require('cc.md_highlight').add_range(self.bufnr, start_lnum, end_lnum)
         elseif block.type == 'thinking' then
           local config = require('cc.config').options
           if config.show_thinking then
-            self:_append({ '  ∴ thinking:' }, { 1 }, false)
+            local start_lnum = self:_append({ '  ∴ thinking:' }, { 1 }, false)
             self:_append_to_last_line(block.thinking or '')
+            local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
+            require('cc.md_highlight').add_range(self.bufnr, start_lnum, end_lnum)
           end
         elseif block.type == 'tool_use' then
           self:on_content_block_start(block)

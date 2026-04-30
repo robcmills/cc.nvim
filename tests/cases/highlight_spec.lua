@@ -158,13 +158,12 @@ T['highlight_groups']['CcDiffHunk syntax match is defined'] = function()
   eq(_G.child.lua_get('_G._test_syn_exists'), true)
 end
 
--- Regression: the cc-output buffer is filetype=markdown, which loads vim's
--- runtime html.vim. html.vim defines a "bogus comment" region (start `<!`,
--- end `>`) whose contents render as htmlCommentError -> Error (red). When
--- agent prose, tool output, or any prior buffer line contained `<!`, the
--- region engulfed everything until the next `>` — e.g. a Bash command like
--- `... 2>&1` would have everything up to the `>` painted red. We clear the
--- html sub-syntax in apply_buffer_syntax to suppress this.
+-- Regression: when the cc-output buffer was filetype=markdown, vim's
+-- runtime markdown.vim loaded html.vim, whose "bogus comment" region (start
+-- `<!`, end `>`) rendered intervening content as htmlCommentError -> Error
+-- (red). E.g. a Bash command like `... 2>&1` after a stray `<!` got painted
+-- red up to the `>`. Switching the buffer to filetype=cc-output stops
+-- markdown.vim/html.vim from loading at all.
 T['highlight_groups']['no html error highlight bleeds across lines'] = function()
   helpers.render_fixture(_G.child, 'simple_text')
   _G.child.lua([==[
@@ -196,6 +195,108 @@ T['highlight_groups']['no html error highlight bleeds across lines'] = function(
       error(string.format('Expected no %s on cd line, but it was present. Groups seen: %s',
         bad, vim.inspect(seen)))
     end
+  end
+end
+
+-- Regression: when the output buffer was filetype=markdown, the markdown_inline
+-- TS parser was injected over every paragraph in the buffer. With no blank
+-- line between a tool header and an indented diff body, the diff lines were
+-- swallowed into the same paragraph as the header — so a `~` in `~=` opened
+-- a strikethrough delimiter that closed at the next `~` (often many lines
+-- later, on another `~=` in another diff line). The fix moves the buffer to
+-- filetype=cc-output and scopes the markdown parser via cc.md_highlight to
+-- only the agent-prose line ranges, so tool input is invisible to the parser.
+--
+-- This test verifies the scoping: the parser's included_regions include the
+-- agent prose row but exclude any row of the diff body.
+T['highlight_groups']['md_highlight scopes parser to agent prose ranges'] = function()
+  _G.child.lua([==[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    require('cc.config').setup({})
+
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-strike')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+
+    output:begin_assistant_turn()
+
+    -- Agent prose with a ~~strikethrough~~ marker.
+    output:on_content_block_start({ type = 'text' })
+    output:on_delta('text', 'Here is ~~stricken~~ text inline.')
+    output:on_content_block_stop({ type = 'text' })
+
+    -- Tool input containing Lua `~=` — the bug case.
+    output:on_content_block_start({ type = 'tool_use', id = 'x1', name = 'Edit' })
+    output:on_content_block_stop({
+      type = 'tool_use', id = 'x1', name = 'Edit',
+      input = {
+        file_path = '/tmp/foo.lua',
+        old_string = "if state.session_name and state.session_name ~= '' then\n  return true\nend",
+        new_string = "if name and name ~= '' then\n  return true\nend",
+      },
+    })
+
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local strike_lnum, code_lnum
+    for i, line in ipairs(lines) do
+      if line:find('stricken') then strike_lnum = i end
+      if not code_lnum and line:find('~=') then code_lnum = i end
+    end
+    _G._t_strike_lnum = strike_lnum
+    _G._t_code_lnum = code_lnum
+
+    _G._t_filetype = vim.bo[bufnr].filetype
+
+    local ok, parser = pcall(vim.treesitter.get_parser, bufnr, 'markdown')
+    _G._t_has_parser = ok and parser ~= nil
+    if ok and parser then
+      local regions = parser:included_regions() or {}
+      _G._t_regions = regions
+      -- Helper: 0-indexed row inside any included region?
+      -- Range is either a 4-tuple {sr, sc, er, ec} or a 6-tuple
+      -- {sr, sc, sb, er, ec, eb}; the row indices live at [1] and [#range/2+1].
+      local function row_covered(row)
+        for _, region in ipairs(regions) do
+          for _, range in ipairs(region) do
+            local sr = range[1]
+            local er = #range == 6 and range[4] or range[3]
+            local ec = #range == 6 and range[5] or range[4]
+            -- Filter out the void placeholder where the whole range is zeros.
+            local is_void = sr == 0 and er == 0 and ec == 0
+            if not is_void and row >= sr and row <= er then return true end
+          end
+        end
+        return false
+      end
+      _G._t_strike_covered = strike_lnum and row_covered(strike_lnum - 1)
+      _G._t_code_covered = code_lnum and row_covered(code_lnum - 1)
+    end
+  ]==])
+
+  -- Filetype must be cc-output, not markdown — that's what stops the runtime
+  -- markdown.vim/html.vim and any global TS markdown highlighter from
+  -- attaching globally and treating tool input as markdown source.
+  local ft = _G.child.lua_get('_G._t_filetype')
+  if ft ~= 'cc-output' then
+    error("Expected output buffer filetype 'cc-output', got '" .. tostring(ft) .. "'")
+  end
+  if not _G.child.lua_get('_G._t_has_parser') then
+    error('markdown parser was not attached to cc-output buffer')
+  end
+  if not _G.child.lua_get('_G._t_strike_lnum') then
+    error('agent prose line with ~~stricken~~ not found')
+  end
+  if not _G.child.lua_get('_G._t_code_lnum') then
+    error('tool input line with ~= not found')
+  end
+  if _G.child.lua_get('_G._t_strike_covered') ~= true then
+    error('Agent prose row is NOT covered by markdown parser regions; markdown highlighting will not apply.')
+  end
+  if _G.child.lua_get('_G._t_code_covered') ~= false then
+    error('Tool input row IS covered by markdown parser regions; markdown will leak strikethrough into code. Regions: '
+      .. vim.inspect(_G.child.lua_get('_G._t_regions')))
   end
 end
 
