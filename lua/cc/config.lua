@@ -47,7 +47,7 @@ local defaults = {
   },
 
   -- Display
-  show_thinking = false,
+  show_thinking = true,
   -- Per-turn cost/usage line appended to the output buffer after each turn.
   -- (Distinct from the session-cumulative tokens shown in the statusline.)
   show_turn_cost = true,

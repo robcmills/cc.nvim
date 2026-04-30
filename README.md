@@ -198,7 +198,7 @@ require('cc').setup({
   history_max_records = 500,   -- cap records rendered on resume; older collapsed into a notice
 
   -- Display
-  show_thinking = false,       -- show thinking blocks
+  show_thinking = true,        -- show thinking blocks
   show_turn_cost = true,       -- show per-turn cost/usage line in the output buffer
   turn_cost_format = nil,      -- function(result) -> string | nil; nil uses default
   tool_icons = {

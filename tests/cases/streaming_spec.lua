@@ -355,8 +355,8 @@ T['thinking']['renders text block after thinking'] = function()
   assert_buffer_contains(_G.child, 'Here is my answer')
 end
 
-T['thinking']['hides thinking when show_thinking=false (default)'] = function()
-  helpers.replay_streaming(_G.child, 'thinking')
+T['thinking']['hides thinking when show_thinking=false'] = function()
+  helpers.replay_streaming(_G.child, 'thinking', { show_thinking = false })
   local lines = _G.child.lua_get('vim.api.nvim_buf_get_lines(_G._test_bufnr, 0, -1, false)')
   for _, line in ipairs(lines) do
     if line:match('∴ thinking:') then
