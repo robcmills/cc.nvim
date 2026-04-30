@@ -36,6 +36,16 @@ local defaults = {
   -- the first prompt submit. Set to false to suppress.
   splash = true,
 
+  -- Markdown highlighting in the output buffer. The output buffer's filetype
+  -- is cc-output (no global parser); a markdown TS parser is attached only to
+  -- the registered prose ranges so tool input/results stay untouched.
+  --   agent: highlight agent text + thinking blocks (streamed and historical)
+  --   user:  highlight user prompt content
+  markdown_highlight = {
+    agent = true,
+    user = true,
+  },
+
   -- Display
   show_thinking = false,
   -- Per-turn cost/usage line appended to the output buffer after each turn.

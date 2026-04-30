@@ -5,12 +5,32 @@
 local this_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h')
 local repo_root = vim.fn.fnamemodify(this_dir, ':h')
 
--- Start from clean runtimepath (only nvim runtime + our plugins)
-vim.opt.runtimepath = {
+-- Start from clean runtimepath (only nvim runtime + our plugins). Include
+-- the directory holding nvim's shipped tree-sitter parsers so tests that
+-- exercise TS-backed code (e.g. cc.md_highlight) can find them. The
+-- parsers ship at <prefix>/lib/nvim/parser/<lang>.so on macOS/Linux
+-- builds, which is parallel to <prefix>/share/nvim/runtime (= VIMRUNTIME).
+local function nvim_parser_dir()
+  if vim.env.VIMRUNTIME and vim.env.VIMRUNTIME ~= '' then
+    local prefix = vim.fn.fnamemodify(vim.env.VIMRUNTIME, ':h:h:h')
+    local candidate = prefix .. '/lib/nvim'
+    if vim.fn.isdirectory(candidate .. '/parser') == 1 then
+      return candidate
+    end
+  end
+  return nil
+end
+
+local rtp = {
   repo_root,
   this_dir .. '/deps/mini.nvim',
   vim.env.VIMRUNTIME,
 }
+local parser_dir = nvim_parser_dir()
+if parser_dir then
+  table.insert(rtp, parser_dir)
+end
+vim.opt.runtimepath = rtp
 
 -- Disable swap/backup/undo to keep test env clean
 vim.o.swapfile = false

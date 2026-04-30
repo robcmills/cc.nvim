@@ -68,13 +68,14 @@ function M.apply_buffer_syntax(bufnr)
     -- Clear any prior cc syntax to avoid duplicates on reopen.
     pcall(vim.cmd, 'syntax clear CcUser CcAgent CcTool CcOutput CcError CcCost CcNotice CcHook CcPermission CcToolInput CcToolTiming CcDiffAdd CcDiffDelete CcDiffHunk CcTodoCompleted CcTodoInProgress CcTodoIncomplete')
 
-    -- markdown's runtime syntax does `runtime! syntax/html.vim`, which defines
-    -- multi-line regions (htmlComment, htmlTag, htmlEndTag, htmlPreProc, the
-    -- embedded javaScript/cssStyle blocks) plus a top-level htmlError match
-    -- on `[<>&]`. A stray `<!` in tool output or agent prose opens the
-    -- "bogus comment" region (`<!` … `>`), and every char inside renders as
-    -- htmlCommentError → htmlError → Error (red) until the next `>` closes
-    -- it. We don't want any HTML highlighting in the chat buffer; clear it.
+    -- Filetype is cc-output so vim's runtime markdown.vim/html.vim shouldn't
+    -- load on its own. But user plugins occasionally `runtime! syntax/html.vim`
+    -- or otherwise pull html groups into the global syntax registry, where
+    -- they then match in our buffer. html.vim defines a "bogus comment"
+    -- region (start `<!`, end `>`) that paints intervening content as
+    -- htmlCommentError → Error (red), so a Bash command like `... 2>&1`
+    -- after a stray `<!` ends up red. Defense in depth: clear html groups
+    -- if they were registered.
     pcall(vim.cmd, 'syntax clear htmlComment htmlCommentError htmlCommentNested htmlTag htmlEndTag htmlError htmlTagError htmlPreProc htmlPreError htmlPreAttr htmlPreStmt htmlPreProcAttrName htmlPreProcAttrError htmlSpecialChar htmlString htmlTagName htmlSpecialTagName htmlArg htmlValue htmlEvent htmlScriptTag htmlMath htmlSvg htmlMathTagName htmlSvgTagName htmlLink htmlH1 htmlH2 htmlH3 htmlH4 htmlH5 htmlH6 htmlHead htmlTitle htmlBold htmlItalic htmlStrike htmlUnderline htmlBoldItalic htmlBoldUnderline htmlBoldUnderlineItalic htmlItalicBold htmlItalicUnderline htmlItalicBoldUnderline htmlItalicUnderlineBold htmlUnderlineBold htmlUnderlineItalic htmlUnderlineBoldItalic htmlUnderlineItalicBold htmlLeadingSpace htmlCssDefinition htmlCssStyleComment cssStyle javaScript javaScriptExpression javaScriptNumber')
 
     -- containedin=ALL lets these matches override markdown regions (e.g.
