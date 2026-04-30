@@ -14,6 +14,7 @@ local defaults = {
   CcOutput    = { link = 'Type' },
   CcError     = { link = 'ErrorMsg' },
   CcCost      = { link = 'Comment' },
+  CcThinking  = { link = 'Comment' },
   CcNotice    = { link = 'WarningMsg' },
   CcHook      = { link = 'Comment' },
   CcPermission = { link = 'WarningMsg' },
@@ -66,7 +67,7 @@ end
 function M.apply_buffer_syntax(bufnr)
   vim.api.nvim_buf_call(bufnr, function()
     -- Clear any prior cc syntax to avoid duplicates on reopen.
-    pcall(vim.cmd, 'syntax clear CcUser CcAgent CcTool CcOutput CcError CcCost CcNotice CcHook CcPermission CcToolInput CcToolTiming CcDiffAdd CcDiffDelete CcDiffHunk CcTodoCompleted CcTodoInProgress CcTodoIncomplete')
+    pcall(vim.cmd, 'syntax clear CcUser CcAgent CcTool CcOutput CcError CcCost CcThinking CcNotice CcHook CcPermission CcToolInput CcToolTiming CcDiffAdd CcDiffDelete CcDiffHunk CcTodoCompleted CcTodoInProgress CcTodoIncomplete')
 
     -- Filetype is cc-output so vim's runtime markdown.vim/html.vim shouldn't
     -- load on its own. But user plugins occasionally `runtime! syntax/html.vim`
@@ -101,6 +102,9 @@ function M.apply_buffer_syntax(bufnr)
 
     -- Cost / notice delineator lines: "  ── $0.05 ─"  "  ── Plan Mode ──"
     vim.cmd([[syntax match CcCost    /^\s*──.*──\s*$/ containedin=ALL]])
+
+    -- Thinking header + inline content: "  ∴ Thinking... <text>"
+    vim.cmd([[syntax match CcThinking /^\s\+∴\s\+Thinking\.\.\..*$/ containedin=ALL]])
 
     -- Hook: dimmed event lines (match ⚙ Hook:)
     vim.cmd([[syntax match CcHook    /^\s\+⚙\s\+Hook:.*$/ containedin=ALL]])

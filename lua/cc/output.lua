@@ -659,7 +659,7 @@ function Output:on_content_block_start(block)
     end
   elseif block.type == 'thinking' then
     if config.show_thinking then
-      local lnum = self:_append({ '  ∴ thinking:' }, { 1 }, false)
+      local lnum = self:_append({ '  ∴ Thinking... ' }, { 1 }, false)
       self.streaming_block_type = 'thinking'
       self.streaming_prose_start_lnum = lnum
       if highlight_agent then
@@ -1038,7 +1038,7 @@ function Output:render_historical_record(rec)
           end
         elseif block.type == 'thinking' then
           if config.show_thinking then
-            local start_lnum = self:_append({ '  ∴ thinking:' }, { 1 }, false)
+            local start_lnum = self:_append({ '  ∴ Thinking... ' }, { 1 }, false)
             self:_append_to_last_line(block.thinking or '')
             if highlight_agent then
               local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)

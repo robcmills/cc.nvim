@@ -85,7 +85,7 @@ local function build_fold_info(bufnr, foldstart, foldend)
         prev_was_text = false
       elseif fl == 1 then
         local trimmed = vim.trim(line)
-        if #trimmed > 0 and not trimmed:match('^∴ thinking:') then
+        if #trimmed > 0 and not trimmed:match('^∴ Thinking%.%.%.') then
           if not prev_was_text then
             last_block_text = trimmed
           end

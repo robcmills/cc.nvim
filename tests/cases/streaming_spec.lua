@@ -341,7 +341,7 @@ T['thinking'] = MiniTest.new_set()
 
 T['thinking']['renders thinking marker when show_thinking=true'] = function()
   helpers.replay_streaming(_G.child, 'thinking', { show_thinking = true })
-  assert_any_line_matches(_G.child, '∴ thinking:')
+  assert_any_line_matches(_G.child, '∴ Thinking%.%.%.')
 end
 
 T['thinking']['streams thinking content when show_thinking=true'] = function()
@@ -359,7 +359,7 @@ T['thinking']['hides thinking when show_thinking=false'] = function()
   helpers.replay_streaming(_G.child, 'thinking', { show_thinking = false })
   local lines = _G.child.lua_get('vim.api.nvim_buf_get_lines(_G._test_bufnr, 0, -1, false)')
   for _, line in ipairs(lines) do
-    if line:match('∴ thinking:') then
+    if line:match('∴ Thinking%.%.%.') then
       error('expected no thinking marker, got: ' .. line)
     end
     if line:match('think about') or line:match('this problem carefully') then
@@ -764,7 +764,7 @@ T['plan_mode'] = MiniTest.new_set()
 
 T['plan_mode']['renders thinking block when show_thinking=true'] = function()
   helpers.replay_streaming(_G.child, 'plan_mode', { show_thinking = true })
-  assert_any_line_matches(_G.child, '∴ thinking:')
+  assert_any_line_matches(_G.child, '∴ Thinking%.%.%.')
 end
 
 T['plan_mode']['renders EnterPlanMode tool'] = function()
