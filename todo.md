@@ -73,4 +73,5 @@
 - [ ] Add support for todo lists (requires brainstorming)
 - [ ] Add support for /compact (requires brainstorming)
 - [ ] Support "queued" prompts (submitted while agent is thinking or working)
+- [ ] add prompt placeholder 
 
