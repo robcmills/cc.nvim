@@ -278,6 +278,9 @@ function M.summarize_tool_input(tool_name, input)
   if tool_name:sub(1, 5) == 'mcp__' then
     return ''
   end
+  if type(input.description) == 'string' and input.description ~= '' then
+    return input.description
+  end
   local ok, s = pcall(vim.json.encode, input)
   if ok and s then
     if #s > 80 then s = s:sub(1, 77) .. '...' end
