@@ -1,4 +1,31 @@
+- [ ] Add Cc commands to navigate output by turn, tool, etc.
+- [ ] add prompt placeholder 
+- [ ] Add markdown highlighting for Subagent prompts
+- [ ] Fix missing mode in statusline on startup
+- [ ] Add support for /remote-control
+- [ ] Add session timing info
+- [ ] Investigate swapfile issue when two instances are editing the same file
+- [ ] Add rename with ai generated name
+- [ ] Explore potentially using foldcolumn
+- [ ] Unsloppify - identify most complex/fragile code and simplify (requires brainstorming)
+- [ ] Add config option to turn off tool icons
+- [ ] Ensure system prompt additions are not hard-coded (instead user config)
+- [ ] Add configurable themes support for customizing highlight groups, icons, etc.
+- [ ] Add a "theme viewer/switcher" to show visually mock examples of what each type of tool looks like, and user can interactively switch themes and see what it looks like live
+- [ ] Make resume history picker window larger
+- [ ] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
+- [ ] Add support plan mode toggle
+- [ ] Add support for todo lists (requires brainstorming)
+- [ ] Add support for /compact (requires brainstorming)
+- [ ] Support "queued" prompts (submitted while agent is thinking or working)
 
+- [x] Add config option to autosize prompt window to fit content (with configurable min/max heights)
+- [x] Enable window config 
+  - [x] hide line numbers by default
+  - [x] wrap output by default
+- [x] Add syntax highlighting for code blocks in output
+  + [x] mcp__claude-in-chrome__javascript_tool.text (contains javascript)
+- [x] Turn thinking back on with timer
 - [x] Collapse sequences of consecutive agent turns into a single fold
 - [x] Figure out how to close the agentic loop for visual appearance (how to enable agent to "see" colored output)
 - [x] Add tests (mini.test framework, 111 tests, 17 JSONL + 11 NDJSON fixtures)
@@ -37,41 +64,8 @@
 - [x] Fix :BuffersNext/Prev not working in output window
 - [x] Add per tool call statusline (Running... (32s timeout 2m)) -> resolves to (42s)
 - [x] Add emoji art splash screen (configurable visibility)
-
-
-- [ ] Improve hightlights for todo lists
-  + [ ] completed task icons are green
-  + [ ] in progress task icons are yellow
-  + [ ] incomplete task icons are gray
-   TodoWrite: #5
-    ☑ Create cc.tshl module: TS string-parser highlighting helper
-    ☑ Refactor diff.lua to expose hunks (before/after fragments + line map) for Edit/MultiEdit/Write
-    ☑ Wire snippet highlighting into output.lua: javascript_tool input.text + Edit/MultiEdit/Write diffs
-    ◐ Run existing tests; ensure no regressions
-    ☐ Add focused tshl/diff tests if feasible
-- [ ] Turn thinking back on with timer
-- [ ] Fix missing mode in statusline on startup
-- [ ] Add support for /remote-control
-- [ ] Add session timing info
-- [ ] Add rename with ai generated name
-- [ ] Add syntax highlighting for code blocks in output
-  + [ ] mcp__claude-in-chrome__javascript_tool.text (contains javascript)
-- [ ] Explore potentially using foldcolumn
-- [ ] Identify most complex/fragile code and simplify (requires brainstorming)
-- [ ] Add config option to turn off tool icons
-- [ ] Ensure system prompt additions are not hard-coded (instead user config)
-- [ ] Enable window config 
-  - [x] hide line numbers by default
-  - [x] wrap output by default
-- [ ] Add configurable themes support for customizing highlight groups, icons, etc.
-- [ ] Add a "theme viewer/switcher" to show visually mock examples of what each type of tool looks like, and user can interactively switch themes and see what it looks like live
-- [ ] Make resume history picker window larger
-- [ ] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
-- [ ] Improve lua types
-- [ ] Add config option to autosize prompt window to fit content (with configurable min/max heights)
-- [ ] Add support plan mode toggle
-- [ ] Add support for todo lists (requires brainstorming)
-- [ ] Add support for /compact (requires brainstorming)
-- [ ] Support "queued" prompts (submitted while agent is thinking or working)
-- [ ] add prompt placeholder 
+- [x] Improve hightlights for todo lists
+  + [x] completed task icons are green
+  + [x] in progress task icons are yellow
+  + [x] incomplete task icons are gray
 
