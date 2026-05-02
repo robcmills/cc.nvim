@@ -118,7 +118,27 @@ function Output:_setup_window_opts_for_buffer()
       if vim.api.nvim_win_get_buf(winid) ~= bufnr then
         return
       end
-      winopts.save(winid, 'output', OUTPUT_WIN_OPTS)
+      -- Source the restore baseline from inst.user_winopts (captured in
+      -- create_instance before any cc autocmd fired). The output window
+      -- is normally created via `:split` from the prompt window, so its
+      -- inherited window-local values already reflect cc's overrides;
+      -- and for "g+l" options like 'number', vim.go is corrupted by
+      -- those overrides too. inst.user_winopts is the only reliable
+      -- source of the user's pre-cc state.
+      do
+        local cc = require('cc')
+        local inst = cc.find_instance(bufnr)
+        local user_opts = inst and inst.user_winopts or nil
+        if user_opts then
+          winopts.save_table(winid, 'output', OUTPUT_WIN_OPTS, user_opts)
+        else
+          winopts.save(winid, 'output', OUTPUT_WIN_OPTS)
+        end
+      end
+      -- Stash this winid where BufWinLeave can read it back. Inside
+      -- BufWinLeave, nvim_get_current_win() may point at the destination
+      -- window (mirrors the prompt-side bug fixed via cc_prompt_winid).
+      vim.b[bufnr].cc_output_winid = winid
       vim.wo[winid].foldmethod = 'expr'
       vim.wo[winid].foldexpr = "v:lua.require'cc.output'.foldexpr(v:lnum)"
       vim.wo[winid].foldenable = true
@@ -180,10 +200,13 @@ function Output:_setup_window_opts_for_buffer()
     group = group,
     buffer = bufnr,
     callback = function()
-      local winid = vim.api.nvim_get_current_win()
-      require('cc.statusline').detach(winid)
-      winopts.restore(winid, 'output', OUTPUT_WIN_OPTS)
-      vim.w[winid].cc_output_fold_initialized = nil
+      local saved_winid = vim.b[bufnr].cc_output_winid
+      vim.b[bufnr].cc_output_winid = nil
+      if saved_winid and vim.api.nvim_win_is_valid(saved_winid) then
+        require('cc.statusline').detach(saved_winid)
+        winopts.restore(saved_winid, 'output', OUTPUT_WIN_OPTS)
+        vim.w[saved_winid].cc_output_fold_initialized = nil
+      end
     end,
   })
 end

@@ -150,6 +150,16 @@ local function setup_buffer_autocmds(inst)
     group = group,
     buffer = output_bufnr,
     callback = function()
+      -- Snapshot the output window's view here too: this fires on the
+      -- "user navigated away from the output window directly" path
+      -- (e.g. :edit foo from the output window), where prompt's
+      -- BufWinLeave handler can't capture the view because the output
+      -- window no longer holds cc-output by the time it runs.
+      if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid)
+          and vim.api.nvim_win_get_buf(inst.output_winid) == output_bufnr then
+        local ok, view = pcall(vim.api.nvim_win_call, inst.output_winid, vim.fn.winsaveview)
+        if ok then inst.saved_output_view = view end
+      end
       vim.schedule(function()
         local cur_buf = vim.api.nvim_get_current_buf()
         if cur_buf == prompt_bufnr then return end
@@ -183,6 +193,12 @@ local function setup_buffer_autocmds(inst)
           end
         end
         if not prompt_win then return end
+        -- Capture last_focus before any layout work: the steps below
+        -- (split + nvim_set_current_buf(output) + nvim_set_current_win(prompt))
+        -- fire BufLeave on cc-output as a side effect, which would
+        -- overwrite inst.last_focus to 'output' regardless of where the
+        -- user actually was.
+        local saved_last_focus = inst.last_focus
         inst.prompt_winid = prompt_win
         vim.api.nvim_set_current_win(prompt_win)
         vim.cmd('aboveleft split')
@@ -193,8 +209,8 @@ local function setup_buffer_autocmds(inst)
         vim.api.nvim_set_current_win(prompt_win)
         vim.api.nvim_win_set_height(prompt_win, Config.options.prompt_height)
         -- If the user was last focused on the output window, hop back to
-        -- it. Default (last_focus nil or 'prompt') leaves focus on prompt.
-        if inst.last_focus == 'output'
+        -- it. Default (saved_last_focus nil or 'prompt') leaves focus on prompt.
+        if saved_last_focus == 'output'
             and inst.output_winid
             and vim.api.nvim_win_is_valid(inst.output_winid) then
           vim.api.nvim_set_current_win(inst.output_winid)
@@ -258,11 +274,37 @@ local function create_instance(opts)
     expected_prompt_height = Config.options.prompt_height,
   }
 
+  -- Snapshot the user's window-local option defaults BEFORE any cc
+  -- autocmd fires. The prompt buffer's BufWinEnter (triggered by the
+  -- nvim_set_current_buf below) sets cc's overrides, which for some
+  -- "g+l" options like 'number' clobbers vim.go too — so reading defaults
+  -- after that point doesn't recover the user's intent. Both the prompt
+  -- and (especially) the output use these as restore baselines on
+  -- BufWinLeave; output can't read its own pre-cc state because the
+  -- :split below makes it inherit cc's overrides from prompt.
+  inst.user_winopts = (function()
+    local source = vim.api.nvim_get_current_win()
+    if not vim.api.nvim_win_is_valid(source) then return {} end
+    local names = {
+      'foldmethod', 'foldexpr', 'foldenable', 'foldtext', 'foldlevel',
+      'fillchars', 'winhighlight',
+      'number', 'relativenumber', 'signcolumn', 'wrap',
+    }
+    local snap = {}
+    for _, n in ipairs(names) do snap[n] = vim.wo[source][n] end
+    return snap
+  end)()
+
   inst.output = Output.new(inst.session, output_name)
   inst.prompt = Prompt.new(prompt_name)
 
   local output_buf = inst.output:ensure_buffer()
   local prompt_buf = inst.prompt:ensure_buffer()
+
+  -- Register the instance before laying out windows. Output's BufWinEnter
+  -- (fired once the buffer is shown below) needs to look up inst via
+  -- find_instance to read inst.user_winopts as its restore baseline.
+  instances[prompt_buf] = inst
 
   local reuse_prompt = opts.reuse_prompt_winid
   local reuse_output = opts.reuse_output_winid
@@ -304,9 +346,6 @@ local function create_instance(opts)
   -- Set up autocmds after layout to avoid double-trigger from initial BufWinEnter.
   setup_buffer_autocmds(inst)
   require('cc.autosize').attach(inst)
-
-  -- Register in instances table.
-  instances[prompt_buf] = inst
 
   -- Attach cc statusline to the output window so it renders at the output's
   -- own bottom edge. Requires laststatus=2 (set by attach).

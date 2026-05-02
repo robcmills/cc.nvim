@@ -24,6 +24,27 @@ function M.save(winid, token, names)
   vim.w[winid][flag] = true
 end
 
+--- Like `save`, but record values from a caller-provided table. Use this
+--- when the window-local values aren't reliable (e.g. the window was
+--- created via `:split` from another cc window and inherited cc's
+--- overrides) and vim.go is also corrupted (some "g+l" options like
+--- 'number' route vim.wo writes to the global too). Caller is expected
+--- to have captured the user's actual defaults at a clean moment.
+---@param winid integer
+---@param token string
+---@param names string[]
+---@param values table<string, any>
+function M.save_table(winid, token, names, values)
+  local flag = 'cc_winopts_saved_' .. token
+  if vim.w[winid][flag] then return end
+  for _, name in ipairs(names) do
+    if values[name] ~= nil then
+      vim.w[winid]['cc_winopts_' .. token .. '_' .. name] = values[name]
+    end
+  end
+  vim.w[winid][flag] = true
+end
+
 --- Restore previously-saved values and clear the snapshot flag.
 ---@param winid integer
 ---@param token string
