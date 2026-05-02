@@ -285,6 +285,10 @@ function Output:_append(lines, fold_levels, is_header)
 
   vim.bo[bufnr].modifiable = true
   if replace_empty then
+    -- Splash extmark uses virt_lines_above on the empty buffer's first line;
+    -- if it survives into streaming, the virtual rows above line 1 confuse
+    -- Gzb's bottom-anchor calc and topline drifts to the cursor line.
+    require('cc.splash').clear(bufnr)
     vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, lines)
   else
     vim.api.nvim_buf_set_lines(bufnr, line_count, line_count, false, lines)
