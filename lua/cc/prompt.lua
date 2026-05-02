@@ -108,6 +108,10 @@ function Prompt:_setup_window_opts_for_buffer()
       end
       local config = require('cc.config').options
       winopts.save(winid, 'prompt', PROMPT_WIN_OPTS)
+      -- Stash the winid where it's correct (current win is this prompt's
+      -- window here). BufWinLeave's `nvim_get_current_win` would return
+      -- the destination window instead, so we read this back there.
+      vim.b[bufnr].cc_prompt_winid = winid
       vim.wo[winid].number = config.line_numbers and config.line_numbers.prompt or false
       vim.wo[winid].relativenumber = false
       vim.wo[winid].signcolumn = 'no'
@@ -118,7 +122,11 @@ function Prompt:_setup_window_opts_for_buffer()
     group = group,
     buffer = bufnr,
     callback = function()
-      winopts.restore(vim.api.nvim_get_current_win(), 'prompt', PROMPT_WIN_OPTS)
+      local saved_winid = vim.b[bufnr].cc_prompt_winid
+      vim.b[bufnr].cc_prompt_winid = nil
+      if saved_winid and vim.api.nvim_win_is_valid(saved_winid) then
+        winopts.restore(saved_winid, 'prompt', PROMPT_WIN_OPTS)
+      end
     end,
   })
 end

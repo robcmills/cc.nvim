@@ -30,6 +30,8 @@ M.VERSION = '0.1.1'
 ---@field session_name string? user-set session title (set via /rename)
 ---@field pending_session_name string? rename requested before transcript exists; flushed by `_flush_pending_rename`
 ---@field remote_control_active boolean?
+---@field saved_output_view table? winsaveview snapshot from the last close, restored on reopen
+---@field last_focus 'prompt'|'output'? which cc buffer the user was last in; restored on reopen
 
 local instances = {} -- keyed by prompt bufnr
 local next_instance_id = 1
@@ -103,6 +105,23 @@ local function setup_buffer_autocmds(inst)
   local prompt_bufnr = inst.prompt.bufnr
   local group = vim.api.nvim_create_augroup('cc.buffer_integration.' .. prompt_bufnr, { clear = true })
 
+  -- Record last-focused cc buffer so reopen can restore the user's window
+  -- choice. BufLeave fires when leaving the buffer (including hops between
+  -- prompt and output), so the value reflects the last position before the
+  -- user navigates away from cc entirely. BufEnter would be wrong: it fires
+  -- on prompt during the :bprev-back path (before BufWinEnter recreates the
+  -- output companion) and would always clobber a prior 'output' value.
+  vim.api.nvim_create_autocmd('BufLeave', {
+    group = group,
+    buffer = prompt_bufnr,
+    callback = function() inst.last_focus = 'prompt' end,
+  })
+  vim.api.nvim_create_autocmd('BufLeave', {
+    group = group,
+    buffer = output_bufnr,
+    callback = function() inst.last_focus = 'output' end,
+  })
+
   -- When prompt leaves a window, close the output companion (unless moving to output).
   vim.api.nvim_create_autocmd('BufWinLeave', {
     group = group,
@@ -113,6 +132,10 @@ local function setup_buffer_autocmds(inst)
         if cur_buf == output_bufnr then return end
         if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
           if vim.api.nvim_win_get_buf(inst.output_winid) == output_bufnr then
+            -- Snapshot scroll position so reopen can restore it instead
+            -- of forcing the cursor back to the tail.
+            local ok, view = pcall(vim.api.nvim_win_call, inst.output_winid, vim.fn.winsaveview)
+            if ok then inst.saved_output_view = view end
             vim.api.nvim_win_close(inst.output_winid, true)
           end
         end
@@ -169,19 +192,34 @@ local function setup_buffer_autocmds(inst)
         require('cc.statusline').attach(inst, inst.output_winid)
         vim.api.nvim_set_current_win(prompt_win)
         vim.api.nvim_win_set_height(prompt_win, Config.options.prompt_height)
+        -- If the user was last focused on the output window, hop back to
+        -- it. Default (last_focus nil or 'prompt') leaves focus on prompt.
+        if inst.last_focus == 'output'
+            and inst.output_winid
+            and vim.api.nvim_win_is_valid(inst.output_winid) then
+          vim.api.nvim_set_current_win(inst.output_winid)
+        end
         -- New windows on an existing buffer start with cursor at line 1,
-        -- which would show the top of a long transcript. Anchor to the
-        -- last line so returning to the session shows the most recent
+        -- which would show the top of a long transcript. If we have a
+        -- prior view snapshot from BufWinLeave, restore it so the user's
+        -- scroll position survives the close/reopen. Otherwise anchor to
+        -- the last line so first-time displays show the most recent
         -- output. Schedule so the fix runs after layout settles (split
         -- + resize + BufWinEnter autocmds all complete first).
         local output_winid = inst.output_winid
+        local saved_view = inst.saved_output_view
+        inst.saved_output_view = nil
         vim.schedule(function()
           if not output_winid or not vim.api.nvim_win_is_valid(output_winid) then return end
           if vim.api.nvim_win_get_buf(output_winid) ~= output_bufnr then return end
           pcall(vim.api.nvim_win_call, output_winid, function()
-            local last = vim.api.nvim_buf_line_count(output_bufnr)
-            vim.api.nvim_win_set_cursor(output_winid, { last, 0 })
-            vim.cmd('normal! zb')
+            if saved_view then
+              vim.fn.winrestview(saved_view)
+            else
+              local last = vim.api.nvim_buf_line_count(output_bufnr)
+              vim.api.nvim_win_set_cursor(output_winid, { last, 0 })
+              vim.cmd('normal! zb')
+            end
           end)
         end)
       end)
