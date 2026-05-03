@@ -159,6 +159,9 @@ end
 function Prompt:clear()
   local bufnr = self:ensure_buffer()
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { '' })
+  -- nvim_buf_set_lines does not fire TextChanged, so the placeholder
+  -- module's autocmd-driven rerender wouldn't catch this. Render directly.
+  require('cc.placeholder').render(bufnr)
 end
 
 --- Whether the prompt has non-whitespace content.

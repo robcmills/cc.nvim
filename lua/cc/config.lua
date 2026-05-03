@@ -36,6 +36,12 @@ local defaults = {
   -- the first prompt submit. Set to false to suppress.
   splash = true,
 
+  -- Inline placeholder shown in the prompt buffer when it is empty.
+  -- Rendered as `virt_text` overlaid on line 1, highlighted with
+  -- `CcPromptPlaceholder` (defaults to `Comment`). Set to false or '' to
+  -- disable.
+  prompt_placeholder = 'Write prompt here. Press <Enter> in normal mode to submit.',
+
   -- Markdown highlighting in the output buffer. The output buffer's filetype
   -- is cc-output (no global parser); a markdown TS parser is attached only to
   -- the registered prose ranges so tool input/results stay untouched.

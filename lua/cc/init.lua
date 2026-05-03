@@ -346,6 +346,7 @@ local function create_instance(opts)
   -- Set up autocmds after layout to avoid double-trigger from initial BufWinEnter.
   setup_buffer_autocmds(inst)
   require('cc.autosize').attach(inst)
+  require('cc.placeholder').attach(inst.prompt.bufnr)
 
   -- Attach cc statusline to the output window so it renders at the output's
   -- own bottom edge. Requires laststatus=2 (set by attach).
@@ -398,6 +399,7 @@ local function teardown_instance_keep_windows(inst)
   if inst.prompt and inst.prompt.bufnr > 0 then
     pcall(vim.api.nvim_del_augroup_by_name, 'cc.buffer_integration.' .. inst.prompt.bufnr)
     require('cc.autosize').detach(inst.prompt.bufnr)
+    require('cc.placeholder').detach(inst.prompt.bufnr)
   end
   if inst.prompt and inst.prompt.bufnr > 0 then
     instances[inst.prompt.bufnr] = nil
@@ -425,6 +427,7 @@ local function close_instance(inst)
   if inst.prompt and inst.prompt.bufnr > 0 then
     pcall(vim.api.nvim_del_augroup_by_name, 'cc.buffer_integration.' .. inst.prompt.bufnr)
     require('cc.autosize').detach(inst.prompt.bufnr)
+    require('cc.placeholder').detach(inst.prompt.bufnr)
   end
   if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
     pcall(vim.api.nvim_win_close, inst.output_winid, true)

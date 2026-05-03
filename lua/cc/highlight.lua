@@ -36,6 +36,8 @@ local defaults = {
   -- Splash screen
   CcSplashTitle = { fg = '#fff066', bold = true }, -- bright yellow
   CcSplashKey   = { fg = '#c8a165' },               -- light brown
+  -- Prompt buffer placeholder text (when empty)
+  CcPromptPlaceholder = { link = 'Comment' },
 }
 
 function M.set_defaults()
