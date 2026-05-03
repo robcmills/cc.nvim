@@ -9,13 +9,29 @@ local NS = vim.api.nvim_create_namespace('cc.placeholder')
 
 -- bufnr -> extmark id
 local extmarks = {}
+-- bufnr -> per-buffer override text (wins over config.prompt_placeholder)
+local overrides = {}
 
+---@param bufnr integer
 ---@return table[]? virt_text spec, or nil if disabled
-local function build_virt_text()
-  local Config = require('cc.config')
-  local text = Config.options.prompt_placeholder
+local function build_virt_text(bufnr)
+  local text = overrides[bufnr]
+  if text == nil then
+    local Config = require('cc.config')
+    text = Config.options.prompt_placeholder
+  end
   if not text or text == '' then return nil end
   return { { text, 'CcPromptPlaceholder' } }
+end
+
+--- Set a per-buffer placeholder text override that takes precedence over
+--- `config.prompt_placeholder`. Pass nil to clear the override.
+---@param bufnr integer
+---@param text string?
+function M.set_text(bufnr, text)
+  if not bufnr or bufnr <= 0 then return end
+  overrides[bufnr] = text
+  M.render(bufnr)
 end
 
 ---@param bufnr integer
@@ -32,7 +48,7 @@ end
 ---@param bufnr integer
 function M.render(bufnr)
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
-  local virt = build_virt_text()
+  local virt = build_virt_text(bufnr)
   if not virt or not is_buffer_empty(bufnr) then
     M.clear(bufnr)
     return
@@ -78,6 +94,7 @@ function M.detach(bufnr)
   if not bufnr or bufnr <= 0 then return end
   pcall(vim.api.nvim_del_augroup_by_name, 'cc.placeholder.' .. bufnr)
   M.clear(bufnr)
+  overrides[bufnr] = nil
 end
 
 return M

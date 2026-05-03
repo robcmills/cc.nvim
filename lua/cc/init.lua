@@ -181,7 +181,11 @@ local function setup_buffer_autocmds(inst)
     callback = function()
       vim.schedule(function()
         if not vim.api.nvim_buf_is_valid(output_bufnr) then return end
-        if not inst.process or not inst.process:is_alive() then return end
+        -- Fixture-loaded sessions have no process; gate only on liveness for
+        -- real sessions so the output companion still reopens for fixtures.
+        if not inst.is_fixture and (not inst.process or not inst.process:is_alive()) then
+          return
+        end
         if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
           return
         end
@@ -587,6 +591,102 @@ function M.new_session()
   end
 end
 
+-- Placeholder shown in the prompt buffer of a fixture-loaded session, also
+-- echoed if the user attempts to submit.
+local FIXTURE_PLACEHOLDER = 'Viewing static fixture. Prompt submission disabled.'
+
+--- Resolve a fixture name or path to (absolute_path, fixture_type).
+--- Bare names search tests/fixtures/{jsonl,ndjson} via &runtimepath.
+---@param name_or_path string
+---@return string? path
+---@return string? ftype 'jsonl' | 'ndjson'
+local function resolve_fixture(name_or_path)
+  local has_slash = name_or_path:find('/', 1, true) ~= nil
+  if has_slash then
+    local path = vim.fn.fnamemodify(vim.fn.expand(name_or_path), ':p')
+    if path:match('%.jsonl$') then return path, 'jsonl' end
+    if path:match('%.ndjson$') then return path, 'ndjson' end
+    return path, nil
+  end
+
+  local base = name_or_path:gsub('%.jsonl$', ''):gsub('%.ndjson$', '')
+  local jsonl = vim.api.nvim_get_runtime_file('tests/fixtures/jsonl/' .. base .. '.jsonl', false)
+  local ndjson = vim.api.nvim_get_runtime_file('tests/fixtures/ndjson/' .. base .. '.ndjson', false)
+
+  -- Honor explicit extension; otherwise prefer JSONL (matches `--visual`).
+  if name_or_path:match('%.ndjson$') then
+    if ndjson[1] then return ndjson[1], 'ndjson' end
+  elseif name_or_path:match('%.jsonl$') then
+    if jsonl[1] then return jsonl[1], 'jsonl' end
+  else
+    if jsonl[1] then return jsonl[1], 'jsonl' end
+    if ndjson[1] then return ndjson[1], 'ndjson' end
+  end
+  return nil, nil
+end
+
+--- Public: load a test fixture into a fresh cc.nvim session for visual
+--- inspection. No `claude` subprocess is spawned; submission is disabled.
+---
+--- Resolution:
+---   * Paths containing `/` are treated as paths and used as-is.
+---   * Bare names search `tests/fixtures/jsonl/<name>.jsonl`, then
+---     `tests/fixtures/ndjson/<name>.ndjson`, via &runtimepath.
+---   * The `.jsonl` / `.ndjson` extension may be included to disambiguate.
+---@param name_or_path string
+function M.load_fixture(name_or_path)
+  if not name_or_path or name_or_path == '' then
+    vim.notify('cc.nvim: load_fixture requires a fixture name or path', vim.log.levels.WARN)
+    return
+  end
+
+  local path, ftype = resolve_fixture(name_or_path)
+  if not path or vim.fn.filereadable(path) == 0 then
+    vim.notify('cc.nvim: fixture not found: ' .. name_or_path, vim.log.levels.WARN)
+    return
+  end
+  if not ftype then
+    vim.notify('cc.nvim: fixture must end in .jsonl or .ndjson', vim.log.levels.WARN)
+    return
+  end
+
+  local inst = create_instance()
+  inst.is_fixture = true
+  inst.fixture_path = path
+
+  local fixture_name = vim.fn.fnamemodify(path, ':t:r')
+  inst.session_name = fixture_name
+  M._apply_session_buf_names(inst, fixture_name)
+
+  require('cc.placeholder').set_text(inst.prompt.bufnr, FIXTURE_PLACEHOLDER)
+
+  if ftype == 'jsonl' then
+    local history = require('cc.history')
+    local records = history.read_transcript(path)
+    for _, rec in ipairs(records) do
+      inst.output:render_historical_record(rec)
+    end
+  else
+    inst.router = Router.new({
+      session = inst.session,
+      output = inst.output,
+      instance = inst,
+    })
+    local Parser = require('cc.parser')
+    local parser = Parser.new()
+    local lines = vim.fn.readfile(path)
+    for _, line in ipairs(lines) do
+      local messages = parser:feed(line .. '\n')
+      for _, msg in ipairs(messages) do
+        inst.router:dispatch(msg)
+      end
+    end
+  end
+
+  inst.output:render_notice('fixture: ' .. vim.fn.fnamemodify(path, ':t'))
+  require('cc.statusline').refresh(inst)
+end
+
 --- Public: resume a specific session by id.
 ---@param session_id string
 function M.resume(session_id)
@@ -748,6 +848,10 @@ end
 --- Public: submit current prompt buffer content to the agent.
 function M.submit()
   local inst = get_current_instance()
+  if inst and inst.is_fixture then
+    vim.notify(FIXTURE_PLACEHOLDER, vim.log.levels.WARN)
+    return
+  end
   if not inst or not inst.process or not inst.process:is_alive() then
     vim.notify('cc.nvim: not open. Run :CcNew first.', vim.log.levels.WARN)
     return

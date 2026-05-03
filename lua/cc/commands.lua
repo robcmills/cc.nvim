@@ -86,6 +86,32 @@ function M.create()
     desc = 'Toggle prompt window autosize (on|off)',
   })
 
+  vim.api.nvim_create_user_command('CcLoadFixture', function(opts)
+    cc.load_fixture(opts.args)
+  end, {
+    nargs = 1,
+    complete = function(arg_lead)
+      local seen, out = {}, {}
+      local function add(name)
+        if not seen[name] then
+          seen[name] = true
+          if name:sub(1, #arg_lead) == arg_lead then table.insert(out, name) end
+        end
+      end
+      for _, dir in ipairs({ 'tests/fixtures/jsonl', 'tests/fixtures/ndjson' }) do
+        for _, path in ipairs(vim.api.nvim_get_runtime_file(dir, true)) do
+          for _, file in ipairs(vim.fn.glob(path .. '/*', false, true)) do
+            local base = vim.fn.fnamemodify(file, ':t:r')
+            if base ~= 'README' then add(base) end
+          end
+        end
+      end
+      table.sort(out)
+      return out
+    end,
+    desc = 'Load a test fixture into a fresh cc.nvim session (read-only)',
+  })
+
   vim.api.nvim_create_user_command('CcDumpNdjson', function(opts)
     local inst = cc._get_instance()
     if not inst or not inst.process then
