@@ -1,10 +1,8 @@
+- [ ] Add markdown highlighting for Subagent prompts
 - [ ] Refactor architecture to use output buffer as parent instead of prompt buffer
-- [ ] Test/fix command completions (/rename, etc.)
 - [ ] Add Cc commands to navigate output by turn, tool, etc.
 - [ ] Add Cc commands to maximize/minimize prompt/output windows
-- [ ] Add markdown highlighting for Subagent prompts
 - [ ] Fix missing mode in statusline on startup
-- [ ] Add support for /remote-control
 - [ ] Add session timing info
 - [ ] Investigate swapfile issue when two instances are editing the same file
 - [ ] Add rename with ai generated name
@@ -16,11 +14,12 @@
 - [ ] Add configurable themes support for customizing highlight groups, icons, etc.
 - [ ] Add a "theme viewer/switcher" to show visually mock examples of what each type of tool looks like, and user can interactively switch themes and see what it looks like live
 - [ ] Make resume history picker window larger
+- [ ] Test/fix command completions (/rename, etc.)
 - [ ] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
-- [ ] Add support plan mode toggle
-- [ ] Add support for todo lists (requires brainstorming)
-- [ ] Add support for /compact (requires brainstorming)
 - [ ] Support "queued" prompts (submitted while agent is thinking or working)
+- [ ] Add support for /remote-control
+- [ ] Add support plan mode toggle
+- [ ] Add support for /compact (requires brainstorming)
 
 - [x] add prompt placeholder 
 - [x] Add config option to autosize prompt window to fit content (with configurable min/max heights)
