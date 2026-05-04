@@ -42,10 +42,10 @@ end
 local function run_case(opts)
   _G.child = h.spawn({ config = opts.config or 'minimal', lines = opts.lines, columns = opts.columns })
   h.open_with_fixture(_G.child, 'hostile_stream', { slow_delay_ms = opts.delay_ms or 12 })
-  if not _G.child:wait_for(function(c) return c:find_winid_for_buf('cc-output') ~= nil end, 3000) then
+  if not _G.child:wait_for(function(c) return c:find_winid_for_buf('cc-nvim-output') ~= nil end, 3000) then
     error('output window never appeared')
   end
-  local winid = _G.child:find_winid_for_buf('cc-output')
+  local winid = _G.child:find_winid_for_buf('cc-nvim-output')
   local samples = h.sample_during_stream(_G.child, winid, {
     interval_ms = 18,
     timeout_ms = 25000,
@@ -92,7 +92,7 @@ T['delay_60ms'] = function() run_case({ lines = 22, columns = 100, delay_ms = 60
 -- Run with rob_init (the user's actual config — packer plugins, etc.)
 T['rob_lines_24_cols_100'] = function() run_case({ config = 'rob', lines = 24, columns = 100 }) end
 T['rob_lines_30_cols_80'] = function() run_case({ config = 'rob', lines = 30, columns = 80 }) end
--- Extreme aspect ratio: rob_init reduces the cc-output winheight to ~5 due
+-- Extreme aspect ratio: rob_init reduces the cc-nvim-output winheight to ~5 due
 -- to sidebar plugins, then 60 cols forces aggressive wrapping. With wrap=on
 -- a single buffer line can occupy 2-3 screen rows; in a 5-row window this
 -- produces unavoidable layout gaps that aren't anchor drift. Widen the

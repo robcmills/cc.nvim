@@ -30,10 +30,11 @@ M.VERSION = '0.2.0'
 ---@field session_name string? user-set session title (set via /rename)
 ---@field pending_session_name string? rename requested before transcript exists; flushed by `_flush_pending_rename`
 ---@field remote_control_active boolean?
----@field saved_output_view table? winsaveview snapshot from the last close, restored on reopen
+---@field saved_output_view table? output winsaveview snapshot from the last close, restored on reopen
+---@field saved_prompt_view table? prompt winsaveview snapshot from the last close, restored on reopen
 ---@field last_focus 'prompt'|'output'? which cc buffer the user was last in; restored on reopen
 
-local instances = {} -- keyed by prompt bufnr
+local instances = {} -- keyed by output bufnr
 local next_instance_id = 1
 
 -- Kill claude subprocesses on exit so shada writes complete (avoids E138 .shada.tmp.* orphans).
@@ -48,13 +49,13 @@ vim.api.nvim_create_autocmd('VimLeavePre', {
   end,
 })
 
---- Find the instance that owns the given buffer (prompt or output).
+--- Find the instance that owns the given buffer (output or prompt).
 ---@param bufnr integer
 ---@return cc.Instance?
 local function find_instance(bufnr)
   if instances[bufnr] then return instances[bufnr] end
   for _, inst in pairs(instances) do
-    if inst.output and inst.output.bufnr == bufnr then return inst end
+    if inst.prompt and inst.prompt.bufnr == bufnr then return inst end
   end
   return nil
 end
@@ -115,63 +116,50 @@ end
 local function setup_buffer_autocmds(inst)
   local output_bufnr = inst.output.bufnr
   local prompt_bufnr = inst.prompt.bufnr
-  local group = vim.api.nvim_create_augroup('cc.buffer_integration.' .. prompt_bufnr, { clear = true })
+  local group = vim.api.nvim_create_augroup('cc.buffer_integration.' .. output_bufnr, { clear = true })
 
   -- Record last-focused cc buffer so reopen can restore the user's window
   -- choice. BufLeave fires when leaving the buffer (including hops between
-  -- prompt and output), so the value reflects the last position before the
+  -- output and prompt), so the value reflects the last position before the
   -- user navigates away from cc entirely. BufEnter would be wrong: it fires
-  -- on prompt during the :bprev-back path (before BufWinEnter recreates the
-  -- output companion) and would always clobber a prior 'output' value.
-  vim.api.nvim_create_autocmd('BufLeave', {
-    group = group,
-    buffer = prompt_bufnr,
-    callback = function() inst.last_focus = 'prompt' end,
-  })
+  -- on output during the :bprev-back path (before BufWinEnter recreates the
+  -- prompt companion) and would always clobber a prior 'prompt' value.
   vim.api.nvim_create_autocmd('BufLeave', {
     group = group,
     buffer = output_bufnr,
     callback = function() inst.last_focus = 'output' end,
   })
-
-  -- When prompt leaves a window, close the output companion (unless moving to output).
-  vim.api.nvim_create_autocmd('BufWinLeave', {
+  vim.api.nvim_create_autocmd('BufLeave', {
     group = group,
     buffer = prompt_bufnr,
-    callback = function()
-      vim.schedule(function()
-        local cur_buf = vim.api.nvim_get_current_buf()
-        if cur_buf == output_bufnr then return end
-        if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
-          if vim.api.nvim_win_get_buf(inst.output_winid) == output_bufnr then
-            -- Snapshot scroll position so reopen can restore it instead
-            -- of forcing the cursor back to the tail.
-            local ok, view = pcall(vim.api.nvim_win_call, inst.output_winid, vim.fn.winsaveview)
-            if ok then inst.saved_output_view = view end
-            vim.api.nvim_win_close(inst.output_winid, true)
-          end
-        end
-        inst.output_winid = nil
-        inst.prompt_winid = nil
-      end)
-    end,
+    callback = function() inst.last_focus = 'prompt' end,
   })
+
+  -- Snapshot both windows' views synchronously while their buffers are still
+  -- visible in their respective windows. Either BufWinLeave handler may see
+  -- only one of the two buffers still in place (depending on which
+  -- nvim_set_current_buf / :edit fired first), so each handler captures
+  -- whichever views it can — saved_output_view and saved_prompt_view are
+  -- restored together on reopen.
+  local function snapshot_views()
+    if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid)
+        and vim.api.nvim_win_get_buf(inst.output_winid) == output_bufnr then
+      local ok, view = pcall(vim.api.nvim_win_call, inst.output_winid, vim.fn.winsaveview)
+      if ok then inst.saved_output_view = view end
+    end
+    if inst.prompt_winid and vim.api.nvim_win_is_valid(inst.prompt_winid)
+        and vim.api.nvim_win_get_buf(inst.prompt_winid) == prompt_bufnr then
+      local ok, view = pcall(vim.api.nvim_win_call, inst.prompt_winid, vim.fn.winsaveview)
+      if ok then inst.saved_prompt_view = view end
+    end
+  end
 
   -- When output leaves a window, close the prompt companion (unless moving to prompt).
   vim.api.nvim_create_autocmd('BufWinLeave', {
     group = group,
     buffer = output_bufnr,
     callback = function()
-      -- Snapshot the output window's view here too: this fires on the
-      -- "user navigated away from the output window directly" path
-      -- (e.g. :edit foo from the output window), where prompt's
-      -- BufWinLeave handler can't capture the view because the output
-      -- window no longer holds cc-output by the time it runs.
-      if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid)
-          and vim.api.nvim_win_get_buf(inst.output_winid) == output_bufnr then
-        local ok, view = pcall(vim.api.nvim_win_call, inst.output_winid, vim.fn.winsaveview)
-        if ok then inst.saved_output_view = view end
-      end
+      snapshot_views()
       vim.schedule(function()
         local cur_buf = vim.api.nvim_get_current_buf()
         if cur_buf == prompt_bufnr then return end
@@ -180,79 +168,108 @@ local function setup_buffer_autocmds(inst)
             vim.api.nvim_win_close(inst.prompt_winid, true)
           end
         end
-        inst.output_winid = nil
         inst.prompt_winid = nil
+        inst.output_winid = nil
       end)
     end,
   })
 
-  -- When prompt enters a window, recreate the output companion above.
-  vim.api.nvim_create_autocmd('BufWinEnter', {
+  -- When prompt leaves a window, close the output companion (unless moving to output).
+  vim.api.nvim_create_autocmd('BufWinLeave', {
     group = group,
     buffer = prompt_bufnr,
     callback = function()
+      snapshot_views()
       vim.schedule(function()
-        if not vim.api.nvim_buf_is_valid(output_bufnr) then return end
+        local cur_buf = vim.api.nvim_get_current_buf()
+        if cur_buf == output_bufnr then return end
+        if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
+          if vim.api.nvim_win_get_buf(inst.output_winid) == output_bufnr then
+            vim.api.nvim_win_close(inst.output_winid, true)
+          end
+        end
+        inst.prompt_winid = nil
+        inst.output_winid = nil
+      end)
+    end,
+  })
+
+  -- When output enters a window, recreate the prompt companion below.
+  vim.api.nvim_create_autocmd('BufWinEnter', {
+    group = group,
+    buffer = output_bufnr,
+    callback = function()
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(prompt_bufnr) then return end
         -- Fixture-loaded sessions have no process; gate only on liveness for
-        -- real sessions so the output companion still reopens for fixtures.
+        -- real sessions so the prompt companion still reopens for fixtures.
         if not inst.is_fixture and (not inst.process or not inst.process:is_alive()) then
           return
         end
-        if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
+        if inst.prompt_winid and vim.api.nvim_win_is_valid(inst.prompt_winid) then
           return
         end
-        local prompt_win = nil
+        local output_win = nil
         for _, win in ipairs(vim.api.nvim_list_wins()) do
-          if vim.api.nvim_win_get_buf(win) == prompt_bufnr then
-            prompt_win = win
+          if vim.api.nvim_win_get_buf(win) == output_bufnr then
+            output_win = win
             break
           end
         end
-        if not prompt_win then return end
+        if not output_win then return end
         -- Capture last_focus before any layout work: the steps below
-        -- (split + nvim_set_current_buf(output) + nvim_set_current_win(prompt))
-        -- fire BufLeave on cc-output as a side effect, which would
-        -- overwrite inst.last_focus to 'output' regardless of where the
+        -- (split + nvim_set_current_buf(prompt) + nvim_set_current_win(output))
+        -- fire BufLeave on cc-nvim-prompt as a side effect, which would
+        -- overwrite inst.last_focus to 'prompt' regardless of where the
         -- user actually was.
         local saved_last_focus = inst.last_focus
-        inst.prompt_winid = prompt_win
-        vim.api.nvim_set_current_win(prompt_win)
-        vim.cmd('aboveleft split')
-        vim.api.nvim_set_current_buf(output_bufnr)
-        inst.output_winid = vim.api.nvim_get_current_win()
-        inst.output:set_window(inst.output_winid)
-        require('cc.statusline').attach(inst, inst.output_winid)
-        vim.api.nvim_set_current_win(prompt_win)
-        vim.api.nvim_win_set_height(prompt_win, Config.options.prompt_height)
-        -- If the user was last focused on the output window, hop back to
-        -- it. Default (saved_last_focus nil or 'prompt') leaves focus on prompt.
-        if saved_last_focus == 'output'
+        inst.output_winid = output_win
+        vim.api.nvim_set_current_win(output_win)
+        vim.cmd('belowright split')
+        vim.api.nvim_set_current_buf(prompt_bufnr)
+        inst.prompt_winid = vim.api.nvim_get_current_win()
+        inst.prompt:set_window(inst.prompt_winid)
+        vim.api.nvim_win_set_height(inst.prompt_winid, Config.options.prompt_height)
+        require('cc.statusline').attach(inst, output_win)
+        -- If the user was last focused on the prompt window, leave focus
+        -- there. Default (saved_last_focus nil or 'output') hops back to output.
+        if saved_last_focus ~= 'prompt'
             and inst.output_winid
             and vim.api.nvim_win_is_valid(inst.output_winid) then
           vim.api.nvim_set_current_win(inst.output_winid)
         end
-        -- New windows on an existing buffer start with cursor at line 1,
-        -- which would show the top of a long transcript. If we have a
-        -- prior view snapshot from BufWinLeave, restore it so the user's
-        -- scroll position survives the close/reopen. Otherwise anchor to
-        -- the last line so first-time displays show the most recent
-        -- output. Schedule so the fix runs after layout settles (split
-        -- + resize + BufWinEnter autocmds all complete first).
+        -- New windows on an existing buffer start with cursor at line 1.
+        -- Restore the prior views (if snapshotted) so output's scroll and a
+        -- half-typed prompt's cursor/scroll survive close/reopen. If output
+        -- has no snapshot (first display), anchor it to the last line so
+        -- fresh sessions show the most recent content. Schedule so the fix
+        -- runs after layout settles (split + resize + nested BufWinEnter
+        -- autocmds all complete first).
         local output_winid = inst.output_winid
-        local saved_view = inst.saved_output_view
+        local prompt_winid = inst.prompt_winid
+        local saved_output_view = inst.saved_output_view
+        local saved_prompt_view = inst.saved_prompt_view
         inst.saved_output_view = nil
+        inst.saved_prompt_view = nil
         vim.schedule(function()
-          if not output_winid or not vim.api.nvim_win_is_valid(output_winid) then return end
-          if vim.api.nvim_win_get_buf(output_winid) ~= output_bufnr then return end
-          pcall(vim.api.nvim_win_call, output_winid, function()
-            if saved_view then
-              vim.fn.winrestview(saved_view)
-            else
-              local last = vim.api.nvim_buf_line_count(output_bufnr)
-              vim.api.nvim_win_set_cursor(output_winid, { last, 0 })
-              vim.cmd('normal! zb')
-            end
-          end)
+          if output_winid and vim.api.nvim_win_is_valid(output_winid)
+              and vim.api.nvim_win_get_buf(output_winid) == output_bufnr then
+            pcall(vim.api.nvim_win_call, output_winid, function()
+              if saved_output_view then
+                vim.fn.winrestview(saved_output_view)
+              else
+                local last = vim.api.nvim_buf_line_count(output_bufnr)
+                vim.api.nvim_win_set_cursor(output_winid, { last, 0 })
+                vim.cmd('normal! zb')
+              end
+            end)
+          end
+          if saved_prompt_view and prompt_winid and vim.api.nvim_win_is_valid(prompt_winid)
+              and vim.api.nvim_win_get_buf(prompt_winid) == prompt_bufnr then
+            pcall(vim.api.nvim_win_call, prompt_winid, function()
+              vim.fn.winrestview(saved_prompt_view)
+            end)
+          end
         end)
       end)
     end,
@@ -263,7 +280,7 @@ end
 -- Instance creation + teardown
 -- ---------------------------------------------------------------------------
 
---- Create a new instance with layout: output above (companion), prompt below (primary).
+--- Create a new instance with layout: output above (primary), prompt below (companion).
 ---@param opts { reuse_prompt_winid: integer?, reuse_output_winid: integer? }?
 ---@return cc.Instance
 local function create_instance(opts)
@@ -271,8 +288,8 @@ local function create_instance(opts)
   local id = next_instance_id
   next_instance_id = next_instance_id + 1
 
-  local prompt_name = id == 1 and 'cc-nvim' or ('cc-nvim-' .. id)
-  local output_name = id == 1 and 'cc-output' or ('cc-output-' .. id)
+  local output_name = id == 1 and 'cc-nvim-output' or ('cc-nvim-output-' .. id)
+  local prompt_name = id == 1 and 'cc-nvim-prompt' or ('cc-nvim-prompt-' .. id)
 
   local inst = {
     session = Session.new(),
@@ -291,13 +308,12 @@ local function create_instance(opts)
   }
 
   -- Snapshot the user's window-local option defaults BEFORE any cc
-  -- autocmd fires. The prompt buffer's BufWinEnter (triggered by the
+  -- autocmd fires. The output buffer's BufWinEnter (triggered by the
   -- nvim_set_current_buf below) sets cc's overrides, which for some
   -- "g+l" options like 'number' clobbers vim.go too — so reading defaults
-  -- after that point doesn't recover the user's intent. Both the prompt
-  -- and (especially) the output use these as restore baselines on
-  -- BufWinLeave; output can't read its own pre-cc state because the
-  -- :split below makes it inherit cc's overrides from prompt.
+  -- after that point doesn't recover the user's intent. The prompt uses
+  -- these as a restore baseline on BufWinLeave because the :split below
+  -- makes it inherit cc's overrides from output.
   inst.user_winopts = (function()
     local source = vim.api.nvim_get_current_win()
     if not vim.api.nvim_win_is_valid(source) then return {} end
@@ -317,10 +333,10 @@ local function create_instance(opts)
   local output_buf = inst.output:ensure_buffer()
   local prompt_buf = inst.prompt:ensure_buffer()
 
-  -- Register the instance before laying out windows. Output's BufWinEnter
+  -- Register the instance before laying out windows. Prompt's BufWinEnter
   -- (fired once the buffer is shown below) needs to look up inst via
   -- find_instance to read inst.user_winopts as its restore baseline.
-  instances[prompt_buf] = inst
+  instances[output_buf] = inst
 
   local reuse_prompt = opts.reuse_prompt_winid
   local reuse_output = opts.reuse_output_winid
@@ -329,23 +345,28 @@ local function create_instance(opts)
 
   if reuse_prompt and reuse_output then
     -- Reuse existing windows: swap new buffers into place.
-    vim.api.nvim_win_set_buf(reuse_prompt, prompt_buf)
-    inst.prompt_winid = reuse_prompt
-    inst.prompt:set_window(reuse_prompt)
-
     vim.api.nvim_win_set_buf(reuse_output, output_buf)
     inst.output_winid = reuse_output
     inst.output:set_window(reuse_output)
 
+    vim.api.nvim_win_set_buf(reuse_prompt, prompt_buf)
+    inst.prompt_winid = reuse_prompt
+    inst.prompt:set_window(reuse_prompt)
+
     vim.api.nvim_set_current_win(reuse_prompt)
     vim.api.nvim_win_set_height(reuse_prompt, Config.options.prompt_height)
   else
-    -- Prompt is the primary buffer — it fills current window.
+    -- Stage prompt in the user's current window first, then split aboveleft
+    -- to create the output window above. Output ends up in the freshly-
+    -- created window; prompt sits in the original window. Both buffers
+    -- source their winopts restore baseline from inst.user_winopts because
+    -- by the time their BufWinEnter handlers fire, both windows have
+    -- already inherited cc's overrides (prompt directly via its own
+    -- BufWinEnter, output indirectly via :split inheritance).
     vim.api.nvim_set_current_buf(prompt_buf)
     inst.prompt_winid = vim.api.nvim_get_current_win()
     inst.prompt:set_window(inst.prompt_winid)
 
-    -- Output opens above as a companion.
     vim.cmd('aboveleft split')
     vim.api.nvim_set_current_buf(output_buf)
     inst.output_winid = vim.api.nvim_get_current_win()
@@ -354,6 +375,9 @@ local function create_instance(opts)
     -- Return focus to prompt and resize it.
     vim.api.nvim_set_current_win(inst.prompt_winid)
     vim.api.nvim_win_set_height(inst.prompt_winid, Config.options.prompt_height)
+
+    -- Start in insert mode in prompt buffer for immediate typing.
+    vim.cmd('startinsert')
   end
 
   setup_prompt_keymaps(inst)
@@ -370,12 +394,9 @@ local function create_instance(opts)
     require('cc.statusline').attach(inst, inst.output_winid)
   end
 
-  -- Start in insert mode in prompt buffer for immediate typing.
-  vim.cmd('startinsert')
-
   -- When opening a new instance while the user was focused in a prior
-  -- instance's prompt window, that prompt's BufWinLeave autocmd schedules
-  -- closing the old output window. With equalalways on (default), that
+  -- instance's output window, that output's BufWinLeave autocmd schedules
+  -- closing the old prompt window. With equalalways on (default), that
   -- close redistributes space and clobbers our prompt_height, and can
   -- leave the new output window's topline in a state where the last
   -- line shows at the top. Schedule a fixup that runs AFTER the pending
@@ -402,7 +423,7 @@ end
 
 --- Tear down an instance's process and buffer state, but leave its windows open
 --- so a replacement instance can swap its new buffers into the same layout.
---- Wipes the old buffers so a renamed prompt buffer (e.g. `cc-foo`) does not
+--- Wipes the old buffers so a renamed output buffer (e.g. `cc-foo`) does not
 --- linger and block a future :CcResume of the same session from claiming
 --- that name (E95: buffer with this name already exists).
 ---@param inst cc.Instance
@@ -412,25 +433,27 @@ local function teardown_instance_keep_windows(inst)
     inst.process:close()
     inst.process = nil
   end
+  if inst.output and inst.output.bufnr > 0 then
+    pcall(vim.api.nvim_del_augroup_by_name, 'cc.buffer_integration.' .. inst.output.bufnr)
+  end
   if inst.prompt and inst.prompt.bufnr > 0 then
-    pcall(vim.api.nvim_del_augroup_by_name, 'cc.buffer_integration.' .. inst.prompt.bufnr)
     require('cc.autosize').detach(inst.prompt.bufnr)
     require('cc.placeholder').detach(inst.prompt.bufnr)
   end
-  if inst.prompt and inst.prompt.bufnr > 0 then
-    instances[inst.prompt.bufnr] = nil
-    if vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
-      pcall(vim.api.nvim_buf_delete, inst.prompt.bufnr, { force = true })
+  if inst.output and inst.output.bufnr > 0 then
+    instances[inst.output.bufnr] = nil
+    if vim.api.nvim_buf_is_valid(inst.output.bufnr) then
+      pcall(vim.api.nvim_buf_delete, inst.output.bufnr, { force = true })
     end
   end
-  if inst.output and inst.output.bufnr and vim.api.nvim_buf_is_valid(inst.output.bufnr) then
-    pcall(vim.api.nvim_buf_delete, inst.output.bufnr, { force = true })
+  if inst.prompt and inst.prompt.bufnr and vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
+    pcall(vim.api.nvim_buf_delete, inst.prompt.bufnr, { force = true })
   end
 end
 
 --- Tear down an instance: kill process, close windows, wipe buffers, remove from table.
 --- Wiping (rather than just unlisting) frees the buffer name so a later
---- :CcResume of a renamed session can rename its new prompt buffer to the
+--- :CcResume of a renamed session can rename its new output buffer to the
 --- same `cc-<title>` without colliding with the stale buffer.
 ---@param inst cc.Instance
 local function close_instance(inst)
@@ -440,25 +463,27 @@ local function close_instance(inst)
     inst.process = nil
   end
   -- Clear per-instance autocmds before closing windows to avoid cascading.
+  if inst.output and inst.output.bufnr > 0 then
+    pcall(vim.api.nvim_del_augroup_by_name, 'cc.buffer_integration.' .. inst.output.bufnr)
+  end
   if inst.prompt and inst.prompt.bufnr > 0 then
-    pcall(vim.api.nvim_del_augroup_by_name, 'cc.buffer_integration.' .. inst.prompt.bufnr)
     require('cc.autosize').detach(inst.prompt.bufnr)
     require('cc.placeholder').detach(inst.prompt.bufnr)
-  end
-  if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
-    pcall(vim.api.nvim_win_close, inst.output_winid, true)
   end
   if inst.prompt_winid and vim.api.nvim_win_is_valid(inst.prompt_winid) then
     pcall(vim.api.nvim_win_close, inst.prompt_winid, true)
   end
-  if inst.prompt and inst.prompt.bufnr > 0 then
-    instances[inst.prompt.bufnr] = nil
-    if vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
-      pcall(vim.api.nvim_buf_delete, inst.prompt.bufnr, { force = true })
+  if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid) then
+    pcall(vim.api.nvim_win_close, inst.output_winid, true)
+  end
+  if inst.output and inst.output.bufnr > 0 then
+    instances[inst.output.bufnr] = nil
+    if vim.api.nvim_buf_is_valid(inst.output.bufnr) then
+      pcall(vim.api.nvim_buf_delete, inst.output.bufnr, { force = true })
     end
   end
-  if inst.output and inst.output.bufnr and vim.api.nvim_buf_is_valid(inst.output.bufnr) then
-    pcall(vim.api.nvim_buf_delete, inst.output.bufnr, { force = true })
+  if inst.prompt and inst.prompt.bufnr and vim.api.nvim_buf_is_valid(inst.prompt.bufnr) then
+    pcall(vim.api.nvim_buf_delete, inst.prompt.bufnr, { force = true })
   end
   inst.output_winid = nil
   inst.prompt_winid = nil
@@ -961,15 +986,15 @@ function M.effort(level)
   M._handle_effort(get_current_instance(), level or '')
 end
 
---- Apply the session-name-derived buffer name to the prompt buffer. Only
---- the prompt is `buflisted`, so renaming the output (nofile/hide) would not
---- surface anywhere. Test stubs may omit `prompt`, so guard for nil.
+--- Apply the session-name-derived buffer name to the output buffer. Only
+--- the output is `buflisted`, so renaming the prompt (nofile/hide/unlisted)
+--- would not surface anywhere. Test stubs may omit `output`, so guard for nil.
 ---@param inst cc.Instance
 ---@param name string session title (non-empty)
 function M._apply_session_buf_names(inst, name)
   if not name or name == '' then return end
-  if inst.prompt and inst.prompt.set_buf_name then
-    inst.prompt:set_buf_name('cc-' .. name)
+  if inst.output and inst.output.set_buf_name then
+    inst.output:set_buf_name('cc-' .. name)
   end
 end
 

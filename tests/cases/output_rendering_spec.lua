@@ -131,7 +131,7 @@ T['visual_dump']['produces readable dump for simple_text'] = function()
   local dump = helpers.visual_dump(_G.child)
   -- Should be a non-empty string with our format markers
   eq(type(dump), 'string')
-  eq(dump:find('cc%-output') ~= nil, true)
+  eq(dump:find('cc%-nvim%-output') ~= nil, true)
 end
 
 return T

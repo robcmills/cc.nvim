@@ -31,10 +31,10 @@ local function run_stream_invariant(opts)
 
   -- Wait until the output window exists.
   local found = _G.child:wait_for(function(c)
-    return c:find_winid_for_buf('cc-output') ~= nil
+    return c:find_winid_for_buf('cc-nvim-output') ~= nil
   end, 2000)
   if not found then error('output window never appeared') end
-  local winid = _G.child:find_winid_for_buf('cc-output')
+  local winid = _G.child:find_winid_for_buf('cc-nvim-output')
 
   local samples = h.sample_during_stream(_G.child, winid, {
     interval_ms = opts.interval_ms or 20,

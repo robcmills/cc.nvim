@@ -57,10 +57,10 @@ T['captured_replay'] = function()
   _G.child = h.spawn({ config = CONFIG, lines = LINES, columns = COLS })
   h.open_with_fixture(_G.child, '__captured_replay', { slow_delay_ms = DELAY })
 
-  if not _G.child:wait_for(function(c) return c:find_winid_for_buf('cc-output') ~= nil end, 3000) then
-    error('cc-output window never appeared')
+  if not _G.child:wait_for(function(c) return c:find_winid_for_buf('cc-nvim-output') ~= nil end, 3000) then
+    error('cc-nvim-output window never appeared')
   end
-  local winid = _G.child:find_winid_for_buf('cc-output')
+  local winid = _G.child:find_winid_for_buf('cc-nvim-output')
 
   -- Long timeout: real captures can be many seconds at delay 5ms
   local samples = h.sample_during_stream(_G.child, winid, {

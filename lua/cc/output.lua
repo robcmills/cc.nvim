@@ -18,7 +18,7 @@
 
 local M = {}
 
-local BUF_NAME_DEFAULT = 'cc-output'
+local BUF_NAME_DEFAULT = 'cc-nvim-output'
 
 -- Display-name overrides for tool headers. Keeps icon lookup and summary
 -- logic keyed by the real tool name while presenting a friendlier label.
@@ -76,10 +76,11 @@ function Output:ensure_buffer()
   if self.bufnr > 0 and vim.api.nvim_buf_is_valid(self.bufnr) then
     return self.bufnr
   end
-  self.bufnr = vim.api.nvim_create_buf(false, true)
+  self.bufnr = vim.api.nvim_create_buf(true, true)
   vim.api.nvim_buf_set_name(self.bufnr, self.buf_name)
   vim.bo[self.bufnr].buftype = 'nofile'
   vim.bo[self.bufnr].bufhidden = 'hide'
+  vim.bo[self.bufnr].buflisted = true
   vim.bo[self.bufnr].swapfile = false
   vim.bo[self.bufnr].filetype = 'cc-output'
   vim.bo[self.bufnr].modifiable = false
@@ -118,22 +119,31 @@ function Output:_setup_window_opts_for_buffer()
       if vim.api.nvim_win_get_buf(winid) ~= bufnr then
         return
       end
+      -- Skip transient appearances: during create_instance's `:split`,
+      -- the new (output-bound) window briefly is current before
+      -- set_current_buf(output) re-targets the actual output winid. Saving
+      -- the wrong window's baseline would later cause BufWinLeave to
+      -- restore cc-overridden values onto a non-output window.
+      local ok_cc, cc = pcall(require, 'cc')
+      local user_opts
+      if ok_cc and cc and cc.find_instance then
+        local inst = cc.find_instance(bufnr)
+        if inst and inst.output_winid and inst.output_winid ~= winid then
+          return
+        end
+        user_opts = inst and inst.user_winopts or nil
+      end
       -- Source the restore baseline from inst.user_winopts (captured in
       -- create_instance before any cc autocmd fired). The output window
-      -- is normally created via `:split` from the prompt window, so its
-      -- inherited window-local values already reflect cc's overrides;
-      -- and for "g+l" options like 'number', vim.go is corrupted by
-      -- those overrides too. inst.user_winopts is the only reliable
-      -- source of the user's pre-cc state.
-      do
-        local cc = require('cc')
-        local inst = cc.find_instance(bufnr)
-        local user_opts = inst and inst.user_winopts or nil
-        if user_opts then
-          winopts.save_table(winid, 'output', OUTPUT_WIN_OPTS, user_opts)
-        else
-          winopts.save(winid, 'output', OUTPUT_WIN_OPTS)
-        end
+      -- is created via `:split` from the prompt window, so its inherited
+      -- window-local values already reflect cc-prompt's overrides; and
+      -- for "g+l" options like 'number', vim.go is corrupted by those
+      -- overrides too. inst.user_winopts is the only reliable source of
+      -- the user's pre-cc state.
+      if user_opts then
+        winopts.save_table(winid, 'output', OUTPUT_WIN_OPTS, user_opts)
+      else
+        winopts.save(winid, 'output', OUTPUT_WIN_OPTS)
       end
       -- Stash this winid where BufWinLeave can read it back. Inside
       -- BufWinLeave, nvim_get_current_win() may point at the destination
@@ -235,6 +245,18 @@ end
 --- Set the window displaying this output buffer (used to auto-scroll).
 function Output:set_window(winid)
   self.winid = winid
+end
+
+--- Rename the output buffer (e.g. to reflect a session title). No-op on empty
+--- input or if the buffer isn't yet created. Wrapped in pcall so a name
+--- collision (E95) doesn't abort the caller.
+---@param name string
+function Output:set_buf_name(name)
+  if not name or name == '' then return end
+  self.buf_name = name
+  if self.bufnr > 0 and vim.api.nvim_buf_is_valid(self.bufnr) then
+    pcall(vim.api.nvim_buf_set_name, self.bufnr, name)
+  end
 end
 
 --- Append lines to end of buffer. fold_levels is a same-length array of

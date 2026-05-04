@@ -54,10 +54,10 @@ T['load_fixture']['sets session_name to the fixture basename'] = function()
   eq(_G.child.lua_get([[require('cc')._get_instance().session_name]]), 'simple_text')
 end
 
-T['load_fixture']['renames the prompt buffer to cc-<fixture>'] = function()
+T['load_fixture']['renames the output buffer to cc-<fixture>'] = function()
   _G.child.lua([[require('cc').load_fixture('simple_text')]])
   local name = _G.child.lua_get([[
-    vim.fn.fnamemodify(vim.api.nvim_buf_get_name(require('cc')._get_instance().prompt.bufnr), ':t')
+    vim.fn.fnamemodify(vim.api.nvim_buf_get_name(require('cc')._get_instance().output.bufnr), ':t')
   ]])
   eq(name, 'cc-simple_text')
 end

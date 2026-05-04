@@ -147,14 +147,14 @@ T['dispatch']['handler parses name and sets instance.session_name'] = function()
     local notices = {}
     local orig_notify = vim.notify
     vim.notify = function(text, _level) table.insert(notices, text) end
-    local prompt_name_calls = {}
+    local output_name_calls = {}
     local inst = {
       last_session_id = session_id,
       session_name = nil,
       session = {},
-      output = {},
-      prompt = {
-        set_buf_name = function(self, name) table.insert(prompt_name_calls, name) end,
+      prompt = {},
+      output = {
+        set_buf_name = function(self, name) table.insert(output_name_calls, name) end,
       },
     }
 
@@ -170,14 +170,14 @@ T['dispatch']['handler parses name and sets instance.session_name'] = function()
       notice = notices[1],
       last_type = last_rec.type,
       last_title = last_rec.customTitle,
-      prompt_name = prompt_name_calls[1],
+      output_name = output_name_calls[1],
     }
   end)()]])
   eq(result.session_name, 'my-new-name')
   eq(result.last_type, 'custom-title')
   eq(result.last_title, 'my-new-name')
   eq(result.notice, 'cc.nvim: session renamed to "my-new-name"')
-  eq(result.prompt_name, 'cc-my-new-name')
+  eq(result.output_name, 'cc-my-new-name')
 end
 
 T['dispatch']['empty args prints usage'] = function()
@@ -237,15 +237,15 @@ T['pre_begin']['queues rename when no session id and applies buffer name'] = fun
     local notices = {}
     local orig_notify = vim.notify
     vim.notify = function(text, _) table.insert(notices, text) end
-    local prompt_name_calls = {}
+    local output_name_calls = {}
     local inst = {
       last_session_id = nil,
       session_name = nil,
       pending_session_name = nil,
       session = {},
-      output = {},
-      prompt = {
-        set_buf_name = function(self, name) table.insert(prompt_name_calls, name) end,
+      prompt = {},
+      output = {
+        set_buf_name = function(self, name) table.insert(output_name_calls, name) end,
       },
     }
     require('cc')._handle_rename(inst, 'fresh-name')
@@ -253,13 +253,13 @@ T['pre_begin']['queues rename when no session id and applies buffer name'] = fun
     return {
       pending = inst.pending_session_name,
       session_name = inst.session_name,
-      prompt_name = prompt_name_calls[1],
+      output_name = output_name_calls[1],
       notice = notices[1],
     }
   end)()]])
   eq(result.pending, 'fresh-name')
   eq(result.session_name, nil)
-  eq(result.prompt_name, 'cc-fresh-name')
+  eq(result.output_name, 'cc-fresh-name')
   local ok = result.notice and result.notice:match('queued') ~= nil
   eq(ok, true)
 end
@@ -277,8 +277,8 @@ T['pre_begin']['queues rename when session id known but transcript missing'] = f
       session_name = nil,
       pending_session_name = nil,
       session = {},
-      output = {},
-      prompt = { set_buf_name = function(_, _) end },
+      prompt = {},
+      output = { set_buf_name = function(_, _) end },
     }
     require('cc')._handle_rename(inst, 'queued')
     history.session_path = orig
@@ -325,15 +325,15 @@ T['pre_begin']['flush persists queued name once transcript exists'] = function()
     local orig = history.session_path
     history.session_path = function(sid) if sid == session_id then return path end end
 
-    local prompt_name_calls = {}
+    local output_name_calls = {}
     local inst = {
       last_session_id = session_id,
       session_name = nil,
       pending_session_name = 'queued-title',
       session = {},
-      output = {},
-      prompt = {
-        set_buf_name = function(self, name) table.insert(prompt_name_calls, name) end,
+      prompt = {},
+      output = {
+        set_buf_name = function(self, name) table.insert(output_name_calls, name) end,
       },
     }
     require('cc')._flush_pending_rename(inst)
@@ -346,14 +346,14 @@ T['pre_begin']['flush persists queued name once transcript exists'] = function()
       pending = inst.pending_session_name,
       last_type = last.type,
       last_title = last.customTitle,
-      prompt_name = prompt_name_calls[1],
+      output_name = output_name_calls[1],
     }
   end)()]])
   eq(result.session_name, 'queued-title')
   eq(result.pending, nil)
   eq(result.last_type, 'custom-title')
   eq(result.last_title, 'queued-title')
-  eq(result.prompt_name, 'cc-queued-title')
+  eq(result.output_name, 'cc-queued-title')
 end
 
 T['pre_begin']['flush is no-op when nothing pending'] = function()

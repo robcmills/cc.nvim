@@ -156,7 +156,7 @@ end
 
 --- Produce a Layer-C visual dump of the output buffer.
 --- Format:
----   cc-output | N lines | foldlevel=L
+---   cc-nvim-output | N lines | foldlevel=L
 ---   ─────────────
 ---    1 [HlGroup  ]  line text here
 ---    2 [         ]  more text
@@ -182,7 +182,7 @@ function M.visual_dump(child)
 
     local parts = {}
     local sep = string.rep('-', 60)
-    table.insert(parts, string.format('cc-output | %d lines | foldlevel=%d', #lines, foldlevel))
+    table.insert(parts, string.format('cc-nvim-output | %d lines | foldlevel=%d', #lines, foldlevel))
     table.insert(parts, sep)
 
     local caret_ns = vim.api.nvim_get_namespaces()['cc.carets']

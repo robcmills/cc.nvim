@@ -45,14 +45,14 @@ T['cc_window_options_do_not_leak_into_other_files'] = function()
   h.open_with_fixture(_G.child, 'simple_text')
 
   if not h.wait_for_session_end(_G.child, 8000) then
-    error('session did not end. ' .. h.dump_viewport(_G.child, _G.child:find_winid_for_buf('cc-output')))
+    error('session did not end. ' .. h.dump_viewport(_G.child, _G.child:find_winid_for_buf('cc-nvim-output')))
   end
   _G.child:sleep(150)
 
   -- From the prompt window (current after :CcNew), open a regular code
   -- file. This swaps the prompt buffer out for a non-cc buffer in the
   -- SAME window — the leak surface.
-  local prompt_winid = _G.child:find_winid_for_buf('cc-nvim')
+  local prompt_winid = _G.child:find_winid_for_buf('cc-nvim-prompt')
   if not prompt_winid then error('no prompt window') end
 
   _G.child:lua(

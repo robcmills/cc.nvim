@@ -577,8 +577,8 @@ local T = MiniTest.new_set({
 T['view stays bottom-pinned during stream'] = function()
   _G.child = h.spawn({ lines = 20, columns = 100 })
   h.open_with_fixture(_G.child, 'large_read', { slow_delay_ms = 8 })
-  _G.child:wait_for(function(c) return c:find_winid_for_buf('cc-output') end)
-  local winid = _G.child:find_winid_for_buf('cc-output')
+  _G.child:wait_for(function(c) return c:find_winid_for_buf('cc-nvim-output') end)
+  local winid = _G.child:find_winid_for_buf('cc-nvim-output')
 
   local samples = h.sample_during_stream(_G.child, winid, { interval_ms = 8 })
   h.assert_trace_pinned(samples)             -- check invariant on every stable sample

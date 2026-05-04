@@ -29,13 +29,13 @@ T['short_stream_visible_at_bottom'] = function()
   h.open_with_fixture(_G.child, 'simple_text')
 
   if not h.wait_for_session_end(_G.child, 8000) then
-    error('session did not end. ' .. h.dump_viewport(_G.child, _G.child:find_winid_for_buf('cc-output')))
+    error('session did not end. ' .. h.dump_viewport(_G.child, _G.child:find_winid_for_buf('cc-nvim-output')))
   end
   -- Drain scheduled callbacks (BufWinEnter Gzb, refresh_carets, etc.).
   _G.child:sleep(300)
 
-  local winid = _G.child:find_winid_for_buf('cc-output')
-  if not winid then error('no window for cc-output') end
+  local winid = _G.child:find_winid_for_buf('cc-nvim-output')
+  if not winid then error('no window for cc-nvim-output') end
   h.assert_pinned_to_bottom(_G.child, winid)
 end
 
@@ -46,12 +46,12 @@ T['long_stream_pinned_to_bottom_after_open'] = function()
   h.open_with_fixture(_G.child, 'multi_block')
 
   if not h.wait_for_session_end(_G.child, 8000) then
-    error('session did not end. ' .. h.dump_viewport(_G.child, _G.child:find_winid_for_buf('cc-output')))
+    error('session did not end. ' .. h.dump_viewport(_G.child, _G.child:find_winid_for_buf('cc-nvim-output')))
   end
   _G.child:sleep(300)
 
-  local winid = _G.child:find_winid_for_buf('cc-output')
-  if not winid then error('no window for cc-output') end
+  local winid = _G.child:find_winid_for_buf('cc-nvim-output')
+  if not winid then error('no window for cc-nvim-output') end
   h.assert_pinned_to_bottom(_G.child, winid)
 end
 
@@ -61,12 +61,12 @@ T['fold_collapse_keeps_pin'] = function()
   h.open_with_fixture(_G.child, 'multi_block')
 
   if not h.wait_for_session_end(_G.child, 8000) then
-    error('session did not end. ' .. h.dump_viewport(_G.child, _G.child:find_winid_for_buf('cc-output')))
+    error('session did not end. ' .. h.dump_viewport(_G.child, _G.child:find_winid_for_buf('cc-nvim-output')))
   end
   _G.child:sleep(300)
 
-  local winid = _G.child:find_winid_for_buf('cc-output')
-  if not winid then error('no window for cc-output') end
+  local winid = _G.child:find_winid_for_buf('cc-nvim-output')
+  if not winid then error('no window for cc-nvim-output') end
 
   -- Move focus to the output window and fully collapse / expand folds.
   _G.child:lua(
@@ -102,15 +102,15 @@ T['refocus_output_window_pins'] = function()
   h.open_with_fixture(_G.child, 'multi_block')
 
   if not h.wait_for_session_end(_G.child, 8000) then
-    error('session did not end. ' .. h.dump_viewport(_G.child, _G.child:find_winid_for_buf('cc-output')))
+    error('session did not end. ' .. h.dump_viewport(_G.child, _G.child:find_winid_for_buf('cc-nvim-output')))
   end
   _G.child:sleep(300)
 
   -- Focus prompt, then jump to output (`go` mapping in prompt buffer, or just
   -- via API) — covers the case where the user navigates back to the output.
-  local output_winid = _G.child:find_winid_for_buf('cc-output')
+  local output_winid = _G.child:find_winid_for_buf('cc-nvim-output')
   if not output_winid then error('no output window') end
-  local prompt_winid = _G.child:find_winid_for_buf('cc-nvim')
+  local prompt_winid = _G.child:find_winid_for_buf('cc-nvim-prompt')
   if not prompt_winid then error('no prompt window') end
 
   _G.child:lua(

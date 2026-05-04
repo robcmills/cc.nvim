@@ -286,7 +286,7 @@ function M.open_with_fixture(child, fixture_name, setup_opts)
   )
 end
 
---- Wait until the cc-output buffer exists and the agent has finished
+--- Wait until the cc-nvim-output buffer exists and the agent has finished
 --- streaming (router cleared streaming flag and process exited).
 ---@param child cc.E2EChild
 ---@param timeout_ms integer?
@@ -294,7 +294,7 @@ end
 function M.wait_for_session_end(child, timeout_ms)
   return child:wait_for(function(c)
     return c:lua([[
-      local buf = vim.fn.bufnr('cc-output')
+      local buf = vim.fn.bufnr('cc-nvim-output')
       if buf <= 0 then return false end
       -- Check the bottom of the output buffer for the terminal "Session ended" notice.
       local last = vim.api.nvim_buf_line_count(buf)
@@ -412,7 +412,7 @@ function M.sample_during_stream(child, winid, opts)
     if end_check_skip >= 4 then
       end_check_skip = 0
       ended = child:lua([[
-        local buf = vim.fn.bufnr('cc-output')
+        local buf = vim.fn.bufnr('cc-nvim-output')
         if buf <= 0 then return false end
         local last = vim.api.nvim_buf_line_count(buf)
         local lines = vim.api.nvim_buf_get_lines(buf, math.max(0, last - 5), last, false)

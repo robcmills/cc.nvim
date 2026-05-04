@@ -67,7 +67,7 @@ end
 -- Lua snippet (string-pasted into child:lua) that finds a buffer whose
 -- absolute name ends in `/<target>` (or is exactly `<target>`). Used in
 -- place of vim.fn.bufnr() because bufnr() does prefix/substring matching
--- and would conflate `cc-nvim` with `cc-nvim-2`.
+-- and would conflate `cc-nvim-prompt` with `cc-nvim-prompt-2`.
 local FIND_BUF_BY_NAME = [[
   local function find_buf_by_name(target)
     local suffix = '/' .. target
@@ -85,7 +85,7 @@ local FIND_BUF_BY_NAME = [[
 
 --- Wait until the buffer `buf_name` contains "Session ended" near its tail.
 --- Used for instance 2's stream end (h.wait_for_session_end is hard-coded
---- to cc-output and would match the wrong buffer in a multi-instance run).
+--- to cc-nvim-output and would match the wrong buffer in a multi-instance run).
 local function wait_for_session_end_in(child, buf_name, timeout_ms)
   return child:wait_for(function(c)
     return c:lua(FIND_BUF_BY_NAME .. string.format([[
@@ -122,7 +122,7 @@ local function capture_instance(child, prompt_name)
 end
 
 --- Snapshot of the current window state (which winid/buf is focused, and
---- the view of a named cc-output buffer if it is currently displayed).
+--- the view of a named cc-nvim-output buffer if it is currently displayed).
 local function current_state(child, output_buf_name)
   return child:lua(FIND_BUF_BY_NAME .. string.format([[
     local cur_win = vim.api.nvim_get_current_win()
@@ -149,7 +149,7 @@ local function current_state(child, output_buf_name)
   ]], output_buf_name))
 end
 
---- Focus a cc-output buffer's window and scroll so a specific buffer line
+--- Focus a cc-nvim-output buffer's window and scroll so a specific buffer line
 --- sits at the top of the viewport. Returns the resulting winsaveview.
 local function focus_output_and_scroll(child, output_buf_name, top_line)
   return child:lua(FIND_BUF_BY_NAME .. string.format([[
@@ -179,7 +179,8 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Test 1: prompt focus is the default after navigating away and back.
--- User stays in prompt, runs :edit foo from prompt, comes back via :b cc-nvim.
+-- User stays in prompt, runs :edit foo from prompt, comes back via :b cc-nvim-output.
+-- (The buflisted output buffer is the canonical re-entry point.)
 -- ---------------------------------------------------------------------------
 
 T['prompt_focus_default_after_nav_away_and_back'] = function()
@@ -187,24 +188,26 @@ T['prompt_focus_default_after_nav_away_and_back'] = function()
   open_populated(_G.child)
   force_alive(_G.child)
 
-  local before = capture_instance(_G.child, 'cc-nvim')
+  local before = capture_instance(_G.child, 'cc-nvim-prompt')
   if before.error then error(before.error) end
 
-  -- :edit a regular file from the prompt window. This replaces cc-nvim,
-  -- triggers prompt's BufWinLeave, which closes the output companion.
+  -- :edit a regular file from the prompt window. This replaces cc-nvim-prompt,
+  -- triggers prompt's BufWinLeave, which closes the output window as a side
+  -- effect (both halves of the cc layout collapse together).
   _G.child:lua([[ pcall(vim.cmd, 'edit plugin/cc.lua') ]])
   _G.child:sleep(200)
 
-  -- Buffer-back to cc-nvim. BufWinEnter recreates the output companion.
-  switch_to_buf_by_name(_G.child, 'cc-nvim')
+  -- Buffer-back to cc-nvim-output. Output's BufWinEnter recreates the prompt
+  -- companion below.
+  switch_to_buf_by_name(_G.child, 'cc-nvim-output')
   _G.child:sleep(300)
 
-  local after = current_state(_G.child, 'cc-output')
-  local cur_inst = capture_instance(_G.child, 'cc-nvim')
+  local after = current_state(_G.child, 'cc-nvim-output')
+  local cur_inst = capture_instance(_G.child, 'cc-nvim-prompt')
   if cur_inst.error then error(cur_inst.error) end
 
   if after.cur_buf ~= before.prompt_bufnr then
-    error(string.format('expected current buf to be cc-nvim (%d), got %d (%q)',
+    error(string.format('expected current buf to be cc-nvim-prompt (%d), got %d (%q)',
       before.prompt_bufnr, after.cur_buf, after.cur_buf_name))
   end
   if after.cur_win ~= cur_inst.prompt_winid then
@@ -219,10 +222,10 @@ end
 -- ---------------------------------------------------------------------------
 -- Test 2: scroll is preserved when navigating away from PROMPT window.
 -- This is the path the ad4da9e fix targets directly.
--- Sequence: focus output, scroll, focus prompt, :edit foo, :b cc-nvim.
+-- Sequence: focus output, scroll, focus prompt, :edit foo, :b cc-nvim-output.
 -- last_focus ends up 'prompt' (last BufLeave was from prompt), so focus
 -- returns to prompt — but the saved_output_view IS captured because the
--- output window still holds cc-output when prompt's BufWinLeave fires.
+-- output window still holds cc-nvim-output when prompt's BufWinLeave fires.
 -- ---------------------------------------------------------------------------
 
 T['scroll_preserved_when_nav_away_from_prompt'] = function()
@@ -230,10 +233,10 @@ T['scroll_preserved_when_nav_away_from_prompt'] = function()
   open_populated(_G.child)
   force_alive(_G.child)
 
-  local before_inst = capture_instance(_G.child, 'cc-nvim')
+  local before_inst = capture_instance(_G.child, 'cc-nvim-prompt')
   if before_inst.error then error(before_inst.error) end
 
-  local view_before = focus_output_and_scroll(_G.child, 'cc-output', 5)
+  local view_before = focus_output_and_scroll(_G.child, 'cc-nvim-output', 5)
   if view_before.error then error(view_before.error) end
 
   -- Hop back to prompt before navigating out.
@@ -244,10 +247,10 @@ T['scroll_preserved_when_nav_away_from_prompt'] = function()
 
   _G.child:lua([[ pcall(vim.cmd, 'edit plugin/cc.lua') ]])
   _G.child:sleep(200)
-  switch_to_buf_by_name(_G.child, 'cc-nvim')
+  switch_to_buf_by_name(_G.child, 'cc-nvim-output')
   _G.child:sleep(300)
 
-  local after = current_state(_G.child, 'cc-output')
+  local after = current_state(_G.child, 'cc-nvim-output')
   if not after.output_winid or not after.output_view then
     error('output window did not come back')
   end
@@ -264,8 +267,8 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Test 3: output focus is restored when user navigated away from OUTPUT.
--- Sequence: focus output, scroll, :edit foo from output window, :b cc-nvim.
--- BufLeave on cc-output sets last_focus='output', so on reopen the layout
+-- Sequence: focus output, scroll, :edit foo from output window, :b cc-nvim-prompt.
+-- BufLeave on cc-nvim-output sets last_focus='output', so on reopen the layout
 -- recreates output above prompt and moves focus to output.
 --
 -- Scroll preservation on this path is checked too: it requires the output
@@ -278,23 +281,23 @@ T['output_focus_and_scroll_restored_when_nav_away_from_output'] = function()
   open_populated(_G.child)
   force_alive(_G.child)
 
-  local view_before = focus_output_and_scroll(_G.child, 'cc-output', 6)
+  local view_before = focus_output_and_scroll(_G.child, 'cc-nvim-output', 6)
   if view_before.error then error(view_before.error) end
 
-  -- :edit a regular file from the OUTPUT window. cc-output's BufWinLeave
+  -- :edit a regular file from the OUTPUT window. cc-nvim-output's BufWinLeave
   -- fires here; its handler closes the prompt companion as a side-effect.
   _G.child:lua([[ pcall(vim.cmd, 'edit plugin/cc.lua') ]])
   _G.child:sleep(250)
 
-  switch_to_buf_by_name(_G.child, 'cc-nvim')
+  switch_to_buf_by_name(_G.child, 'cc-nvim-output')
   _G.child:sleep(300)
 
-  local after = current_state(_G.child, 'cc-output')
-  local cur_inst = capture_instance(_G.child, 'cc-nvim')
+  local after = current_state(_G.child, 'cc-nvim-output')
+  local cur_inst = capture_instance(_G.child, 'cc-nvim-prompt')
   if cur_inst.error then error(cur_inst.error) end
 
   if not after.output_winid then
-    error('output window not recreated after returning to cc-nvim')
+    error('output window not recreated after returning to cc-nvim-prompt')
   end
   if after.cur_win ~= after.output_winid then
     error(string.format(
@@ -304,7 +307,7 @@ T['output_focus_and_scroll_restored_when_nav_away_from_output'] = function()
   if after.output_view.topline ~= view_before.topline
       or after.output_view.lnum ~= view_before.lnum then
     error(string.format(
-      'scroll not preserved across output→file→cc-nvim path:\n  before: topline=%d lnum=%d\n  after:  topline=%d lnum=%d',
+      'scroll not preserved across output→file→cc-nvim-prompt path:\n  before: topline=%d lnum=%d\n  after:  topline=%d lnum=%d',
       view_before.topline, view_before.lnum,
       after.output_view.topline, after.output_view.lnum))
   end
@@ -319,22 +322,22 @@ end
 T['multi_instance_preserves_per_instance_focus_and_scroll'] = function()
   _G.child = h.spawn({ lines = 22, columns = 100 })
 
-  -- Instance 1 (cc-nvim / cc-output)
+  -- Instance 1 (cc-nvim-prompt / cc-nvim-output)
   open_populated(_G.child)
   force_alive(_G.child)
 
-  local view1_before = focus_output_and_scroll(_G.child, 'cc-output', 5)
+  local view1_before = focus_output_and_scroll(_G.child, 'cc-nvim-output', 5)
   if view1_before.error then error(view1_before.error) end
 
   -- Stay in inst1's OUTPUT window. Opening inst2 from here makes
-  -- nvim_set_current_buf fire BufLeave on cc-output → inst1.last_focus='output'.
+  -- nvim_set_current_buf fire BufLeave on cc-nvim-output → inst1.last_focus='output'.
   -- (Hopping to prompt first would have set last_focus='prompt' and lost
   -- the per-instance "I was in output" state.)
   _G.child:lua(string.format([[
     vim.env.CC_TEST_FIXTURE = %q
     require('cc').open()
   ]], h.ndjson_dir .. '/many_lines.ndjson'))
-  if not wait_for_session_end_in(_G.child, 'cc-output-2', 8000) then
+  if not wait_for_session_end_in(_G.child, 'cc-nvim-output-2', 8000) then
     error('instance 2 session did not end')
   end
   _G.child:sleep(150)
@@ -343,12 +346,12 @@ T['multi_instance_preserves_per_instance_focus_and_scroll'] = function()
   force_alive(_G.child)
 
   -- Stay in instance 2's prompt (default focus). last_focus on inst2 is
-  -- nil here; it'll become 'prompt' the moment we run :b cc-nvim below.
+  -- nil here; it'll become 'prompt' the moment we run :b cc-nvim-prompt below.
 
-  switch_to_buf_by_name(_G.child, 'cc-nvim')
+  switch_to_buf_by_name(_G.child, 'cc-nvim-output')
   _G.child:sleep(300)
 
-  local on_inst1 = current_state(_G.child, 'cc-output')
+  local on_inst1 = current_state(_G.child, 'cc-nvim-output')
   if not on_inst1.output_winid then error('inst1 output not recreated') end
   if on_inst1.cur_win ~= on_inst1.output_winid then
     error(string.format(
@@ -363,16 +366,16 @@ T['multi_instance_preserves_per_instance_focus_and_scroll'] = function()
       on_inst1.output_view.topline, on_inst1.output_view.lnum))
   end
 
-  -- Now switch to instance 2. We're in inst1's OUTPUT window. :b cc-nvim-2
-  -- replaces cc-output with cc-nvim-2 there: that fires BufLeave on
-  -- cc-output (inst1.last_focus stays 'output') and BufWinEnter on
-  -- cc-nvim-2 which recreates inst2's output companion.
-  switch_to_buf_by_name(_G.child, 'cc-nvim-2')
+  -- Now switch to instance 2. We're in inst1's OUTPUT window. :b cc-nvim-prompt-2
+  -- replaces cc-nvim-output with cc-nvim-prompt-2 there: that fires BufLeave on
+  -- cc-nvim-output (inst1.last_focus stays 'output') and BufWinEnter on
+  -- cc-nvim-prompt-2 which recreates inst2's output companion.
+  switch_to_buf_by_name(_G.child, 'cc-nvim-output-2')
   _G.child:sleep(300)
 
-  local on_inst2 = current_state(_G.child, 'cc-output-2')
+  local on_inst2 = current_state(_G.child, 'cc-nvim-output-2')
   if not on_inst2.output_winid then error('inst2 output not recreated') end
-  local inst2_now = capture_instance(_G.child, 'cc-nvim-2')
+  local inst2_now = capture_instance(_G.child, 'cc-nvim-prompt-2')
   if inst2_now.error then error(inst2_now.error) end
   -- Inst2's last_focus was set to 'prompt' by the BufLeave that fired
   -- when we left inst2's prompt to go to inst1, so focus returns to prompt.
@@ -394,9 +397,9 @@ T['multi_instance_interleaved_with_regular_buffer'] = function()
   open_populated(_G.child)
   force_alive(_G.child)
 
-  local inst1 = capture_instance(_G.child, 'cc-nvim')
+  local inst1 = capture_instance(_G.child, 'cc-nvim-prompt')
   if inst1.error then error(inst1.error) end
-  local view1_before = focus_output_and_scroll(_G.child, 'cc-output', 4)
+  local view1_before = focus_output_and_scroll(_G.child, 'cc-nvim-output', 4)
   if view1_before.error then error(view1_before.error) end
   -- Leave focus on output: BufLeave on output later will set last_focus='output'.
 
@@ -409,7 +412,7 @@ T['multi_instance_interleaved_with_regular_buffer'] = function()
     vim.env.CC_TEST_FIXTURE = %q
     require('cc').open()
   ]], h.ndjson_dir .. '/many_lines.ndjson'))
-  if not wait_for_session_end_in(_G.child, 'cc-output-2', 8000) then
+  if not wait_for_session_end_in(_G.child, 'cc-nvim-output-2', 8000) then
     error('instance 2 session did not end')
   end
   _G.child:sleep(150)
@@ -422,10 +425,10 @@ T['multi_instance_interleaved_with_regular_buffer'] = function()
   _G.child:sleep(200)
 
   -- Return to instance 1.
-  switch_to_buf_by_name(_G.child, 'cc-nvim')
+  switch_to_buf_by_name(_G.child, 'cc-nvim-output')
   _G.child:sleep(300)
 
-  local on_inst1 = current_state(_G.child, 'cc-output')
+  local on_inst1 = current_state(_G.child, 'cc-nvim-output')
   if not on_inst1.output_winid then error('inst1 output not recreated') end
   if on_inst1.cur_win ~= on_inst1.output_winid then
     error(string.format(
@@ -453,12 +456,12 @@ T['multi_instance_interleaved_with_terminal_buffer'] = function()
   open_populated(_G.child)
   force_alive(_G.child)
 
-  local view1_before = focus_output_and_scroll(_G.child, 'cc-output', 5)
+  local view1_before = focus_output_and_scroll(_G.child, 'cc-nvim-output', 5)
   if view1_before.error then error(view1_before.error) end
 
-  -- :terminal from inside the OUTPUT window. cc-output is replaced by the
-  -- terminal buffer in place, firing BufLeave on cc-output (last_focus='output')
-  -- and BufWinLeave on cc-output (snapshots the view; cascades to closing
+  -- :terminal from inside the OUTPUT window. cc-nvim-output is replaced by the
+  -- terminal buffer in place, firing BufLeave on cc-nvim-output (last_focus='output')
+  -- and BufWinLeave on cc-nvim-output (snapshots the view; cascades to closing
   -- the prompt companion). `tail -f /dev/null` is portable enough on
   -- macOS/linux to hold the terminal open indefinitely.
   _G.child:lua([[
@@ -467,11 +470,11 @@ T['multi_instance_interleaved_with_terminal_buffer'] = function()
   ]])
   _G.child:sleep(200)
 
-  -- Return to cc-nvim from the terminal buffer.
-  switch_to_buf_by_name(_G.child, 'cc-nvim')
+  -- Return to cc-nvim-prompt from the terminal buffer.
+  switch_to_buf_by_name(_G.child, 'cc-nvim-output')
   _G.child:sleep(300)
 
-  local on_inst1 = current_state(_G.child, 'cc-output')
+  local on_inst1 = current_state(_G.child, 'cc-nvim-output')
   if not on_inst1.output_winid then
     error('inst1 output not recreated after terminal interleave')
   end
@@ -509,7 +512,7 @@ T['edit_from_output_window_restores_user_window_opts'] = function()
   open_populated(_G.child, false)
 
   -- Move into the output window then :edit a regular file there.
-  local inst = capture_instance(_G.child, 'cc-nvim')
+  local inst = capture_instance(_G.child, 'cc-nvim-prompt')
   if inst.error then error(inst.error) end
   _G.child:lua(string.format([[ vim.api.nvim_set_current_win(%d) ]], inst.output_winid))
   _G.child:sleep(50)

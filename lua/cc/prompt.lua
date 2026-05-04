@@ -9,7 +9,7 @@ local M = {}
 local Prompt = {}
 Prompt.__index = Prompt
 
-local BUF_NAME_DEFAULT = 'cc-nvim'
+local BUF_NAME_DEFAULT = 'cc-nvim-prompt'
 
 ---@param buf_name string? override buffer name (for multiple instances)
 function M.new(buf_name)
@@ -24,11 +24,11 @@ function Prompt:ensure_buffer()
   if self.bufnr > 0 and vim.api.nvim_buf_is_valid(self.bufnr) then
     return self.bufnr
   end
-  self.bufnr = vim.api.nvim_create_buf(true, true)
+  self.bufnr = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(self.bufnr, self.buf_name)
   vim.bo[self.bufnr].buftype = 'nofile'
   vim.bo[self.bufnr].bufhidden = 'hide'
-  vim.bo[self.bufnr].buflisted = true
+  vim.bo[self.bufnr].buflisted = false
   vim.bo[self.bufnr].swapfile = false
   vim.bo[self.bufnr].filetype = 'markdown'
 
@@ -36,6 +36,7 @@ function Prompt:ensure_buffer()
   vim.bo[self.bufnr].omnifunc = "v:lua.require'cc.prompt'.omnifunc"
 
   self:_setup_window_opts_for_buffer()
+  self:_guard_buflisted()
 
   -- If nvim-cmp is available, override buffer-local sources so our slash
   -- source wins over the user's global `path` source (which would otherwise
@@ -89,6 +90,26 @@ function M.omnifunc(findstart, base)
   return matches
 end
 
+--- Re-assert `buflisted = false` on events that flip it back on. Vim's
+--- `:edit <buffer-name>` (used by some pickers and any direct `:e` of the
+--- prompt buffer's path) flips buflisted=true via BufAdd; without this
+--- guard, the prompt then leaks into buffer-list sidebars. Hooking BufAdd
+--- and BufEnter covers both the natural `:edit` flow and any plugin that
+--- sets buflisted=true and then triggers BufEnter.
+function Prompt:_guard_buflisted()
+  local bufnr = self.bufnr
+  local group = vim.api.nvim_create_augroup('cc.prompt.buflisted.' .. bufnr, { clear = true })
+  vim.api.nvim_create_autocmd({ 'BufAdd', 'BufEnter' }, {
+    group = group,
+    buffer = bufnr,
+    callback = function()
+      if vim.bo[bufnr].buflisted then
+        vim.bo[bufnr].buflisted = false
+      end
+    end,
+  })
+end
+
 --- Options cc overrides on the prompt window. Saved on entry, restored on
 --- BufWinLeave so they don't leak to buffers that later occupy the window.
 local PROMPT_WIN_OPTS = { 'number', 'relativenumber', 'signcolumn', 'wrap' }
@@ -107,7 +128,29 @@ function Prompt:_setup_window_opts_for_buffer()
         return
       end
       local config = require('cc.config').options
-      winopts.save(winid, 'prompt', PROMPT_WIN_OPTS)
+      -- Source the restore baseline from inst.user_winopts (captured in
+      -- create_instance before any cc autocmd fired). The prompt window
+      -- is normally created via `:split` from the output window, so its
+      -- inherited window-local values already reflect cc's overrides;
+      -- and for "g+l" options like 'number', vim.go is corrupted by
+      -- those overrides too. inst.user_winopts is the only reliable
+      -- source of the user's pre-cc state.
+      local cc = require('cc')
+      local inst = cc.find_instance(bufnr)
+      -- Skip transient appearances (mirror of the output-side guard):
+      -- if a different window is the canonical prompt window, this winid
+      -- is mid-layout flux and shouldn't claim the prompt baseline.
+      if inst and inst.prompt_winid and inst.prompt_winid ~= winid then
+        return
+      end
+      do
+        local user_opts = inst and inst.user_winopts or nil
+        if user_opts then
+          winopts.save_table(winid, 'prompt', PROMPT_WIN_OPTS, user_opts)
+        else
+          winopts.save(winid, 'prompt', PROMPT_WIN_OPTS)
+        end
+      end
       -- Stash the winid where it's correct (current win is this prompt's
       -- window here). BufWinLeave's `nvim_get_current_win` would return
       -- the destination window instead, so we read this back there.

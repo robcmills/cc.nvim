@@ -33,10 +33,10 @@ T['large_read_followed_by_text_anchors_view'] = function()
   -- Window small enough that the Read result + trailing text overflow it.
   _G.child = h.spawn({ lines = 20, columns = 100 })
   h.open_with_fixture(_G.child, 'large_read', { slow_delay_ms = 8 })
-  if not _G.child:wait_for(function(c) return c:find_winid_for_buf('cc-output') ~= nil end, 3000) then
+  if not _G.child:wait_for(function(c) return c:find_winid_for_buf('cc-nvim-output') ~= nil end, 3000) then
     error('output window never appeared')
   end
-  local winid = _G.child:find_winid_for_buf('cc-output')
+  local winid = _G.child:find_winid_for_buf('cc-nvim-output')
 
   if not h.wait_for_session_end(_G.child, 8000) then
     error('session did not end. ' .. h.dump_viewport(_G.child, winid))
@@ -53,10 +53,10 @@ end
 T['no_open_fold_flash_during_large_read'] = function()
   _G.child = h.spawn({ lines = 20, columns = 100 })
   h.open_with_fixture(_G.child, 'large_read', { slow_delay_ms = 8 })
-  if not _G.child:wait_for(function(c) return c:find_winid_for_buf('cc-output') ~= nil end, 3000) then
+  if not _G.child:wait_for(function(c) return c:find_winid_for_buf('cc-nvim-output') ~= nil end, 3000) then
     error('output window never appeared')
   end
-  local winid = _G.child:find_winid_for_buf('cc-output')
+  local winid = _G.child:find_winid_for_buf('cc-nvim-output')
 
   -- Drive the stream to completion (we don't actually consume the samples
   -- here — they're just a way to wait for the stream to drain).
@@ -86,7 +86,7 @@ T['no_open_fold_flash_during_large_read'] = function()
   -- This is a test-only workaround for a headless-mode artifact; in
   -- production the UI thread drives foldexpr eval naturally.
   local open_depth3_seen = _G.child:lua([[
-    local b = vim.fn.bufnr('cc-output')
+    local b = vim.fn.bufnr('cc-nvim-output')
     if b <= 0 then return false end
     local state = require('cc.output')._buf_state[b]
     if not state then return false end
