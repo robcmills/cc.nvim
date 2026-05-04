@@ -224,6 +224,7 @@ local function setup_buffer_autocmds(inst)
         -- user actually was.
         local saved_last_focus = inst.last_focus
         inst.output_winid = output_win
+        inst.output:set_window(output_win)
         vim.api.nvim_set_current_win(output_win)
         vim.cmd('belowright split')
         vim.api.nvim_set_current_buf(prompt_bufnr)

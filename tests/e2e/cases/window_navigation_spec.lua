@@ -553,4 +553,70 @@ T['edit_from_output_window_restores_user_window_opts'] = function()
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- Test 8: tail-follow still works after navigating away from prompt and back.
+--
+-- Regression: commit 2c98372 (swap output/prompt parent-child) updates
+-- `inst.output_winid` in the output BufWinEnter callback but never calls
+-- `inst.output:set_window(new_winid)`. After :edit-from-prompt closes the
+-- original output window and :b cc-nvim-output reopens the layout in a
+-- DIFFERENT window, `inst.output.winid` still points at the original (now
+-- closed, invalid) winid. Subsequent calls to `inst.output:follow_tail()`
+-- — which is what M.submit() invokes to pin to the bottom before sending
+-- a prompt — silently no-op because `_follow_tail` early-returns on
+-- invalid winid. User-visible symptom: prompts submitted after window
+-- nav don't scroll the output to the tail.
+-- ---------------------------------------------------------------------------
+
+T['follow_tail_works_after_nav_away_from_prompt_and_back'] = function()
+  _G.child = h.spawn({ lines = 22, columns = 100 })
+  open_populated(_G.child)
+  force_alive(_G.child)
+
+  -- Focus prompt before :edit so prompt's BufWinLeave fires (this is the
+  -- path that closes the output window and detaches it from inst.output.winid).
+  local before = capture_instance(_G.child, 'cc-nvim-prompt')
+  if before.error then error(before.error) end
+  _G.child:lua(string.format('vim.api.nvim_set_current_win(%d)', before.prompt_winid))
+  _G.child:sleep(50)
+
+  _G.child:lua([[ pcall(vim.cmd, 'edit plugin/cc.lua') ]])
+  _G.child:sleep(200)
+  switch_to_buf_by_name(_G.child, 'cc-nvim-output')
+  _G.child:sleep(300)
+
+  local after = capture_instance(_G.child, 'cc-nvim-prompt')
+  if after.error then error(after.error) end
+  if not after.output_winid then error('output window not recreated') end
+
+  -- Sanity: inst.output.winid (the field _follow_tail consults) should
+  -- equal inst.output_winid. With the regression, it lags behind.
+  local output_field_winid = _G.child:lua(string.format([[
+    local inst = require('cc').find_instance(%d)
+    return inst and inst.output and inst.output.winid or nil
+  ]], after.prompt_bufnr))
+  if output_field_winid ~= after.output_winid then
+    error(string.format(
+      'inst.output.winid (%s) out of sync with inst.output_winid (%s) after nav-away/back',
+      tostring(output_field_winid), tostring(after.output_winid)))
+  end
+
+  -- Move cursor to the top of the output buffer so we are clearly NOT
+  -- following the tail. follow_tail() must move the cursor back to the
+  -- last line and pin the view to the bottom.
+  _G.child:lua(string.format([[
+    vim.api.nvim_win_set_cursor(%d, { 1, 0 })
+  ]], after.output_winid))
+  _G.child:sleep(50)
+
+  -- Same call M.submit() makes right before sending a prompt.
+  _G.child:lua(string.format([[
+    local inst = require('cc').find_instance(%d)
+    inst.output:follow_tail()
+  ]], after.prompt_bufnr))
+  _G.child:sleep(50)
+
+  h.assert_pinned_to_bottom(_G.child, after.output_winid)
+end
+
 return T
