@@ -36,6 +36,18 @@ M.VERSION = '0.2.0'
 local instances = {} -- keyed by prompt bufnr
 local next_instance_id = 1
 
+-- Kill claude subprocesses on exit so shada writes complete (avoids E138 .shada.tmp.* orphans).
+vim.api.nvim_create_autocmd('VimLeavePre', {
+  group = vim.api.nvim_create_augroup('cc.shutdown', { clear = true }),
+  callback = function()
+    for _, inst in pairs(instances) do
+      if inst and inst.process then
+        pcall(function() inst.process:close() end)
+      end
+    end
+  end,
+})
+
 --- Find the instance that owns the given buffer (prompt or output).
 ---@param bufnr integer
 ---@return cc.Instance?
