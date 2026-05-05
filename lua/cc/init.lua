@@ -11,7 +11,7 @@ local Router = require('cc.router')
 
 local M = {}
 
-M.VERSION = '0.2.0'
+M.VERSION = '0.3.0'
 
 -- ---------------------------------------------------------------------------
 -- Instance management
