@@ -165,7 +165,7 @@ function M.default_foldtext(info)
     return {
       { '    ▸ ', 'CcCaret' },
       { stripped, hl },
-      { '  ⟨' .. info.line_count .. ' lines⟩', 'CcFolded' },
+      { ' ⟨' .. info.line_count .. ' lines⟩', 'CcFolded' },
     }
   end
   return { { info.header .. '  ⟨' .. info.line_count .. ' lines⟩', 'CcFolded' } }
