@@ -1,6 +1,3 @@
-- [ ] Add markdown highlighting for Subagent prompts
-- [ ] Add Cc commands to navigate output by turn, tool, etc.
-- [ ] Add Cc commands to maximize/minimize prompt/output windows
 - [ ] Fix missing mode in statusline on startup
 - [ ] Add session timing info
 - [ ] Investigate swapfile issue when two instances are editing the same file
@@ -20,6 +17,7 @@
 - [ ] Add support for /remote-control
 - [ ] Add support plan mode toggle
 - [ ] Add support for /compact (requires brainstorming)
+- [ ] Add markdown highlighting for Subagent prompts
 
 - [x] Refactor architecture to use output buffer as parent instead of prompt buffer
 - [x] add prompt placeholder 
