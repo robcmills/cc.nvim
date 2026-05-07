@@ -33,6 +33,7 @@ M.VERSION = '0.3.0'
 ---@field saved_output_view table? output winsaveview snapshot from the last close, restored on reopen
 ---@field saved_prompt_view table? prompt winsaveview snapshot from the last close, restored on reopen
 ---@field last_focus 'prompt'|'output'? which cc buffer the user was last in; restored on reopen
+---@field user_fold_level integer? user's chosen foldlevel from the last close, restored on reopen
 
 local instances = {} -- keyed by output bufnr
 local next_instance_id = 1
@@ -230,7 +231,8 @@ local function setup_buffer_autocmds(inst)
         vim.api.nvim_set_current_buf(prompt_bufnr)
         inst.prompt_winid = vim.api.nvim_get_current_win()
         inst.prompt:set_window(inst.prompt_winid)
-        vim.api.nvim_win_set_height(inst.prompt_winid, Config.options.prompt_height)
+        vim.api.nvim_win_set_height(inst.prompt_winid,
+          inst.expected_prompt_height or Config.options.prompt_height)
         require('cc.statusline').attach(inst, output_win)
         -- If the user was last focused on the prompt window, leave focus
         -- there. Default (saved_last_focus nil or 'output') hops back to output.

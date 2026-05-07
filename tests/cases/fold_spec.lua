@@ -171,6 +171,71 @@ T['win_enter']['re-entering window preserves user foldlevel'] = function()
   eq(_G.child.lua_get('_G._foldlevel_after'), 99)
 end
 
+-- Regression: navigating away from cc (replacing the cc buffer in a window
+-- via :edit) and back (via :b cc-nvim-output) must preserve the user's
+-- foldlevel. The vsplit-only test above doesn't catch this because the
+-- output buffer is never replaced in its window — BufWinLeave doesn't fire,
+-- so the window-local cc_output_fold_initialized flag is never cleared.
+T['win_enter']['nav away and back preserves user foldlevel'] = function()
+  _G.child.lua([[require('cc').load_fixture('simple_text')]])
+  _G.child.lua([[
+    local cc = require('cc')
+    local inst = cc._get_instance()
+    local output_winid = inst.output_winid
+    -- User explicitly sets foldlevel to 0 (everything collapsed).
+    vim.wo[output_winid].foldlevel = 0
+    _G._fold_before = vim.wo[output_winid].foldlevel
+
+    -- :edit a regular file from prompt window, then :b cc-nvim-output back.
+    vim.api.nvim_set_current_win(inst.prompt_winid)
+    pcall(vim.cmd, 'edit plugin/cc.lua')
+    vim.wait(50, function() return false end)
+    vim.cmd('buffer ' .. inst.output.bufnr)
+    vim.wait(100, function() return false end)
+
+    local new_winid
+    for _, w in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_buf(w) == inst.output.bufnr then
+        new_winid = w; break
+      end
+    end
+    _G._fold_after = vim.wo[new_winid].foldlevel
+  ]])
+  eq(_G.child.lua_get('_G._fold_before'), 0)
+  eq(_G.child.lua_get('_G._fold_after'), 0)
+end
+
+T['nav_away_back'] = MiniTest.new_set()
+
+-- Regression: navigating away from cc and back must preserve the user's
+-- manually-resized prompt window height. Reopen always set height to
+-- Config.options.prompt_height, clobbering the user's choice.
+T['nav_away_back']['preserves user-resized prompt height'] = function()
+  _G.child.lua([[require('cc').load_fixture('simple_text')]])
+  _G.child.lua([[
+    local cc = require('cc')
+    local inst = cc._get_instance()
+    -- User resizes prompt to 20 (default is 10).
+    vim.api.nvim_win_set_height(inst.prompt_winid, 20)
+    require('cc.autosize')._handle_winresized(inst, { inst.prompt_winid })
+    _G._height_before = vim.api.nvim_win_get_height(inst.prompt_winid)
+
+    -- :edit a regular file from prompt window (closes both cc windows),
+    -- then :b cc-nvim-output back (recreates layout).
+    pcall(vim.cmd, 'edit plugin/cc.lua')
+    vim.wait(50, function() return false end)
+    vim.cmd('buffer ' .. inst.output.bufnr)
+    vim.wait(100, function() return false end)
+
+    _G._height_after = inst.prompt_winid
+        and vim.api.nvim_win_is_valid(inst.prompt_winid)
+        and vim.api.nvim_win_get_height(inst.prompt_winid)
+        or -1
+  ]])
+  eq(_G.child.lua_get('_G._height_before'), 20)
+  eq(_G.child.lua_get('_G._height_after'), 20)
+end
+
 T['manual_open'] = MiniTest.new_set()
 
 -- Regression: with foldmethod=expr, once the user has manually opened a fold

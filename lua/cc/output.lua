@@ -171,9 +171,13 @@ function Output:_setup_window_opts_for_buffer()
       vim.wo[winid].wrap = config.wrap == nil or config.wrap.output ~= false
       -- foldlevel is user-adjustable (via :CcFold / zM / zR). Only seed it the
       -- first time this window shows the buffer so re-focusing doesn't undo
-      -- the user's choice.
+      -- the user's choice. After nav-away (BufWinLeave clears the window-local
+      -- flag) and back, fall back to the instance-level user_fold_level so the
+      -- user's last setting survives a layout close/reopen cycle.
       if not vim.w[winid].cc_output_fold_initialized then
-        vim.wo[winid].foldlevel = config.default_fold_level
+        local inst = ok_cc and cc and cc.find_instance and cc.find_instance(bufnr) or nil
+        local seed = (inst and inst.user_fold_level) or config.default_fold_level
+        vim.wo[winid].foldlevel = seed
         vim.w[winid].cc_output_fold_initialized = true
       end
       -- If the cursor is at the last line, re-anchor the view so topline
@@ -213,6 +217,15 @@ function Output:_setup_window_opts_for_buffer()
       local saved_winid = vim.b[bufnr].cc_output_winid
       vim.b[bufnr].cc_output_winid = nil
       if saved_winid and vim.api.nvim_win_is_valid(saved_winid) then
+        -- Capture the user's current foldlevel before winopts.restore swaps
+        -- in the pre-cc baseline, so a later BufWinEnter can re-seed with it.
+        local ok_cc, cc = pcall(require, 'cc')
+        if ok_cc and cc and cc.find_instance then
+          local inst = cc.find_instance(bufnr)
+          if inst then
+            inst.user_fold_level = vim.wo[saved_winid].foldlevel
+          end
+        end
         require('cc.statusline').detach(saved_winid)
         winopts.restore(saved_winid, 'output', OUTPUT_WIN_OPTS)
         vim.w[saved_winid].cc_output_fold_initialized = nil

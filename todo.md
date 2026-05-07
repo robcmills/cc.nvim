@@ -1,3 +1,5 @@
+- [x] Fix foldlevel not persisting across navigations
+- [ ] Add configurable markdown highlighting for Subagent prompts
 - [ ] Fix missing mode in statusline on startup
 - [ ] Add session timing info
 - [ ] Investigate swapfile issue when two instances are editing the same file
@@ -17,7 +19,12 @@
 - [ ] Add support for /remote-control
 - [ ] Add support plan mode toggle
 - [ ] Add support for /compact (requires brainstorming)
-- [ ] Add markdown highlighting for Subagent prompts
+
+- [ ] Expose visibility into long running bash tool calls? (a way to see output while it's running)
+```
+   Bash: Run GlobalConfigControllerTest 󰔛 timeout 300s (170s)
+    cd /Users/robcmills/src/openspace/backend && ./gradlew :platform:test --tests "openspace.platform.controller.api.v3.GlobalConfigControllerTest" 2>&1 | tail -40
+```
 
 - [x] Refactor architecture to use output buffer as parent instead of prompt buffer
 - [x] add prompt placeholder 
