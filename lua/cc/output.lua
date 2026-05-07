@@ -1157,8 +1157,10 @@ do
   local tool_body = require('cc.output.tool_body')
   M.summarize_tool_input = tool_body.summarize_tool_input
   M._extract_yaml_scalar = tool_body.extract_yaml_scalar
+  M._extract_yaml_scalar_at = tool_body.extract_yaml_scalar_at
   M._full_body_fragment = tool_body.full_body_fragment
   M._default_tool_body = tool_body.default_tool_body
+  M._extract_browser_batch_js_fragments = tool_body.extract_browser_batch_js_fragments
   local timers = require('cc.output.timers')
   Output.start_tool_timer = timers.start
   Output.stop_tool_timer = timers.stop

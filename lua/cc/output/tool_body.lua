@@ -105,6 +105,57 @@ local function full_body_fragment(body_lines)
 end
 M.full_body_fragment = full_body_fragment
 
+--- Extract a `<key>: ...` scalar at a known indent in a YAML-ish body, starting
+--- the search at `from_lnum` (1-indexed). Returns a fragment {text, row_map} and
+--- the line index just past the matched scalar, or nil if no match was found
+--- before `stop_lnum` (exclusive; defaults to past the end). Handles both the
+--- block form (`<key>: |` + content lines indented `indent + 2` spaces) and the
+--- inline form (`<key>: <value>` on a single line). row_map body_idx entries are
+--- 0-indexed into `body_lines`.
+---@param body_lines string[]
+---@param key string
+---@param indent integer
+---@param from_lnum integer
+---@param stop_lnum integer?
+---@return { text: string, row_map: table[] }?, integer?
+local function extract_yaml_scalar_at(body_lines, key, indent, from_lnum, stop_lnum)
+  stop_lnum = stop_lnum or (#body_lines + 1)
+  local pad = string.rep(' ', indent)
+  local block_header = pad .. key .. ': |'
+  local inline_prefix = pad .. key .. ': '
+  for i = from_lnum, stop_lnum - 1 do
+    local l = body_lines[i]
+    if l == block_header then
+      local content_indent = indent + 2
+      local content_pad = string.rep(' ', content_indent)
+      local rows = {}
+      local row_map = {}
+      local j = i + 1
+      while j < stop_lnum do
+        local m = body_lines[j]
+        if m:sub(1, content_indent) == content_pad then
+          table.insert(rows, m:sub(content_indent + 1))
+          table.insert(row_map, { body_idx = j - 1, col_offset = content_indent })
+          j = j + 1
+        else
+          break
+        end
+      end
+      if #rows == 0 then return nil end
+      return { text = table.concat(rows, '\n'), row_map = row_map }, j
+    elseif l:sub(1, #inline_prefix) == inline_prefix then
+      local value = l:sub(#inline_prefix + 1)
+      if value == '' then return nil end
+      return {
+        text = value,
+        row_map = { { body_idx = i - 1, col_offset = #inline_prefix } },
+      }, i + 1
+    end
+  end
+  return nil
+end
+M.extract_yaml_scalar_at = extract_yaml_scalar_at
+
 --- Find a top-level `<key>: ...` scalar in a YAML-ish body and return a
 --- fragment {text, row_map} suitable for cc.tshl. Handles both the block
 --- form (`<key>: |` followed by 2-space-indented lines) and the inline form
@@ -114,35 +165,75 @@ M.full_body_fragment = full_body_fragment
 ---@param key string
 ---@return { text: string, row_map: table[] }?
 local function extract_yaml_scalar(body_lines, key)
-  local block_header = key .. ': |'
-  local inline_prefix = key .. ': '
+  local frag = extract_yaml_scalar_at(body_lines, key, 0, 1)
+  return frag
+end
+M.extract_yaml_scalar = extract_yaml_scalar
+
+--- For a rendered `mcp__claude-in-chrome__browser_batch` body, return one
+--- javascript fragment per action whose `name == 'javascript_tool'` and
+--- `input.action == 'javascript_exec'`, covering that action's `input.text`
+--- value. The body lines are walked structurally — each `  -` (or `  - …`) at
+--- indent 2 begins a new action, and `text:` at indent 6 inside that block is
+--- treated as `actions[i].input.text`.
+---@param body_lines string[]
+---@param actions table[]
+---@return { text: string, row_map: table[] }[]
+local function extract_browser_batch_js_fragments(body_lines, actions)
+  local fragments = {}
+  if not body_lines or not actions then return fragments end
+
+  local actions_lnum
   for i, l in ipairs(body_lines) do
-    if l == block_header then
-      local rows = {}
-      local row_map = {}
+    if l == 'actions:' then
+      actions_lnum = i
+      break
+    end
+  end
+  if not actions_lnum then return fragments end
+
+  local function is_action_marker(line)
+    return line == '  -' or line:sub(1, 4) == '  - '
+  end
+
+  local action_idx = 0
+  local i = actions_lnum + 1
+  while i <= #body_lines do
+    local l = body_lines[i]
+    if l:sub(1, 2) ~= '  ' then break end
+    if is_action_marker(l) then
+      action_idx = action_idx + 1
+      -- Find the end of this action's block.
+      local action_end = #body_lines + 1
       for j = i + 1, #body_lines do
         local m = body_lines[j]
-        if m:sub(1, 2) == '  ' then
-          table.insert(rows, m:sub(3))
-          table.insert(row_map, { body_idx = j - 1, col_offset = 2 })
-        else
+        if m:sub(1, 2) ~= '  ' or is_action_marker(m) then
+          action_end = j
           break
         end
       end
-      if #rows == 0 then return nil end
-      return { text = table.concat(rows, '\n'), row_map = row_map }
-    elseif l:sub(1, #inline_prefix) == inline_prefix then
-      local value = l:sub(#inline_prefix + 1)
-      if value == '' then return nil end
-      return {
-        text = value,
-        row_map = { { body_idx = i - 1, col_offset = #inline_prefix } },
-      }
+      local action = actions[action_idx]
+      if action
+        and action.name == 'javascript_tool'
+        and type(action.input) == 'table'
+        and action.input.action == 'javascript_exec'
+        and type(action.input.text) == 'string'
+        and action.input.text ~= ''
+      then
+        local frag = extract_yaml_scalar_at(body_lines, 'text', 6, i + 1, action_end)
+        if frag then
+          table.insert(fragments, frag)
+        end
+      end
+      i = action_end
+    else
+      i = i + 1
     end
   end
-  return nil
+
+  return fragments
 end
-M.extract_yaml_scalar = extract_yaml_scalar
+M.extract_browser_batch_js_fragments = extract_browser_batch_js_fragments
 
 --- Default body formatter. Returns either `string[]` (lines only) or
 --- `{ lines, snippets }` where `snippets[i] = { lang, fragment = {text, row_map} }`
@@ -222,6 +313,13 @@ function M.default_tool_body(tool_name, input)
           table.insert(snippets, { lang = lang, fragment = frag })
         end
       end
+    end
+  end
+  if tool_name == 'mcp__claude-in-chrome__browser_batch'
+    and type(filtered.actions) == 'table'
+  then
+    for _, frag in ipairs(extract_browser_batch_js_fragments(lines, filtered.actions)) do
+      table.insert(snippets, { lang = 'javascript', fragment = frag })
     end
   end
   if #snippets > 0 then

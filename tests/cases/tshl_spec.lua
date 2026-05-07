@@ -285,4 +285,144 @@ T['yaml_body']['javascript_tool keeps yaml + js snippet ordering'] = function()
   eq(_G.child.lua_get('_G._t_second'), 'javascript')
 end
 
+T['browser_batch'] = MiniTest.new_set()
+
+T['browser_batch']['extracts inline js text fragment for javascript_exec action'] = function()
+  _G.child.lua([[
+    local output = require('cc.output')
+    local body = output._default_tool_body('mcp__claude-in-chrome__browser_batch', {
+      actions = {
+        {
+          name = 'javascript_tool',
+          input = {
+            action = 'javascript_exec',
+            tabId = 42,
+            text = "JSON.stringify({ x: 1 })",
+          },
+        },
+      },
+    })
+    _G._t_n_snips = body.snippets and #body.snippets or 0
+    _G._t_first_lang = body.snippets and body.snippets[1].lang or nil
+    _G._t_last_lang = body.snippets and body.snippets[#body.snippets].lang or nil
+    -- The JS fragment text should be the inline value of the action's `text:` field.
+    local js = body.snippets[#body.snippets]
+    _G._t_js_text = js.fragment.text
+    _G._t_js_n_rows = #js.fragment.row_map
+    -- Verify the row_map lands on the correct body line, and the col_offset
+    -- skips the `      text: ` prefix (12 chars).
+    local m = js.fragment.row_map[1]
+    _G._t_js_line = body.lines[m.body_idx + 1]
+    _G._t_js_col_offset = m.col_offset
+  ]])
+  eq(_G.child.lua_get('_G._t_n_snips'), 2)
+  eq(_G.child.lua_get('_G._t_first_lang'), 'yaml')
+  eq(_G.child.lua_get('_G._t_last_lang'), 'javascript')
+  eq(_G.child.lua_get('_G._t_js_text'), 'JSON.stringify({ x: 1 })')
+  eq(_G.child.lua_get('_G._t_js_n_rows'), 1)
+  eq(_G.child.lua_get('_G._t_js_line'), '      text: JSON.stringify({ x: 1 })')
+  eq(_G.child.lua_get('_G._t_js_col_offset'), 12)
+end
+
+T['browser_batch']['extracts block-scalar js text fragment'] = function()
+  _G.child.lua([[
+    local output = require('cc.output')
+    local body = output._default_tool_body('mcp__claude-in-chrome__browser_batch', {
+      actions = {
+        {
+          name = 'javascript_tool',
+          input = {
+            action = 'javascript_exec',
+            tabId = 42,
+            text = "const x = 1;\nconsole.log(x);",
+          },
+        },
+      },
+    })
+    local js = body.snippets[#body.snippets]
+    _G._t_lang = js.lang
+    _G._t_text = js.fragment.text
+    _G._t_n_rows = #js.fragment.row_map
+    _G._t_first_off = js.fragment.row_map[1].col_offset
+  ]])
+  eq(_G.child.lua_get('_G._t_lang'), 'javascript')
+  eq(_G.child.lua_get('_G._t_text'), 'const x = 1;\nconsole.log(x);')
+  eq(_G.child.lua_get('_G._t_n_rows'), 2)
+  -- text content under `      text: |` is indented 8 spaces.
+  eq(_G.child.lua_get('_G._t_first_off'), 8)
+end
+
+T['browser_batch']['skips non-javascript_exec actions'] = function()
+  _G.child.lua([[
+    local output = require('cc.output')
+    local body = output._default_tool_body('mcp__claude-in-chrome__browser_batch', {
+      actions = {
+        {
+          name = 'read_console_messages',
+          input = { tabId = 42, pattern = 'foo' },
+        },
+        {
+          name = 'javascript_tool',
+          input = { action = 'javascript_exec', tabId = 42, text = 'x()' },
+        },
+        {
+          name = 'javascript_tool',
+          -- Different action subtype: should NOT be highlighted as JS.
+          input = { action = 'find', tabId = 42, text = 'submit' },
+        },
+      },
+    })
+    -- Exactly one JS snippet, plus the YAML one.
+    local js_count = 0
+    for _, s in ipairs(body.snippets) do
+      if s.lang == 'javascript' then js_count = js_count + 1 end
+    end
+    _G._t_js_count = js_count
+    -- Verify the JS fragment is for the second action's text.
+    for _, s in ipairs(body.snippets) do
+      if s.lang == 'javascript' then _G._t_js_text = s.fragment.text break end
+    end
+  ]])
+  eq(_G.child.lua_get('_G._t_js_count'), 1)
+  eq(_G.child.lua_get('_G._t_js_text'), 'x()')
+end
+
+T['browser_batch']['handles multiple javascript_exec actions independently'] = function()
+  _G.child.lua([[
+    local output = require('cc.output')
+    local body = output._default_tool_body('mcp__claude-in-chrome__browser_batch', {
+      actions = {
+        {
+          name = 'javascript_tool',
+          input = { action = 'javascript_exec', tabId = 1, text = 'first()' },
+        },
+        {
+          name = 'javascript_tool',
+          input = { action = 'javascript_exec', tabId = 2, text = 'second()' },
+        },
+      },
+    })
+    local js_texts = {}
+    for _, s in ipairs(body.snippets) do
+      if s.lang == 'javascript' then table.insert(js_texts, s.fragment.text) end
+    end
+    _G._t_js_texts = js_texts
+    -- Each fragment must point at a body line that contains its text.
+    local ok = true
+    for _, s in ipairs(body.snippets) do
+      if s.lang == 'javascript' then
+        local m = s.fragment.row_map[1]
+        local line = body.lines[m.body_idx + 1]
+        if not line or not line:find(s.fragment.text, 1, true) then
+          ok = false
+          break
+        end
+      end
+    end
+    _G._t_rows_ok = ok
+  ]])
+  eq(_G.child.lua_get('_G._t_js_texts'), { 'first()', 'second()' })
+  eq(_G.child.lua_get('_G._t_rows_ok'), true)
+end
+
 return T
