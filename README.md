@@ -365,7 +365,7 @@ drives them):
 |---|---|
 | `CcUser` | `Function` |
 | `CcAgent` | `String` |
-| `CcTool` | `Identifier` |
+| `CcTool` | `Constant` |
 | `CcToolInput` | `Normal` |
 | `CcOutput` | `Type` |
 | `CcError` | `ErrorMsg` |

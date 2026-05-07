@@ -8,7 +8,7 @@ local defaults = {
   CcCaret     = { link = 'Comment' },
   CcUser      = { link = 'Function' },
   CcAgent     = { link = 'String' },
-  CcTool      = { link = 'Identifier' },
+  CcTool      = { link = 'Constant' },
   CcToolInput = { link = 'Normal' },
   CcToolTiming = { fg = '#9aa5b1' },
   CcOutput    = { link = 'Type' },
