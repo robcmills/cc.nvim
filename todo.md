@@ -1,9 +1,12 @@
-- [x] Fix foldlevel not persisting across navigations
+- [ ] Better handling and exposure of error messages (401 logged out)
+- [ ] Implement /login /logout support
+- [ ] Debug /command completions
+- [ ] Improve /command completions (add descriptions, etc.)
+- [ ] Add rename with ai generated name
 - [ ] Add configurable markdown highlighting for Subagent prompts
 - [ ] Fix missing mode in statusline on startup
 - [ ] Add session timing info
 - [ ] Investigate swapfile issue when two instances are editing the same file
-- [ ] Add rename with ai generated name
 - [ ] Remove parens around tool timers (add around timeouts)
 - [ ] Explore potentially using foldcolumn
 - [ ] Unsloppify - identify most complex/fragile code and simplify (requires brainstorming)
@@ -26,6 +29,12 @@
     cd /Users/robcmills/src/openspace/backend && ./gradlew :platform:test --tests "openspace.platform.controller.api.v3.GlobalConfigControllerTest" 2>&1 | tail -40
 ```
 
+
+- [x] Cache session metadata → ~100× speedup on `:CcHistory`
+- [x] Highlight `javascript_exec` text in `browser_batch` tool calls
+- [x] Preserve foldlevel and prompt height across nav-away/back
+- [x] v0.3.0 bump; swapped output/prompt parent-child relationship; tail-follow survives nav
+- [x] Fix foldlevel not persisting across navigations
 - [x] Refactor architecture to use output buffer as parent instead of prompt buffer
 - [x] add prompt placeholder 
 - [x] Add config option to autosize prompt window to fit content (with configurable min/max heights)
