@@ -35,17 +35,25 @@ function M.projects_dir()
 end
 
 --- Scan a project directory for session JSONL files, return metadata sorted
---- by mtime desc.
+--- by mtime desc. Per-file metadata extraction is cached by (mtime, size) in
+--- meta_cache to avoid re-parsing 100s of MB on every picker open.
+--- Exposed under `_` prefix so tests can drive it without touching
+--- ~/.claude/projects; intended-internal otherwise.
 ---@param project_dir string
 ---@return cc.HistoryEntry[]
-local function list_in_dir(project_dir)
+function M._list_in_dir(project_dir)
+  local cache = require('cc.meta_cache')
   local entries = {}
   local files = vim.fn.globpath(project_dir, '*.jsonl', false, true)
   for _, path in ipairs(files) do
     local stat = vim.uv.fs_stat(path)
     if stat then
       local session_id = vim.fn.fnamemodify(path, ':t:r')
-      local meta = M._extract_metadata(path)
+      local meta = cache.get(path, stat)
+      if not meta then
+        meta = M._extract_metadata(path)
+        cache.put(path, stat, meta)
+      end
       -- Display title precedence: user custom-title > ai-title > first user message.
       local display = meta.custom_title or meta.ai_title or meta.first_prompt
       table.insert(entries, {
@@ -146,7 +154,9 @@ function M.list_for_cwd(cwd)
   cwd = cwd or vim.fn.getcwd()
   local project_dir = PROJECTS_DIR .. '/' .. M.encode_cwd(cwd)
   if vim.fn.isdirectory(project_dir) ~= 1 then return {} end
-  return list_in_dir(project_dir)
+  local entries = M._list_in_dir(project_dir)
+  require('cc.meta_cache').flush()
+  return entries
 end
 
 --- List sessions across all projects.
@@ -154,12 +164,21 @@ end
 function M.list_all()
   if vim.fn.isdirectory(PROJECTS_DIR) ~= 1 then return {} end
   local all = {}
+  local live = {}
   local dirs = vim.fn.glob(PROJECTS_DIR .. '/*', false, true)
   for _, d in ipairs(dirs) do
     if vim.fn.isdirectory(d) == 1 then
-      for _, e in ipairs(list_in_dir(d)) do table.insert(all, e) end
+      for _, e in ipairs(M._list_in_dir(d)) do
+        table.insert(all, e)
+        live[e.path] = true
+      end
     end
   end
+  -- list_all sees every JSONL across all projects, so it's the only place we
+  -- can safely prune deleted-file entries from the cache.
+  local cache = require('cc.meta_cache')
+  cache.prune(live)
+  cache.flush()
   table.sort(all, function(a, b) return a.mtime > b.mtime end)
   return all
 end
