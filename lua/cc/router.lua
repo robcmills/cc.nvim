@@ -155,6 +155,7 @@ function Router:_handle_user(msg)
       local tool_use_id = block.tool_use_id
       self.session:record_tool_result(tool_use_id, block.content, block.is_error)
       self.output:render_tool_result(tool_use_id, block.content, block.is_error)
+      pcall(require('cc.peek').notify_tool_result, tool_use_id, block.is_error)
     end
   end
 end
