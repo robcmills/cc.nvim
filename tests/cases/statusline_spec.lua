@@ -212,7 +212,7 @@ T['default_format']['shows mode, tokens, branch+pr, session name, remote'] = fun
   _G.child.lua([[
     _G._out = require('cc.statusline')._default_format({
       is_thinking = true,
-      total_tokens = 1500,
+      context_tokens = 1500,
       mode = 'auto',
       branch = 'main',
       pr = '#42',
@@ -287,6 +287,252 @@ end
 T['fmt_tokens']['exactly 2000'] = function()
   _G.child.lua([[_G._v = require('cc.statusline')._fmt_tokens(2000)]])
   eq(_G.child.lua_get('_G._v'), '2k')
+end
+
+-- ---------------------------------------------------------------------------
+-- model_context_window
+-- ---------------------------------------------------------------------------
+T['model_context_window'] = MiniTest.new_set()
+
+T['model_context_window']['nil model returns nil'] = function()
+  _G.child.lua([[_G._v = require('cc.statusline')._model_context_window(nil)]])
+  eq(_G.child.lua_get('_G._v == nil'), true)
+end
+
+T['model_context_window']['empty model returns nil'] = function()
+  _G.child.lua([[_G._v = require('cc.statusline')._model_context_window('')]])
+  eq(_G.child.lua_get('_G._v == nil'), true)
+end
+
+T['model_context_window']['[1m] suffix returns 1M'] = function()
+  _G.child.lua([[_G._v = require('cc.statusline')._model_context_window('claude-sonnet-4-5[1m]')]])
+  eq(_G.child.lua_get('_G._v'), 1000000)
+end
+
+T['model_context_window']['known 1M models'] = function()
+  _G.child.lua([[
+    local f = require('cc.statusline')._model_context_window
+    _G._opus47 = f('claude-opus-4-7')
+    _G._opus46 = f('claude-opus-4-6')
+    _G._sonnet46 = f('claude-sonnet-4-6')
+    -- Dated variants must resolve too — substring match against the canonical
+    -- root, not the full id.
+    _G._opus47_dated = f('claude-opus-4-7-20260101')
+    _G._mythos = f('claude-mythos-preview')
+  ]])
+  eq(_G.child.lua_get('_G._opus47'), 1000000)
+  eq(_G.child.lua_get('_G._opus46'), 1000000)
+  eq(_G.child.lua_get('_G._sonnet46'), 1000000)
+  eq(_G.child.lua_get('_G._opus47_dated'), 1000000)
+  eq(_G.child.lua_get('_G._mythos'), 1000000)
+end
+
+T['model_context_window']['known 200K models'] = function()
+  _G.child.lua([[
+    local f = require('cc.statusline')._model_context_window
+    _G._sonnet45 = f('claude-sonnet-4-5')
+    _G._opus45 = f('claude-opus-4-5')
+    _G._opus41 = f('claude-opus-4-1')
+    _G._haiku45 = f('claude-haiku-4-5')
+    _G._haiku_dated = f('claude-haiku-4-5-20251001')
+  ]])
+  eq(_G.child.lua_get('_G._sonnet45'), 200000)
+  eq(_G.child.lua_get('_G._opus45'), 200000)
+  eq(_G.child.lua_get('_G._opus41'), 200000)
+  eq(_G.child.lua_get('_G._haiku45'), 200000)
+  eq(_G.child.lua_get('_G._haiku_dated'), 200000)
+end
+
+T['model_context_window']['unknown Claude-ish model defaults to 200K'] = function()
+  -- Forward-compat: when a model we haven't seen yet appears (e.g. Sonnet
+  -- 4.7 ships before we update the table), fall through to the documented
+  -- 200K default rather than nil. The CLI's modelUsage will correct us as
+  -- soon as the first turn completes.
+  _G.child.lua([[_G._v = require('cc.statusline')._model_context_window('claude-sonnet-4-7')]])
+  eq(_G.child.lua_get('_G._v'), 200000)
+end
+
+-- ---------------------------------------------------------------------------
+-- fmt_context_percent
+-- ---------------------------------------------------------------------------
+T['fmt_context_percent'] = MiniTest.new_set()
+
+T['fmt_context_percent']['zero or nil used returns empty'] = function()
+  _G.child.lua([[
+    local f = require('cc.statusline')._fmt_context_percent
+    _G._v1 = f(0, 200000)
+    _G._v2 = f(nil, 200000)
+  ]])
+  eq(_G.child.lua_get('_G._v1'), '')
+  eq(_G.child.lua_get('_G._v2'), '')
+end
+
+T['fmt_context_percent']['nil or zero total returns empty'] = function()
+  _G.child.lua([[
+    local f = require('cc.statusline')._fmt_context_percent
+    _G._v1 = f(1000, nil)
+    _G._v2 = f(1000, 0)
+  ]])
+  eq(_G.child.lua_get('_G._v1'), '')
+  eq(_G.child.lua_get('_G._v2'), '')
+end
+
+T['fmt_context_percent']['formats one decimal place with statusline-escaped %'] = function()
+  -- Statusline expressions parse `%` as a directive prefix; we need a literal
+  -- one in the output, so the format string emits `%%`. Doubling matters —
+  -- a single `%` would consume the highlight group that follows in
+  -- default_format (e.g. `%#CcStl#`) and leak it as visible text.
+  _G.child.lua([[_G._v = require('cc.statusline')._fmt_context_percent(2000, 200000)]])
+  eq(_G.child.lua_get('_G._v'), '1.0%%')
+end
+
+-- ---------------------------------------------------------------------------
+-- context fields in build_state
+-- ---------------------------------------------------------------------------
+T['build_state']['context_window derived from model'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s.model = 'claude-opus-4-7[1m]'
+    s.context_tokens = 10000
+    _G._state = require('cc.statusline').build_state({ session = s })
+  ]])
+  eq(_G.child.lua_get('_G._state.context_window'), 1000000)
+  eq(_G.child.lua_get('_G._state.context_tokens'), 10000)
+  eq(_G.child.lua_get('string.format("%.1f", _G._state.context_percent)'), '1.0')
+end
+
+T['build_state']['config.context_window overrides model-derived value'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({ statusline = { context_window = 50000 } })
+    local Session = require('cc.session')
+    local s = Session.new()
+    s.model = 'claude-opus-4-7'
+    s.context_tokens = 500
+    _G._state = require('cc.statusline').build_state({ session = s })
+  ]])
+  eq(_G.child.lua_get('_G._state.context_window'), 50000)
+  eq(_G.child.lua_get('string.format("%.1f", _G._state.context_percent)'), '1.0')
+end
+
+T['build_state']['session.context_window from CLI wins over model parse'] = function()
+  -- Sonnet 4.5 is 200K by the table, but the user enabled the 1M-context
+  -- beta header so the CLI reports 1M via modelUsage. The authoritative
+  -- CLI value must override our fallback.
+  _G.child.lua([[
+    require('cc.config').setup({})
+    local Session = require('cc.session')
+    local s = Session.new()
+    s.model = 'claude-sonnet-4-5'
+    s.context_window = 1000000
+    s.context_tokens = 10000
+    _G._state = require('cc.statusline').build_state({ session = s })
+  ]])
+  eq(_G.child.lua_get('_G._state.context_window'), 1000000)
+  eq(_G.child.lua_get('string.format("%.1f", _G._state.context_percent)'), '1.0')
+end
+
+T['build_state']['user config still wins over CLI-reported window'] = function()
+  -- An explicit `statusline.context_window` is treated as a cap (e.g. the
+  -- user wants the % to reflect auto-compact threshold rather than the raw
+  -- model window). It must beat even the authoritative CLI value.
+  _G.child.lua([[
+    require('cc.config').setup({ statusline = { context_window = 50000 } })
+    local Session = require('cc.session')
+    local s = Session.new()
+    s.model = 'claude-sonnet-4-6'
+    s.context_window = 1000000
+    s.context_tokens = 500
+    _G._state = require('cc.statusline').build_state({ session = s })
+  ]])
+  eq(_G.child.lua_get('_G._state.context_window'), 50000)
+end
+
+-- ---------------------------------------------------------------------------
+-- token segment rendering: icon prefix + context percent
+-- ---------------------------------------------------------------------------
+T['default_format']['token segment uses tau icon by default'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({})
+    _G._out = require('cc.statusline')._default_format({ context_tokens = 1500 })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('τ 1.5k', 1, true) ~= nil, true)
+  -- "tokens" word no longer appended.
+  eq(out:find(' tokens', 1, true) == nil, true)
+end
+
+T['default_format']['token segment appends context percent when known'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({})
+    _G._out = require('cc.statusline')._default_format({
+      context_tokens = 13200,
+      context_window = 1200000,
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  -- Exact escaped form: `1.1%%` in the format string survives one round of
+  -- statusline parsing as a literal `%`. A plain-text find of `1.1%` would
+  -- match either `1.1%` or `1.1%%` and would miss the bug — assert the
+  -- doubled form explicitly.
+  eq(out:find('τ 13.2k 1.1%%', 1, true) ~= nil, true)
+  -- And the percent must NOT be followed by `#` (which would mean we
+  -- emitted a single `%` and consumed the next highlight group).
+  eq(out:find('1.1%#', 1, true) == nil, true)
+end
+
+T['default_format']['percent does not consume the next highlight group'] = function()
+  -- Regression for the leak that produced `49.1%#CcStl#` on screen. After
+  -- the token segment, default_format concatenates SEP = `%#CcStl# ── `,
+  -- so the byte after the `%%` is `%`. Together that's `1.1%%%#CcStl#` —
+  -- which Vim parses as `1.1%` then `%#CcStl#`. Spot-check that pattern.
+  _G.child.lua([[
+    require('cc.config').setup({})
+    _G._out = require('cc.statusline')._default_format({
+      context_tokens = 13200,
+      context_window = 1200000,
+      mode = 'auto',
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('1.1%%%#CcStl#', 1, true) ~= nil, true)
+end
+
+T['default_format']['tokens_icon override applies'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({ statusline = { tokens_icon = 'X' } })
+    _G._out = require('cc.statusline')._default_format({ context_tokens = 500 })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('X 500', 1, true) ~= nil, true)
+end
+
+T['default_format']['empty tokens_icon drops the prefix entirely'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({ statusline = { tokens_icon = '' } })
+    _G._out = require('cc.statusline')._default_format({ context_tokens = 500 })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('τ', 1, true) == nil, true)
+  eq(out:find('500', 1, true) ~= nil, true)
+end
+
+T['default_format']['falls back to total_tokens when context_tokens not yet seen'] = function()
+  -- Mid-turn before the first result message lands, context_tokens is 0
+  -- but total_tokens may carry over from a prior turn (or be the running
+  -- count). Don't drop the token segment just because the snapshot is
+  -- empty.
+  _G.child.lua([[
+    require('cc.config').setup({})
+    _G._out = require('cc.statusline')._default_format({
+      total_tokens = 800,
+      context_tokens = 0,
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('τ 800', 1, true) ~= nil, true)
+  -- No percent when we don't know the live context size.
+  eq(out:find('%%', 1, true) == nil, true)
 end
 
 -- ---------------------------------------------------------------------------

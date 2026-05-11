@@ -8,6 +8,8 @@
 -- Uses a `%!` expression that calls back into this module via a
 -- winid -> instance map so the callback has no closure baggage.
 
+local Usage = require('cc.usage')
+
 local M = {}
 
 ---@type table<integer, cc.Instance>
@@ -16,14 +18,55 @@ local winid_to_instance = {}
 ---@type table<integer, boolean>
 local user_format_errored = {}
 
----@param n number?
----@return string
-local function fmt_tokens(n)
-  if not n or n <= 0 then return '' end
-  if n >= 1000 then
-    return string.format('%.1fk', n / 1000):gsub('%.0k$', 'k')
+local fmt_tokens = Usage.fmt_compact
+
+-- Models with a 1M-token context window by default (no beta header required).
+-- Sourced from docs.anthropic.com/en/docs/about-claude/models/overview and
+-- /build-with-claude/context-windows (verified May 2026). Patterns match the
+-- lowercased model id with Lua's `string.find`, so dated variants like
+-- `claude-opus-4-7-20260101` resolve via substring match.
+--
+-- Reminder when bumping: this is a *fallback* used before the CLI's
+-- `result.modelUsage[<model>].contextWindow` lands on the first turn. Once
+-- the CLI value arrives it takes over (see session:on_result).
+local KNOWN_1M_PATTERNS = {
+  'opus%-4%-7',
+  'opus%-4%-6',
+  'sonnet%-4%-6',
+  'mythos',
+}
+
+--- Resolve the model's context-window size from the model id alone.
+--- Priority within this fallback:
+---   1. explicit `[1m]` suffix (user/CLI opt-in)
+---   2. known 1M models (table above)
+---   3. 200K — the documented default for every other current Claude model
+---      (Sonnet 4.5, Opus 4.5, Opus 4.1, Haiku 4.5, Claude 3.x, deprecated 4.0).
+--- Returns nil only when no model has been observed yet.
+---@param model string?
+---@return integer?
+local function model_context_window(model)
+  if type(model) ~= 'string' or model == '' then return nil end
+  local m = model:lower()
+  if m:find('%[1m%]') then return 1000000 end
+  for _, pat in ipairs(KNOWN_1M_PATTERNS) do
+    if m:find(pat) then return 1000000 end
   end
-  return tostring(n)
+  return 200000
+end
+
+---@param used number?
+---@param total number?
+---@return string
+local function fmt_context_percent(used, total)
+  if type(used) ~= 'number' or used <= 0 then return '' end
+  if type(total) ~= 'number' or total <= 0 then return '' end
+  local pct = (used / total) * 100
+  -- %% in the format spec escapes to a literal `%` in the output. The result
+  -- is then interpolated into a Neovim statusline expression, where `%` is
+  -- itself a directive prefix — so we double it again so Vim renders one
+  -- literal `%`. Net: `%.1f%%%%` → `1.1%%` (string) → `1.1%` (on screen).
+  return string.format('%.1f%%%%', pct)
 end
 
 ---@param ms number?
@@ -62,9 +105,23 @@ local function default_format(state)
     if elapsed ~= '' then seg = seg .. ' ' .. elapsed end
     table.insert(segments, seg)
   end
-  local toks = fmt_tokens(state.total_tokens)
+  -- Show the live context size (input + cache_creation + cache_read on the
+  -- last turn), not the cumulative billing total — that way the count and
+  -- the "% of window" readout refer to the same quantity. Falls back to the
+  -- cumulative total when no result has been observed yet (e.g. mid-turn
+  -- before the first result message lands).
+  local count = (state.context_tokens and state.context_tokens > 0)
+    and state.context_tokens or state.total_tokens
+  local toks = fmt_tokens(count)
   if toks ~= '' then
-    table.insert(segments, HL_TOKENS .. toks .. ' tokens')
+    local cfg = require('cc.config').options.statusline or {}
+    local icon = cfg.tokens_icon or ''
+    local seg = HL_TOKENS
+    if icon ~= '' then seg = seg .. icon .. ' ' end
+    seg = seg .. toks
+    local pct = fmt_context_percent(state.context_tokens, state.context_window)
+    if pct ~= '' then seg = seg .. ' ' .. pct end
+    table.insert(segments, seg)
   end
   if state.mode and state.mode ~= '' then
     table.insert(segments, HL_MODE .. state.mode .. ' mode')
@@ -109,8 +166,23 @@ function M.build_state(instance)
   local on_update = function()
     pcall(M.refresh, instance)
   end
+  local cfg_stl = require('cc.config').options.statusline or {}
   local input_tokens = session and session.input_tokens or 0
   local output_tokens = session and session.output_tokens or 0
+  local context_tokens = session and session.context_tokens or 0
+  local model = session and session.model or nil
+  -- Priority: explicit user override > value the CLI told us on the last
+  -- result message > best-effort guess from the model name. The CLI value
+  -- mirrors its own resolution chain (env override / [1m] suffix / model
+  -- capability table / beta header / etc.), so it's the most reliable
+  -- source we can get without re-implementing that logic ourselves.
+  local context_window = cfg_stl.context_window
+    or (session and session.context_window)
+    or model_context_window(model)
+  local context_percent = nil
+  if context_window and context_window > 0 and context_tokens > 0 then
+    context_percent = (context_tokens / context_window) * 100
+  end
   local spinner_frame = ''
   if instance then
     local ok, Spinner = pcall(require, 'cc.statusline_spinner')
@@ -129,12 +201,15 @@ function M.build_state(instance)
     total_tokens = input_tokens + output_tokens,
     input_tokens = input_tokens,
     output_tokens = output_tokens,
+    context_tokens = context_tokens,
+    context_window = context_window,
+    context_percent = context_percent,
     cost_usd = session and session.cost_usd or 0,
     mode = session and session.permission_mode or nil,
     branch = require('cc.git').branch(on_update),
     pr = require('cc.git').pr(on_update),
     effort = require('cc.effort').get(),
-    model = session and session.model or nil,
+    model = model,
     cli_version = require('cc.version').get(on_update),
     session_name = instance and instance.session_name or nil,
     pending_session_name = instance and instance.pending_session_name or nil,
@@ -256,5 +331,7 @@ end
 M._default_format = default_format
 M._fmt_tokens = fmt_tokens
 M._fmt_elapsed = fmt_elapsed
+M._fmt_context_percent = fmt_context_percent
+M._model_context_window = model_context_window
 
 return M

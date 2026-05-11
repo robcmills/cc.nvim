@@ -1,14 +1,12 @@
 -- Per-turn result/cost line formatting. Pure functions — no buffer state.
 
+local Usage = require('cc.usage')
+
 local M = {}
 
---- Compact token count: >=1000 → "7.7k" (trailing ".0" stripped), else raw int.
-function M.fmt_cache_tokens(n)
-  if n >= 1000 then
-    return (string.format('%.1fk', n / 1000):gsub('%.0k$', 'k'))
-  end
-  return tostring(n)
-end
+-- Back-compat: `fmt_cache_tokens` was the prior public helper. Forward to
+-- the shared formatter so any downstream user format hooks still work.
+M.fmt_cache_tokens = Usage.fmt_compact
 
 ---@param ms integer
 ---@return string
@@ -35,20 +33,14 @@ function M.default_format(result)
   if result.total_cost_usd then
     table.insert(parts, string.format('$%.4f', result.total_cost_usd))
   end
-  if result.usage then
-    local u = result.usage
-    if u.input_tokens then
-      table.insert(parts, string.format('%d in', u.input_tokens))
-    end
-    if u.output_tokens then
-      table.insert(parts, string.format('%d out', u.output_tokens))
-    end
-    if u.cache_read_input_tokens and u.cache_read_input_tokens > 0 then
-      table.insert(parts, M.fmt_cache_tokens(u.cache_read_input_tokens) .. ' cache read')
-    end
-    if u.cache_creation_input_tokens and u.cache_creation_input_tokens > 0 then
-      table.insert(parts, M.fmt_cache_tokens(u.cache_creation_input_tokens) .. ' cache write')
-    end
+  local u = Usage.normalize(result.usage)
+  if u.input > 0 then table.insert(parts, string.format('%d in', u.input)) end
+  if u.output > 0 then table.insert(parts, string.format('%d out', u.output)) end
+  if u.cache_read > 0 then
+    table.insert(parts, Usage.fmt_compact(u.cache_read) .. ' cache read')
+  end
+  if u.cache_creation > 0 then
+    table.insert(parts, Usage.fmt_compact(u.cache_creation) .. ' cache write')
   end
   if #parts == 0 then return nil end
   return table.concat(parts, ' │ ')

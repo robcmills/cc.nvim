@@ -1,6 +1,8 @@
 -- Conversation state: tracks session_id, turns, and streaming content blocks.
 -- The router feeds stream events here; output.lua reads from here to render.
 
+local Usage = require('cc.usage')
+
 local M = {}
 
 ---@class cc.Session
@@ -16,8 +18,13 @@ local M = {}
 ---@field turn_started_at integer? ms timestamp from vim.uv.now() while turn_active
 ---@field interrupt_pending boolean
 ---@field cost_usd number
----@field input_tokens integer
----@field output_tokens integer
+---@field input_tokens integer cumulative fresh-input tokens for this conversation (across engine restarts / resume)
+---@field output_tokens integer cumulative output tokens for this conversation
+---@field cache_creation_input_tokens integer cumulative cache-write tokens
+---@field cache_read_input_tokens integer cumulative cache-read tokens
+---@field context_tokens integer last API call's full input load (input + cache_creation + cache_read); approximates current context window usage
+---@field context_window integer? authoritative context window for self.model, taken from result.modelUsage when the CLI provides it
+---@field last_result_usage cc.Usage? snapshot of the previous result.usage (cumulative within the current engine) — diffed against the next result to derive the per-result delta we add to the cumulative session totals
 local Session = {}
 Session.__index = Session
 
@@ -42,6 +49,11 @@ function M.new()
     cost_usd = 0,
     input_tokens = 0,
     output_tokens = 0,
+    cache_creation_input_tokens = 0,
+    cache_read_input_tokens = 0,
+    context_tokens = 0,
+    context_window = nil,
+    last_result_usage = nil,
     -- tool_use_id -> { name, input, result, is_error, start_time }
     tool_calls = {},
   }, Session)
@@ -90,6 +102,11 @@ function Session:on_init(msg)
   self.tools = msg.tools or self.tools
   self.permission_mode = msg.permissionMode or self.permission_mode
   self.slash_commands = msg.slash_commands or self.slash_commands
+  -- A fresh engine starts its totalUsage at zero. Wipe the diff baseline so
+  -- the next result.usage delta is the full new-engine contribution. The
+  -- session-cumulative input/output/cache_* fields are preserved (they may
+  -- already be seeded from a JSONL resume).
+  self.last_result_usage = nil
 end
 
 ---@param text string
@@ -119,6 +136,15 @@ function Session:begin_message(message)
     blocks = {},
   }
   self.current_blocks = {}
+  -- Snapshot the current context size from THIS message's usage. One
+  -- message_start = one API call, so context_size = input + cache_creation +
+  -- cache_read is the genuine prompt size sent to the API. Do not source
+  -- this from result.usage — `result` carries QueryEngine.totalUsage,
+  -- accumulated across every API call in the engine lifetime; for a
+  -- multi-tool turn that's many multiples of the actual context size.
+  if message and type(message.usage) == 'table' then
+    self.context_tokens = Usage.normalize(message.usage).context_size
+  end
 end
 
 ---@param index integer
@@ -205,12 +231,38 @@ function Session:on_result(msg)
     self.cost_usd = msg.total_cost_usd
   end
   if msg.usage then
-    local u = msg.usage
-    -- Match Claude Code's getTotalInputTokens/getTotalOutputTokens: accumulate
-    -- fresh input + output only. Cache reads/creations are billed separately
-    -- and would dwarf the real conversation size if folded in here.
-    self.input_tokens = self.input_tokens + (u.input_tokens or 0)
-    self.output_tokens = self.output_tokens + (u.output_tokens or 0)
+    -- msg.usage IS QueryEngine.totalUsage — cumulative-since-engine-start,
+    -- never reset within the process (services/api/claude.ts accumulateUsage
+    -- at every message_stop). To extract this result's contribution we diff
+    -- against the previous snapshot. On a fresh engine the snapshot is nil
+    -- (on_init wipes it), so the first delta equals the new engine's full
+    -- contribution — which composes correctly when resume has seeded the
+    -- cumulative session totals from JSONL history.
+    local current = Usage.normalize(msg.usage)
+    local last = self.last_result_usage or Usage.ZERO
+    -- Guard against negative deltas. Shouldn't happen (totalUsage is
+    -- monotonic), but if it does — engine-side bug, fixture surprise —
+    -- clamp to 0 rather than drag the cumulative backwards.
+    local function delta(a, b) return a > b and (a - b) or 0 end
+    self.input_tokens = self.input_tokens + delta(current.input, last.input)
+    self.output_tokens = self.output_tokens + delta(current.output, last.output)
+    self.cache_creation_input_tokens = self.cache_creation_input_tokens
+      + delta(current.cache_creation, last.cache_creation)
+    self.cache_read_input_tokens = self.cache_read_input_tokens
+      + delta(current.cache_read, last.cache_read)
+    self.last_result_usage = current
+  end
+  -- The CLI's `result.modelUsage` is keyed by model name and carries the
+  -- authoritative contextWindow it resolved via env override → [1m] suffix →
+  -- model capability table → 1M-beta header → ant-only registry → 200K. Far
+  -- more reliable than our suffix-parse fallback, which can't see the beta
+  -- header or capability table. Subagents may add other model entries; we
+  -- only care about the current session's model.
+  if type(msg.modelUsage) == 'table' and self.model then
+    local mu = msg.modelUsage[self.model]
+    if type(mu) == 'table' and type(mu.contextWindow) == 'number' and mu.contextWindow > 0 then
+      self.context_window = mu.contextWindow
+    end
   end
   self.is_streaming = false
 end
