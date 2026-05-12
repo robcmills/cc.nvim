@@ -763,6 +763,9 @@ function M.resume(session_id)
     local meta = history.read_session_meta(path)
     inst.session.input_tokens = meta.input_tokens
     inst.session.output_tokens = meta.output_tokens
+    inst.session.cache_creation_input_tokens = meta.cache_creation_input_tokens
+    inst.session.cache_read_input_tokens = meta.cache_read_input_tokens
+    inst.session.context_tokens = meta.context_tokens
     inst.session.cost_usd = meta.cost_usd
     inst.session.model = meta.model or inst.session.model
     inst.session.permission_mode =
@@ -847,8 +850,8 @@ function M.history(all_projects)
     vim.notify('cc.nvim: no sessions found', vim.log.levels.INFO)
     return
   end
-  vim.ui.select(entries, {
-    prompt = all_projects and 'Resume session (all projects):' or 'Resume session:',
+  require('cc.picker').select(entries, {
+    prompt = all_projects and 'Resume session (all projects)' or 'Resume session',
     format_item = function(e) return history.format_entry(e, all_projects or false) end,
   }, function(choice)
     if choice then M.resume(choice.session_id) end

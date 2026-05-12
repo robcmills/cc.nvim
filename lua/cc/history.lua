@@ -238,11 +238,15 @@ end
 --- observed. Used by resume to seed the statusline before the subprocess
 --- has emitted its system:init.
 ---@param path string
----@return { input_tokens: integer, output_tokens: integer, cost_usd: number, model: string?, permission_mode: string?, custom_title: string?, ai_title: string? }
+---@return { input_tokens: integer, output_tokens: integer, cache_creation_input_tokens: integer, cache_read_input_tokens: integer, context_tokens: integer, cost_usd: number, model: string?, permission_mode: string?, custom_title: string?, ai_title: string? }
 function M.read_session_meta(path)
+  local Usage = require('cc.usage')
   local meta = {
     input_tokens = 0,
     output_tokens = 0,
+    cache_creation_input_tokens = 0,
+    cache_read_input_tokens = 0,
+    context_tokens = 0,
     cost_usd = 0,
     model = nil,
     permission_mode = nil,
@@ -266,8 +270,17 @@ function M.read_session_meta(path)
         if msg.model then meta.model = msg.model end
         local usage = msg.usage
         if type(usage) == 'table' then
-          meta.input_tokens = meta.input_tokens + (usage.input_tokens or 0)
-          meta.output_tokens = meta.output_tokens + (usage.output_tokens or 0)
+          -- JSONL records carry per-API-call usage (verified: cache_read
+          -- grows monotonically across messages, matching message_start
+          -- semantics — not the cumulative `result.usage`). Accumulating
+          -- each message yields the conversation's actual cumulative.
+          local u = Usage.normalize(usage)
+          meta.input_tokens = meta.input_tokens + u.input
+          meta.output_tokens = meta.output_tokens + u.output
+          meta.cache_creation_input_tokens = meta.cache_creation_input_tokens + u.cache_creation
+          meta.cache_read_input_tokens = meta.cache_read_input_tokens + u.cache_read
+          -- Latest record's context_size = current API request prompt size.
+          meta.context_tokens = u.context_size
         end
       end
       if type(rec.costUSD) == 'number' then

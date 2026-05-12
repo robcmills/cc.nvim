@@ -200,6 +200,258 @@ T['turn_timing']['on_result without preceding start does not attach elapsed'] = 
 end
 
 -- ---------------------------------------------------------------------------
+-- context_tokens snapshot: the latest API call's full input load (input +
+-- cache_creation + cache_read), used for the statusline's "% of context".
+-- Sourced from each message_start, NOT from the cumulative result.usage.
+-- ---------------------------------------------------------------------------
+T['context_tokens'] = MiniTest.new_set()
+
+T['context_tokens']['sums input + cache_creation + cache_read on begin_message'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s:begin_message({
+      id = 'm1',
+      role = 'assistant',
+      usage = {
+        input_tokens = 100,
+        output_tokens = 50,
+        cache_creation_input_tokens = 2000,
+        cache_read_input_tokens = 10000,
+      },
+    })
+    _G._v = s.context_tokens
+  ]])
+  eq(_G.child.lua_get('_G._v'), 12100)
+end
+
+T['context_tokens']['replaces (not accumulates) across messages'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s:begin_message({ id='m1', usage = { input_tokens = 100, cache_read_input_tokens = 1000 } })
+    s:begin_message({ id='m2', usage = { input_tokens = 50, cache_read_input_tokens = 2000 } })
+    _G._v = s.context_tokens
+  ]])
+  -- Snapshot of the latest API call, not cumulative.
+  eq(_G.child.lua_get('_G._v'), 2050)
+end
+
+T['context_tokens']['begin_message without usage leaves prior value untouched'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s.context_tokens = 999
+    s:begin_message({ id = 'm1', role = 'assistant' })
+    _G._v = s.context_tokens
+  ]])
+  eq(_G.child.lua_get('_G._v'), 999)
+end
+
+T['context_tokens']['multi-message turn: result.usage does NOT bloat context_tokens'] = function()
+  -- Regression for the post-turn 10× balloon. A turn with multiple API
+  -- roundtrips (e.g. tool use loop) ends with `result.usage` carrying the
+  -- accumulated total across every call. We must source context_tokens
+  -- from the LAST message_start (one API call) — not from result.usage.
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    -- Three API calls into the turn, the live context is ~155k each call.
+    for _ = 1, 3 do
+      s:begin_message({
+        id = 'm',
+        role = 'assistant',
+        usage = {
+          input_tokens = 200,
+          cache_creation_input_tokens = 0,
+          cache_read_input_tokens = 154700,
+        },
+      })
+    end
+    -- Result then arrives with totalUsage accumulated across the turn —
+    -- input+cache sum here is ~465k, ~3× the real context size.
+    s:on_result({
+      usage = {
+        input_tokens = 600,
+        output_tokens = 9000,
+        cache_creation_input_tokens = 0,
+        cache_read_input_tokens = 464100,
+      },
+    })
+    _G._v = s.context_tokens
+  ]])
+  -- Must be the per-message snapshot, not the cumulative.
+  eq(_G.child.lua_get('_G._v'), 154900)
+end
+
+T['context_tokens']['picks up contextWindow from result.modelUsage'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s.model = 'claude-sonnet-4-6'
+    -- CLI resolved 1M via beta header even without a [1m] suffix in the
+    -- model name — exactly the case our suffix-parse fallback would miss.
+    s:on_result({
+      modelUsage = {
+        ['claude-sonnet-4-6'] = { contextWindow = 1000000, maxOutputTokens = 32000 },
+      },
+    })
+    _G._v = s.context_window
+  ]])
+  eq(_G.child.lua_get('_G._v'), 1000000)
+end
+
+T['context_tokens']['modelUsage for a different model is ignored'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s.model = 'claude-opus-4-7'
+    s:on_result({
+      modelUsage = {
+        -- Subagent ran on a smaller model — must not overwrite the main
+        -- session's window.
+        ['claude-haiku-4-5'] = { contextWindow = 100000 },
+      },
+    })
+    _G._v = s.context_window
+  ]])
+  eq(_G.child.lua_get('_G._v == nil'), true)
+end
+
+T['context_tokens']['missing modelUsage leaves prior context_window untouched'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s.model = 'claude-opus-4-7'
+    s.context_window = 1000000
+    s:on_result({ usage = { input_tokens = 1 } })
+    _G._v = s.context_window
+  ]])
+  eq(_G.child.lua_get('_G._v'), 1000000)
+end
+
+-- ---------------------------------------------------------------------------
+-- Cumulative session totals: input_tokens / output_tokens / cache_*
+--
+-- `result.usage` is QueryEngine.totalUsage — cumulative-since-engine-start,
+-- never reset within the process. We diff against the previous snapshot to
+-- extract this result's contribution, then add the delta to the
+-- session-cumulative totals. on_init wipes the snapshot when a fresh engine
+-- starts (or a process restart mid-session) so the next delta is the full
+-- new-engine contribution. This composes with JSONL resume, which seeds
+-- session totals from per-message records before the new engine emits init.
+-- ---------------------------------------------------------------------------
+T['cumulative_totals'] = MiniTest.new_set()
+
+T['cumulative_totals']['first result: delta = full usage'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s:on_result({
+      usage = {
+        input_tokens = 100,
+        output_tokens = 50,
+        cache_creation_input_tokens = 2000,
+        cache_read_input_tokens = 10000,
+      },
+    })
+    _G._inp = s.input_tokens
+    _G._out = s.output_tokens
+    _G._cc = s.cache_creation_input_tokens
+    _G._cr = s.cache_read_input_tokens
+  ]])
+  eq(_G.child.lua_get('_G._inp'), 100)
+  eq(_G.child.lua_get('_G._out'), 50)
+  eq(_G.child.lua_get('_G._cc'), 2000)
+  eq(_G.child.lua_get('_G._cr'), 10000)
+end
+
+T['cumulative_totals']['second result: only delta is added (NOT double-counted)'] = function()
+  -- Regression for the latent double-count: msg.usage is cumulative-since-
+  -- engine-start, so naive `total = total + usage` doubles previous turns.
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s:on_result({ usage = { input_tokens = 100, output_tokens = 50 } })
+    -- Turn 2: engine totalUsage now carries turn 1 + turn 2.
+    s:on_result({ usage = { input_tokens = 150, output_tokens = 80 } })
+    _G._inp = s.input_tokens
+    _G._out = s.output_tokens
+  ]])
+  -- Expected = engine's latest cumulative (150 / 80). NOT 250 / 130.
+  eq(_G.child.lua_get('_G._inp'), 150)
+  eq(_G.child.lua_get('_G._out'), 80)
+end
+
+T['cumulative_totals']['engine restart (on_init): next delta is full new-engine contribution'] = function()
+  -- Process restart mid-session: CLI re-emits system:init and its totalUsage
+  -- resets to zero. We must absorb the previous engine's final contribution
+  -- as part of the cumulative session total and start diffing from zero.
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s:on_result({ usage = { input_tokens = 100, output_tokens = 50 } })
+    s:on_result({ usage = { input_tokens = 150, output_tokens = 80 } })
+    -- First engine ends with cumulative session totals (150, 80).
+    s:on_init({ session_id = 'sid', model = 'claude-opus-4-7' })
+    -- Second engine starts fresh; its first result.usage is its own value.
+    s:on_result({ usage = { input_tokens = 30, output_tokens = 20 } })
+    _G._inp = s.input_tokens
+    _G._out = s.output_tokens
+  ]])
+  -- 150 (from engine 1) + 30 (engine 2's first result, delta from 0).
+  eq(_G.child.lua_get('_G._inp'), 180)
+  eq(_G.child.lua_get('_G._out'), 100)
+end
+
+T['cumulative_totals']['resume seed + new engine: history total composes with delta'] = function()
+  -- The full resume scenario: history scan seeds cumulative-since-conversation-
+  -- start; new engine emits init (resetting the diff baseline); first new
+  -- result adds its full usage as a delta on top of the history seed.
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    -- Simulate JSONL resume seed.
+    s.input_tokens = 5000
+    s.output_tokens = 800
+    s.cache_creation_input_tokens = 12000
+    s.cache_read_input_tokens = 80000
+    -- New engine init wipes the diff baseline but leaves the seed.
+    s:on_init({ session_id = 'sid' })
+    s:on_result({
+      usage = {
+        input_tokens = 10,
+        output_tokens = 200,
+        cache_creation_input_tokens = 0,
+        cache_read_input_tokens = 90000,
+      },
+    })
+    _G._inp = s.input_tokens
+    _G._out = s.output_tokens
+    _G._cc = s.cache_creation_input_tokens
+    _G._cr = s.cache_read_input_tokens
+  ]])
+  eq(_G.child.lua_get('_G._inp'), 5010)
+  eq(_G.child.lua_get('_G._out'), 1000)
+  eq(_G.child.lua_get('_G._cc'), 12000)
+  eq(_G.child.lua_get('_G._cr'), 170000)
+end
+
+T['cumulative_totals']['negative delta is clamped to 0'] = function()
+  -- Defensive: totalUsage is documented as monotonic, but if a fixture or
+  -- engine bug produces a backwards step we must not drag the cumulative
+  -- backwards. Clamp the delta at 0.
+  _G.child.lua([[
+    local Session = require('cc.session')
+    local s = Session.new()
+    s:on_result({ usage = { input_tokens = 100 } })
+    s:on_result({ usage = { input_tokens = 50 } })  -- went backwards
+    _G._inp = s.input_tokens
+  ]])
+  eq(_G.child.lua_get('_G._inp'), 100)
+end
+
+-- ---------------------------------------------------------------------------
 -- Tool use (Bash) with streaming
 -- ---------------------------------------------------------------------------
 T['tool_bash'] = MiniTest.new_set()

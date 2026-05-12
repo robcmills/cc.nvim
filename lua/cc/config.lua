@@ -92,7 +92,8 @@ local defaults = {
   -- Statusline on the output window.
   -- format = function(state) -> string (Neovim statusline syntax).
   -- state fields: is_thinking, spinner_frame, total_tokens, input_tokens,
-  --   output_tokens, cost_usd, mode, branch, pr, effort, model, cli_version,
+  --   output_tokens, context_tokens, context_window, context_percent,
+  --   cost_usd, mode, branch, pr, effort, model, cli_version,
   --   session_name, session_id, remote_control.
   -- is_thinking is true from user submit through the final result message,
   -- i.e. the whole span in which the agent is busy (including tool calls
@@ -102,6 +103,15 @@ local defaults = {
   statusline = {
     enabled = true,
     format = nil,
+    -- Context-window size used for the "% used" readout next to the
+    -- token count. nil = derive from session.model ([1m] suffix → 1,000,000;
+    -- otherwise 200,000). Set an integer to override.
+    context_window = nil,
+    -- Glyph prefixed to the token count. Defaults to the Greek letter tau
+    -- (τ) — renders in every terminal and reads as "tokens" without needing
+    -- a Nerd Font. Users can override with any string (e.g. a Nerd Font
+    -- glyph like '\u{f51e}' for fa-coins).
+    tokens_icon = 'τ',
     spinner = {
       -- nil = auto-detect (mirrors tool_icons.use_nerdfont); true/false forces.
       use_nerdfont = nil,

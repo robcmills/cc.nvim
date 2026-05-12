@@ -5,6 +5,7 @@
 - [ ] Add rename with ai generated name
 - [ ] Add configurable markdown highlighting for Subagent prompts
 - [ ] Fix missing mode in statusline on startup
+- [ ] Add context percentage to token count in statusline
 - [ ] Add session timing info
 - [ ] Investigate swapfile issue when two instances are editing the same file
 - [ ] Remove parens around tool timers (add around timeouts)
@@ -23,7 +24,7 @@
 - [ ] Add support plan mode toggle
 - [ ] Add support for /compact (requires brainstorming)
 
-- [ ] Expose visibility into long running bash tool calls? (a way to see output while it's running)
+- [ ] Expose visibility into long running bash tool calls? (a way to "peek" output while it's running)
 ```
    Bash: Run GlobalConfigControllerTest 󰔛 timeout 300s (170s)
     cd /Users/robcmills/src/openspace/backend && ./gradlew :platform:test --tests "openspace.platform.controller.api.v3.GlobalConfigControllerTest" 2>&1 | tail -40
