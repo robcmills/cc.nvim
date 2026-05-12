@@ -152,8 +152,6 @@ on the bottom. Type your message, then press `<CR>` in normal mode (or run
 | `:CcContinue` | Resume most recent session for current cwd |
 | `:CcHistory` / `:CcHistory!` | Pick a session (! = all projects) |
 | `:CcRename [name]` | Rename the current session (no arg = show current title) |
-| `:CcPeek` | Tail a running Bash tool call in a floating window (see [Peeking at running Bash](#peeking-at-running-bash)) |
-| `:CcPeekInstall` / `:CcPeekUninstall` | Install / remove the `PreToolUse` hook that wires up `:CcPeek` |
 | `:CcDumpNdjson [path]` | Tee raw NDJSON from the subprocess to a file (no arg = stop) |
 
 ## Default keymaps
@@ -289,34 +287,6 @@ Claude Code's interactive tools get specialized UI:
   form requests prompt each schema field via `vim.ui.input`.
 - **Permission prompts** — any other restricted tool triggers
   Allow / Deny / Always Allow (session).
-
-## Peeking at running Bash
-
-Long-running Bash tool calls (`yarn install`, builds, test runs) only show
-their output once they finish. `:CcPeek` opens a floating window that
-live-tails the call's stdout/stderr while it runs.
-
-The mechanism is a `PreToolUse` hook (`hooks/cc-peek-wrap.sh`) that wraps
-Bash commands with timeout ≥ 30s in `tee /tmp/cc-peek/<session>/<id>.log`,
-preserving the original exit code via `set -o pipefail`. `:CcPeek` reads
-the running `tool_calls` from the current session, tails that log file,
-and pins a footer to the buffer when the tool finishes.
-
-Setup is opt-in (the hook is not active until you install it):
-
-```vim
-:CcPeekInstall    " copies hooks/cc-peek-wrap.sh into ~/.claude/hooks
-                  " and registers it in ~/.claude/settings.json (idempotent)
-:checkhealth cc   " verifies the hook is installed and runs a smoke test
-```
-
-Then, while the agent is running a long Bash call:
-
-```vim
-:CcPeek           " opens a float; q or <Esc> closes it
-```
-
-`:CcPeekUninstall` removes the matcher entry from `settings.json`.
 
 ## Slash command completion
 
