@@ -29,42 +29,73 @@ Shipped from `cc.nvim/hooks/cc-peek-wrap.sh`, copied into place by `:CcPeekInsta
 `session_id`, `tool_name`, `tool_use_id`, `tool_input.command`, `tool_input.timeout`.
 
 **Logic**:
-1. If `tool_name != "Bash"` or `timeout < 30000` (or missing) → echo input unchanged, exit 0.
-2. Else compute `LOG=/tmp/cc-peek/$session_id/$tool_use_id.log`, `mkdir -p $(dirname $LOG)`.
-3. Wrap with `set -o pipefail` so exit code propagates:
+1. `umask 077` at the top of the script so any file/dir created is mode 0600/0700.
+2. Validate `session_id` and `tool_use_id` match `^[A-Za-z0-9_-]+$`; if not,
+   echo input unchanged and exit 0 (defense in depth against shell injection,
+   even though both are UUIDs in practice).
+3. If `tool_name != "Bash"` or `timeout < 30000` (or missing) → echo input unchanged, exit 0.
+4. Else compute `LOG="${XDG_CACHE_HOME:-$HOME/.cache}/cc-peek/$session_id/$tool_use_id.log"`,
+   `mkdir -p "$(dirname "$LOG")"`.
+5. Wrap with `set -o pipefail` so exit code propagates:
    ```bash
    set -o pipefail; { <orig>; } 2>&1 | tee "$LOG"
    ```
-4. Emit JSON (schema from `claude-code/src/types/hooks.ts:72`):
+6. Emit JSON (schema from `claude-code/src/types/hooks.ts:72`):
    ```json
    { "hookSpecificOutput": { "hookEventName": "PreToolUse",
        "permissionDecision": "allow",
        "updatedInput": { "command": "<wrapped>", "timeout": <orig> } } }
    ```
 
-**Decision deferred to implementation**: `tee` vs. `script -fq`. Start with
-`tee`. If buffering on real `pnpm install` runs makes the peek useless, swap
-to `script` — trivial change, isolated to this script.
+### Performance notes
+
+- Hook overhead per Bash call: ~10–30ms (fork bash + JSON I/O). Negligible.
+- `tee` cost: microseconds per write; immaterial for normal Bash workloads.
+- **Output buffering is the real catch.** When stdout is a pipe to `tee` rather
+  than a TTY, libc switches most programs from line-buffered to block-buffered.
+  Progress bars may disable themselves; output arrives in chunky bursts. Wall-
+  clock unchanged, but the "live" peek feels laggy on slow commands. Start
+  with `tee` anyway; swap to `script -fq "$LOG" -c "$orig"` (allocates a pty,
+  preserves line buffering) if it proves bad in practice. Isolated change.
+
+### Security
+
+- **Per-user cache dir** (`~/.cache/cc-peek/`), not `/tmp`. Eliminates the
+  shared-dir readability problem and symlink/TOCTOU risk in `/tmp`.
+- **`umask 077`** in the hook → all files mode 0600, dirs mode 0700.
+- **Regex validation** of `session_id` / `tool_use_id` before substitution into
+  shell — defense in depth.
+- **Disclosure**: README must note that Bash output (potentially containing
+  secrets the command prints) lands on disk under `~/.cache/cc-peek/` until
+  cleanup. Users who don't want the residue should run `:CcPeekUninstall`.
 
 ## 2. Plugin module — `lua/cc/peek.lua` (new, ~150 LOC)
+
+At module load, resolve once:
+```lua
+M._cache_root = (vim.env.XDG_CACHE_HOME or (vim.env.HOME .. '/.cache')) .. '/cc-peek'
+```
 
 Public API:
 
 ```lua
 M.list_running(bufnr)   -- → array of { id, command, started, log_path }
 M.open(bufnr, id)       -- open float, start tail, register cleanup
-M.gc()                  -- prune stale /tmp/cc-peek/*/ dirs
+M.gc()                  -- prune stale <cache_root>/*/ dirs
 M.teardown(bufnr)       -- called from cc.init's per-bufnr cleanup
 M.install()             -- :CcPeekInstall
 M.uninstall()           -- :CcPeekUninstall
 ```
 
-`list_running` is pure derivation from `session.tool_calls`:
+`list_running` is pure derivation from `session.tool_calls`. The log-path
+pattern is built from `M._cache_root` (escaped via `vim.pesc`) plus
+`/[%w%-]+/[%w%-]+%.log`:
 
 ```lua
+local pat = vim.pesc(M._cache_root) .. '/[%w%-]+/[%w%-]+%.log'
 for id, rec in pairs(sess.tool_calls) do
   if rec.name == 'Bash' and not rec.result then
-    local log = rec.input.command:match('/tmp/cc%-peek/[%w%-]+/[%w%-]+%.log')
+    local log = rec.input.command:match(pat)
     if log then
       table.insert(out, {
         id = id,
@@ -77,7 +108,7 @@ for id, rec in pairs(sess.tool_calls) do
 end
 ```
 
-`strip_wrap` collapses `set -o pipefail; { X; } 2>&1 | tee /tmp/cc-peek/.../.log`
+`strip_wrap` collapses `set -o pipefail; { X; } 2>&1 | tee "<cache>/.../.log"`
 back to `X` for display.
 
 ## 3. `:CcPeek` command (registered in `plugin/cc.lua`)
@@ -115,16 +146,20 @@ Two layers:
 **Active** — in the prompt-buffer teardown path (existing `_buf_state` wipe in
 `lua/cc/init.lua`):
 ```lua
-vim.fn.delete('/tmp/cc-peek/' .. session_id, 'rf')
+vim.fn.delete(M._cache_root .. '/' .. session_id, 'rf')
 ```
 
 **Lazy GC** — `peek.gc()` runs once per `:CcPeek` invocation:
-- Walk `/tmp/cc-peek/*/`.
-- Delete any dir whose name ≠ current `session_id` AND whose mtime is > 1h old.
+- Walk `<cache_root>/*/`.
+- Delete any dir whose name ≠ current `session_id` AND whose mtime is older
+  than `gc_max_age_seconds` (default 3600). Configurable so users who care
+  about residue can shorten it.
 - Bounded cost, no daemon.
 
-OS-level `/tmp` cleanup (macOS `periodic`, systemd-tmpfiles) is the belt-and-
-suspenders fallback for nvim crashes that don't reach `:CcPeek` afterwards.
+Trade-off vs. the earlier `/tmp` proposal: we lose the OS-level fallback
+(`/tmp` cleanup by `periodic` / systemd-tmpfiles), but gain per-user privacy
+and predictable paths. Net win — the active + lazy layers already cover
+the common cases.
 
 ## 6. `:CcPeekInstall` / `:CcPeekUninstall`
 
@@ -133,11 +168,14 @@ suspenders fallback for nvim crashes that don't reach `:CcPeek` afterwards.
 2. Read `~/.claude/settings.json` (create with `{}` if missing).
 3. Idempotently insert under `hooks.PreToolUse` a matcher entry for `Bash` calling
    the script. Skip if already present (match by command path).
-4. Write back via `vim.json.encode` with stable formatting.
+4. **Atomic write**: serialize via `vim.json.encode`, write to
+   `settings.json.cc-peek.tmp` in the same directory, then `vim.uv.fs_rename`
+   into place. Prevents corruption if another claude session is writing
+   `settings.json` concurrently.
 5. `vim.notify('cc-peek: installed. Restart any running claude sessions to pick up the hook.')`.
 
-`:CcPeekUninstall`: reverse — remove the matcher entry, leave the rest of
-`settings.json` alone. Leave the script in place (harmless).
+`:CcPeekUninstall`: reverse — remove the matcher entry, write back atomically,
+leave the rest of `settings.json` alone. Leave the script in place (harmless).
 
 ## 7. `:checkhealth cc` additions in `lua/cc/health.lua`
 
@@ -152,9 +190,9 @@ Checks:
    `h.ok` / `h.warn('run :CcPeekInstall')`.
 2. **Settings.json registers it** under `PreToolUse` matcher=`Bash` → `h.ok` / `h.warn`.
 3. **Smoke test**: invoke the script with a synthetic stdin payload (long-timeout
-   Bash), assert output JSON contains a `tee /tmp/cc-peek/...` substring →
+   Bash), assert output JSON contains a `tee "<cache_root>/...` substring →
    `h.ok` / `h.error` with reason.
-4. **Current-session log dir** at `/tmp/cc-peek/<session_id>/` → list count of
+4. **Current-session log dir** at `<cache_root>/<session_id>/` → list count of
    files (info, not error).
 
 ## 8. Tests (mini.test)
