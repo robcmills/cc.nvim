@@ -842,8 +842,8 @@ function M.history(all_projects)
     vim.notify('cc.nvim: no sessions found', vim.log.levels.INFO)
     return
   end
-  vim.ui.select(entries, {
-    prompt = all_projects and 'Resume session (all projects):' or 'Resume session:',
+  require('cc.picker').select(entries, {
+    prompt = all_projects and 'Resume session (all projects)' or 'Resume session',
     format_item = function(e) return history.format_entry(e, all_projects or false) end,
   }, function(choice)
     if choice then M.resume(choice.session_id) end
