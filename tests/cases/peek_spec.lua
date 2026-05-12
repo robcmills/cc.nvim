@@ -311,6 +311,39 @@ T['placeholder']['clear wipes buffer and resets partial state'] = function()
   eq(result.partial, '')
 end
 
+T['placeholder']['set applies Comment highlight; clear removes it'] = function()
+  setup_temp_cache(_G.child)
+  local result = _G.child.lua_get([[(function()
+    local peek_mod = require('cc.peek')
+    local buf = vim.api.nvim_create_buf(false, true)
+    local peek = { bufnr = buf, partial = '', placeholder = false }
+    peek_mod._set_placeholder(peek)
+    local ns = vim.api.nvim_create_namespace('cc.peek.placeholder')
+    local marks_after_set = vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })
+    peek_mod._clear_placeholder(peek)
+    local marks_after_clear = vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })
+    local hl_groups = {}
+    for _, m in ipairs(marks_after_set) do
+      table.insert(hl_groups, m[4].hl_group)
+    end
+    return {
+      count_after_set = #marks_after_set,
+      count_after_clear = #marks_after_clear,
+      hl_groups = hl_groups,
+    }
+  end)()]])
+  -- One extmark per non-empty placeholder line.
+  local expected_count = 0
+  for _, line in ipairs(_G.child.lua_get([[require('cc.peek')._PLACEHOLDER_LINES]])) do
+    if #line > 0 then expected_count = expected_count + 1 end
+  end
+  eq(result.count_after_set, expected_count)
+  eq(result.count_after_clear, 0)
+  for _, hl in ipairs(result.hl_groups) do
+    eq(hl, 'Comment')
+  end
+end
+
 T['placeholder']['append_chunk after clear streams cleanly (no residue)'] = function()
   setup_temp_cache(_G.child)
   local lines = _G.child.lua_get([[(function()

@@ -19,6 +19,8 @@ end
 M._cache_root = resolve_cache_root()
 M._cache_root_pat = vim.pesc(M._cache_root) .. '/[%w%-_]+/[%w%-_]+%.log'
 
+local PLACEHOLDER_NS = vim.api.nvim_create_namespace('cc.peek.placeholder')
+
 -- Mirrors the >=30000ms threshold in hooks/cc-peek-wrap.sh — only wraps that
 -- match here get a log file, so list_running uses the same cutoff.
 local WRAP_TIMEOUT_MS = 30000
@@ -177,11 +179,11 @@ end
 -- subprocess (long-Bash calls can run sequentially). A blank float reads
 -- as "broken"; this placeholder makes the waiting state explicit.
 local PLACEHOLDER_LINES = {
-  '… waiting for tool output …',
+  'Waiting for tool output...',
   '',
-  'The log file is empty. The tool may not have started yet —',
-  'Claude can run long Bash calls sequentially. Output will appear',
-  'here as soon as the tool begins writing.',
+  'The log file has been created but is empty. Tool may not have started yet.',
+  'Claude can run long Bash calls sequentially.',
+  'Output will appear here as soon as the tool begins writing.',
 }
 
 ---@param peek cc.PeekWin
@@ -190,12 +192,23 @@ local function set_placeholder(peek)
   vim.bo[peek.bufnr].modifiable = true
   vim.api.nvim_buf_set_lines(peek.bufnr, 0, -1, false, PLACEHOLDER_LINES)
   vim.bo[peek.bufnr].modifiable = false
+  vim.api.nvim_buf_clear_namespace(peek.bufnr, PLACEHOLDER_NS, 0, -1)
+  for i, line in ipairs(PLACEHOLDER_LINES) do
+    if #line > 0 then
+      vim.api.nvim_buf_set_extmark(peek.bufnr, PLACEHOLDER_NS, i - 1, 0, {
+        end_row = i - 1,
+        end_col = #line,
+        hl_group = 'Comment',
+      })
+    end
+  end
   peek.placeholder = true
 end
 
 ---@param peek cc.PeekWin
 local function clear_placeholder(peek)
   if not vim.api.nvim_buf_is_valid(peek.bufnr) then return end
+  vim.api.nvim_buf_clear_namespace(peek.bufnr, PLACEHOLDER_NS, 0, -1)
   vim.bo[peek.bufnr].modifiable = true
   vim.api.nvim_buf_set_lines(peek.bufnr, 0, -1, false, { '' })
   vim.bo[peek.bufnr].modifiable = false
