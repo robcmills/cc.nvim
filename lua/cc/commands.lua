@@ -112,6 +112,18 @@ function M.create()
     desc = 'Load a test fixture into a fresh cc.nvim session (read-only)',
   })
 
+  vim.api.nvim_create_user_command('CcPeek', function()
+    require('cc.peek').peek_command()
+  end, { desc = 'Tail a running Bash tool call in a floating window' })
+
+  vim.api.nvim_create_user_command('CcPeekInstall', function()
+    require('cc.peek').install()
+  end, { desc = 'Install the cc-peek PreToolUse hook in ~/.claude/settings.json' })
+
+  vim.api.nvim_create_user_command('CcPeekUninstall', function()
+    require('cc.peek').uninstall()
+  end, { desc = 'Remove the cc-peek PreToolUse hook from ~/.claude/settings.json' })
+
   vim.api.nvim_create_user_command('CcDumpNdjson', function(opts)
     local inst = cc._get_instance()
     if not inst or not inst.process then
