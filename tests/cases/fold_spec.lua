@@ -4,10 +4,7 @@ local MiniTest = require('mini.test')
 local eq = MiniTest.expect.equality
 
 local T = MiniTest.new_set({
-  hooks = {
-    pre_case = function() _G.child = helpers.new_child() end,
-    post_case = function() if _G.child then _G.child.stop() end end,
-  },
+  hooks = helpers.shared_child_hooks(),
 })
 
 T['fold_levels'] = MiniTest.new_set()
@@ -236,7 +233,18 @@ T['nav_away_back']['preserves user-resized prompt height'] = function()
   eq(_G.child.lua_get('_G._height_after'), 20)
 end
 
-T['manual_open'] = MiniTest.new_set()
+-- This test relies on a window that has never had a fold manually toggled.
+-- Vim's per-window "user opened a fold" state is sticky across buffer
+-- changes and survives our normal reset_test_state cleanup, so we restart
+-- the child once for this group.
+T['manual_open'] = MiniTest.new_set({
+  hooks = {
+    pre_once = function()
+      if _G.child then _G.child.stop() end
+      _G.child = helpers.new_child()
+    end,
+  },
+})
 
 -- Regression: with foldmethod=expr, once the user has manually opened a fold
 -- (zo), Vim leaves subsequently-created folds open too. New tool calls

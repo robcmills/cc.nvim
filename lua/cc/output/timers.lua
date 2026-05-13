@@ -17,7 +17,11 @@ function M.start(self, tool_use_id)
   if not timer then return end
   local rec = { timer = timer, start_ms = uv.now() }
   self._tool_timers[tool_use_id] = rec
-  timer:start(1000, 1000, vim.schedule_wrap(function()
+  -- Interval is overridable via cc.config.tool_timer_interval_ms so tests can
+  -- exercise the timer path without sleeping a full second.
+  local cfg_ok, cfg = pcall(require, 'cc.config')
+  local interval = (cfg_ok and cfg.options and cfg.options.tool_timer_interval_ms) or 1000
+  timer:start(interval, interval, vim.schedule_wrap(function()
     if not vim.api.nvim_buf_is_valid(self.bufnr) then
       self:stop_tool_timer(tool_use_id)
       return

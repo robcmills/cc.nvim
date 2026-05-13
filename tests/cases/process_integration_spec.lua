@@ -69,9 +69,9 @@ local function spawn_with_fixture(child, fixture_name)
     process:spawn()
 
     -- Wait for subprocess to exit (max 5s)
-    vim.wait(5000, function() return process_exited end, 50)
+    vim.wait(5000, function() return process_exited end, 10)
     -- Drain any remaining scheduled callbacks
-    vim.wait(200, function() return false end)
+    vim.wait(50, function() return false end)
 
     _G._test_bufnr = bufnr
     _G._test_output = output
@@ -81,10 +81,7 @@ local function spawn_with_fixture(child, fixture_name)
 end
 
 local T = MiniTest.new_set({
-  hooks = {
-    pre_case = function() _G.child = helpers.new_child() end,
-    post_case = function() if _G.child then _G.child.stop() end end,
-  },
+  hooks = helpers.shared_child_hooks(),
 })
 
 -- ---------------------------------------------------------------------------
@@ -92,46 +89,22 @@ local T = MiniTest.new_set({
 -- ---------------------------------------------------------------------------
 T['pipeline'] = MiniTest.new_set()
 
-T['pipeline']['process exits cleanly'] = function()
-  spawn_with_fixture(_G.child, 'simple_text')
-  local exited = _G.child.lua_get('_G._test_process_exited')
-  eq(exited, true)
-end
-
-T['pipeline']['simple_text renders agent turn'] = function()
-  spawn_with_fixture(_G.child, 'simple_text')
-  assert_any_line_matches(_G.child, 'Agent:')
-end
-
-T['pipeline']['simple_text renders streamed text'] = function()
-  spawn_with_fixture(_G.child, 'simple_text')
-  assert_buffer_contains(_G.child, 'Hello world!')
-end
-
-T['pipeline']['simple_text renders cost'] = function()
-  spawn_with_fixture(_G.child, 'simple_text')
-  assert_any_line_matches(_G.child, '%$0%.0012')
-end
-
-T['pipeline']['tool_bash renders tool and result'] = function()
-  spawn_with_fixture(_G.child, 'tool_bash')
-  assert_any_line_matches(_G.child, '^%s+%S+%s+Bash:')
-  assert_buffer_contains(_G.child, 'file1%.txt')
-end
-
-T['pipeline']['session state populated through process pipe'] = function()
-  spawn_with_fixture(_G.child, 'simple_text')
-  local state = helpers.get_session_state(_G.child)
-  eq(state.id, 'test-stream-001')
-  eq(state.model, 'claude-sonnet-4-20250514')
-  eq(state.cost_usd, 0.0012)
-end
-
-T['pipeline']['multi_block renders multiple tools and text'] = function()
+-- A single end-to-end check: spawn fake_claude with multi_block (covers text
+-- streaming, multiple tools, and final result.usage), assert that the process
+-- exited cleanly and that text, tool headers, and session state all made it
+-- through the full process.lua → parser → router → output → session path.
+-- Granular rendering assertions (per-tool, per-message-type) live in
+-- streaming_spec via the same router/output, but without the subprocess.
+T['pipeline']['multi_block exercises the full subprocess pipeline'] = function()
   spawn_with_fixture(_G.child, 'multi_block')
+  eq(_G.child.lua_get('_G._test_process_exited'), true)
+  assert_any_line_matches(_G.child, 'Agent:')
   assert_any_line_matches(_G.child, '^%s+%S+%s+Read:')
   assert_any_line_matches(_G.child, '^%s+%S+%s+Bash:')
   assert_buffer_contains(_G.child, 'All done')
+  local state = helpers.get_session_state(_G.child)
+  eq(type(state.id), 'string')
+  eq(type(state.model), 'string')
 end
 
 T['pipeline']['hook events render through process pipe'] = function()

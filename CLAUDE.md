@@ -33,7 +33,7 @@ output.lua    render to buffer  ←→  session.lua  (turn/token/cost state)
 ## Testing
 
 ```bash
-./tests/run.sh                      # all unit specs, minimal config (~12s)
+./tests/run.sh                      # all unit specs, minimal config (~6s)
 ./tests/run.sh <substring>          # filter unit specs by spec filename
 ./tests/run.sh --config=rob         # run with full user config
 ./tests/run.sh --e2e                # RPC-driven viewport/timing specs (slow)
@@ -46,6 +46,12 @@ output.lua    render to buffer  ←→  session.lua  (turn/token/cost state)
 - Unit specs in `tests/cases/*_spec.lua`; e2e in `tests/e2e/cases/`. Default
   `run.sh` runs unit only. Use `--e2e` when touching viewport, scroll, or
   real-timing behavior.
+- One child neovim per spec file is shared across all its test cases — set
+  it up with `hooks = helpers.shared_child_hooks()`. `pre_case` calls
+  `reset_test_state` to wipe `cc-*` buffers, the `cc.output._buf_state`
+  table, and registered cc instances. If a test needs a truly fresh
+  child (e.g. depends on never-toggled fold state), give that group its
+  own `pre_once` hook that stops and recreates `_G.child`.
 - Two fixture paths to know about:
   - **JSONL** — resume path. `history.read_transcript` →
     `output:render_historical_record`. Tests final rendered state.

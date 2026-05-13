@@ -1172,4 +1172,11 @@ function M._get_instance()
   return get_current_instance()
 end
 
+--- Test-only: clear the module-level instances registry. Allows a shared
+--- test nvim to simulate fresh module state across cases.
+function M._reset_instances()
+  for k in pairs(instances) do instances[k] = nil end
+  next_instance_id = 1
+end
+
 return M

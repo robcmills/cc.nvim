@@ -17,9 +17,59 @@ function M.new_child(init_file)
   init_file = init_file or vim.g.cc_test_init or (M.this_dir .. '/minimal_init.lua')
   local child = MiniTest.new_child_neovim()
   child.restart({ '-u', init_file })
-  -- Wait for startup to settle
-  child.lua('vim.wait(100, function() return false end)')
   return child
+end
+
+--- Wipe all `cc-*` buffers and test scratch globals so a child shared across
+--- tests starts each case with a clean slate. Used by `shared_child_hooks`.
+---@param child table
+function M.reset_test_state(child)
+  child.lua([==[
+    -- Reset window-local options that cc overrides (fold-related, etc.).
+    -- `:tabnew` clones the current window's options, so reset them on the
+    -- current window first.
+    pcall(vim.cmd, 'silent! normal! zE')
+    for _, opt in ipairs({ 'foldmethod', 'foldexpr', 'foldenable', 'foldtext', 'foldlevel',
+                          'fillchars', 'winhighlight', 'number', 'relativenumber',
+                          'signcolumn', 'wrap' }) do
+      pcall(function() vim.api.nvim_set_option_value(opt, vim.api.nvim_get_option_info2(opt, {}).default, { scope = 'local', win = 0 }) end)
+    end
+    pcall(vim.cmd, 'silent! tabnew')
+    pcall(vim.cmd, 'silent! tabonly!')
+    pcall(vim.cmd, 'silent! normal! zE')
+    local current_buf = vim.api.nvim_get_current_buf()
+    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+      if b ~= current_buf then
+        local name = vim.api.nvim_buf_get_name(b)
+        local tail = vim.fn.fnamemodify(name, ':t')
+        if tail:match('^cc%-') or tail:match('^cc[_%-]nvim') then
+          pcall(vim.api.nvim_buf_delete, b, { force = true })
+        end
+      end
+    end
+    -- cc module-level state keyed by bufnr — clear so stale entries don't grow
+    local ok, output = pcall(require, 'cc.output')
+    if ok and output._buf_state then output._buf_state = {} end
+    local ok2, cc = pcall(require, 'cc')
+    if ok2 and cc._reset_instances then cc._reset_instances() end
+    -- Wipe test scratch globals
+    for k in pairs(_G) do
+      if type(k) == 'string' and (k:match('^_test_') or k:match('^_G_test_')) then _G[k] = nil end
+    end
+  ]==])
+end
+
+--- Standard hooks for a spec that shares one child across all cases.
+--- Spawns the child once (pre_once), resets buffer/module state between
+--- cases (pre_case), and stops the child once at the end (post_once).
+---@param opts? { init_file?: string }
+function M.shared_child_hooks(opts)
+  opts = opts or {}
+  return {
+    pre_once = function() _G.child = M.new_child(opts.init_file) end,
+    pre_case = function() if _G.child then M.reset_test_state(_G.child) end end,
+    post_once = function() if _G.child then _G.child.stop() end end,
+  }
 end
 
 --- Load a JSONL fixture through cc.nvim's history transcript reader.
@@ -55,7 +105,6 @@ function M.render_fixture(child, fixture_name, opts)
     -- Create a session (required by Output.new)
     local session = Session.new()
 
-    -- Create output instance with proper initialization
     local output = Output.new(session, 'cc-test-output')
     local bufnr = output:ensure_buffer()
 

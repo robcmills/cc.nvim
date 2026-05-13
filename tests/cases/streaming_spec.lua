@@ -42,14 +42,7 @@ local function assert_no_line_matches(child, pattern)
 end
 
 local T = MiniTest.new_set({
-  hooks = {
-    pre_case = function()
-      _G.child = helpers.new_child()
-    end,
-    post_case = function()
-      if _G.child then _G.child.stop() end
-    end,
-  },
+  hooks = helpers.shared_child_hooks(),
 })
 
 -- ---------------------------------------------------------------------------
@@ -507,10 +500,10 @@ end
 -- Local-timer fallback: when the SDK does not emit tool_progress events,
 -- the plugin's own 1Hz timer should still tick the elapsed-time suffix.
 T['tool_progress']['local timer drives elapsed time without tool_progress events'] = function()
-  helpers.replay_streaming(_G.child, 'tool_no_progress')
-  -- Let the libuv timer tick at least once (it fires every 1000ms).
-  _G.child.lua('vim.wait(1500, function() return false end)')
-  assert_any_line_matches(_G.child, '%(%d+s%)')
+  -- Speed the timer way down for this test so we don't pay a real second.
+  helpers.replay_streaming(_G.child, 'tool_no_progress', { tool_timer_interval_ms = 50 })
+  _G.child.lua('vim.wait(120, function() return false end)')
+  assert_any_line_matches(_G.child, '%(%d+m?s%)')
 end
 
 -- Timeout rendering: when the agent sets Bash's timeout input, the tool

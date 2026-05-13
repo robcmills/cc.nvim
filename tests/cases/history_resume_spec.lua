@@ -28,10 +28,7 @@ local function assert_any_line_matches(child, pattern)
 end
 
 local T = MiniTest.new_set({
-  hooks = {
-    pre_case = function() _G.child = helpers.new_child() end,
-    post_case = function() if _G.child then _G.child.stop() end end,
-  },
+  hooks = helpers.shared_child_hooks(),
 })
 
 -- ---------------------------------------------------------------------------

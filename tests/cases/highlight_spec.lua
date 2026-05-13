@@ -18,10 +18,7 @@ local function assert_hl_in_stack(child, row, col, group)
 end
 
 local T = MiniTest.new_set({
-  hooks = {
-    pre_case = function() _G.child = helpers.new_child() end,
-    post_case = function() if _G.child then _G.child.stop() end end,
-  },
+  hooks = helpers.shared_child_hooks(),
 })
 
 T['highlight_groups'] = MiniTest.new_set()
