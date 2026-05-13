@@ -17,8 +17,10 @@ end
 function M:get_trigger_characters() return { '/' } end
 
 function M:get_keyword_pattern()
-  -- Match /commands (including dashes): /co, /commit, /foo-bar
-  return [[/[%w%-_]*]]
+  -- Match /commands (including dashes): /co, /commit, /foo-bar.
+  -- nvim-cmp interprets this as Vim regex (NOT Lua pattern), so use
+  -- explicit character ranges rather than `%w`.
+  return [[/[A-Za-z0-9_-]*]]
 end
 
 --- Return {word, abbr, menu, ...} for each command available to this session.
@@ -30,23 +32,26 @@ function M:complete(params, callback)
     return
   end
 
-  -- Grab the current session's slash_commands, if any.
-  local session_cmds = nil
+  -- Grab the current session's slash_commands + skills, if any.
+  local session_cmds, session_skills = nil, nil
   local ok, cc = pcall(require, 'cc')
   if ok then
     local inst = cc.find_instance(vim.api.nvim_get_current_buf())
-    if inst and inst.session and inst.session.slash_commands then
+    if inst and inst.session then
       session_cmds = inst.session.slash_commands
+      session_skills = inst.session.skills
     end
   end
 
-  local cmds = require('cc.slash').list(session_cmds)
+  local cmds = require('cc.slash').list(session_cmds, session_skills)
 
   local items = {}
   for _, c in ipairs(cmds) do
     table.insert(items, {
       label = '/' .. c.name,
-      insertText = c.name, -- '/' is the trigger, already in the buffer
+      -- cmp replaces the entire keyword-pattern match (e.g. `/addr`), so
+      -- insertText must include the leading slash or it gets stripped.
+      insertText = '/' .. c.name,
       detail = c.description or c.source,
       kind = 1, -- Text
     })

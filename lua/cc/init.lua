@@ -1158,6 +1158,14 @@ function M.get_slash_commands()
   return nil
 end
 
+--- Public: user-invocable skills available in the current session.
+---@return string[]?
+function M.get_skills()
+  local inst = get_current_instance()
+  if inst and inst.session then return inst.session.skills end
+  return nil
+end
+
 --- Get the current instance (for dev commands like :CcDumpNdjson).
 ---@return cc.Instance?
 function M._get_instance()

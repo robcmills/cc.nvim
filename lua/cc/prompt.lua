@@ -40,16 +40,22 @@ function Prompt:ensure_buffer()
 
   -- If nvim-cmp is available, override buffer-local sources so our slash
   -- source wins over the user's global `path` source (which would otherwise
-  -- expand `/` to filesystem paths).
+  -- expand `/` to filesystem paths). `cmp.setup.buffer` reads
+  -- `nvim_get_current_buf()` internally, so we must enter the prompt buffer
+  -- before calling it — at this point it was just created via `nvim_create_buf`
+  -- and isn't current yet.
   local ok_cmp, cmp = pcall(require, 'cmp')
   if ok_cmp then
     pcall(function()
-      cmp.setup.buffer({
-        sources = cmp.config.sources(
-          { { name = 'cc_slash' } },
-          { { name = 'buffer' } }
-        ),
-      })
+      vim.api.nvim_buf_call(self.bufnr, function()
+        cmp.setup.buffer({
+          sources = cmp.config.sources(
+            { { name = 'cc_slash' } },
+            { { name = 'path' } },
+            { { name = 'buffer' } }
+          ),
+        })
+      end)
     end)
   end
 
@@ -75,7 +81,8 @@ function M.omnifunc(findstart, base)
   -- findstart == 0: return matches
   local ok_cc, cc = pcall(require, 'cc')
   local session_cmds = ok_cc and cc.get_slash_commands() or nil
-  local cmds = require('cc.slash').list(session_cmds)
+  local session_skills = ok_cc and cc.get_skills() or nil
+  local cmds = require('cc.slash').list(session_cmds, session_skills)
   local matches = {}
   local prefix = (base or ''):gsub('^/', '')
   for _, c in ipairs(cmds) do

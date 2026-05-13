@@ -102,6 +102,7 @@ function Session:on_init(msg)
   self.tools = msg.tools or self.tools
   self.permission_mode = msg.permissionMode or self.permission_mode
   self.slash_commands = msg.slash_commands or self.slash_commands
+  self.skills = msg.skills or self.skills
   -- A fresh engine starts its totalUsage at zero. Wipe the diff baseline so
   -- the next result.usage delta is the full new-engine contribution. The
   -- session-cumulative input/output/cache_* fields are preserved (they may
