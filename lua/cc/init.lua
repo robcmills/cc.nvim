@@ -432,6 +432,10 @@ end
 ---@param inst cc.Instance
 local function teardown_instance_keep_windows(inst)
   require('cc.statusline_spinner').stop(inst)
+  if inst.output and inst.output.bufnr > 0 then
+    local sid = inst.session and inst.session.id or nil
+    pcall(function() require('cc.peek').teardown(inst.output.bufnr, sid) end)
+  end
   if inst.process then
     inst.process:close()
     inst.process = nil
@@ -461,6 +465,10 @@ end
 ---@param inst cc.Instance
 local function close_instance(inst)
   require('cc.statusline_spinner').stop(inst)
+  if inst.output and inst.output.bufnr > 0 then
+    local sid = inst.session and inst.session.id or nil
+    pcall(function() require('cc.peek').teardown(inst.output.bufnr, sid) end)
+  end
   if inst.process then
     inst.process:close()
     inst.process = nil
