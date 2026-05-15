@@ -112,6 +112,10 @@ function M.create()
     desc = 'Load a test fixture into a fresh cc.nvim session (read-only)',
   })
 
+  vim.api.nvim_create_user_command('CcStatus', function()
+    require('cc.status').open()
+  end, { desc = 'Show current cc.nvim session status in a floating window' })
+
   vim.api.nvim_create_user_command('CcPeek', function()
     require('cc.peek').peek_command()
   end, { desc = 'Tail a running Bash tool call in a floating window' })

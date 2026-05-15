@@ -36,6 +36,16 @@ local defaults = {
   -- Splash screen
   CcSplashTitle = { fg = '#fff066', bold = true }, -- bright yellow
   CcSplashKey   = { fg = '#c8a165' },               -- light brown
+  -- :CcStatus floating window
+  CcStatusNormal  = { link = 'NormalFloat' },
+  CcStatusBorder  = { link = 'FloatBorder' },
+  CcStatusTitle   = { fg = '#fff066', bold = true }, -- bright yellow (matches splash)
+  CcStatusSection = { fg = '#ffb86b', bold = true }, -- light orange
+  CcStatusLabel   = { link = 'Comment' },
+  CcStatusValue   = { link = 'Normal' },
+  CcStatusDim     = { link = 'Comment' },
+  CcStatusOK      = { fg = '#a9e39a' }, -- light green
+  CcStatusWarn    = { fg = '#e6c07b' }, -- warm yellow
   -- Prompt buffer placeholder text (when empty)
   CcPromptPlaceholder = { link = 'Comment' },
 }
