@@ -350,40 +350,6 @@ T['model_context_window']['unknown Claude-ish model defaults to 200K'] = functio
 end
 
 -- ---------------------------------------------------------------------------
--- fmt_context_percent
--- ---------------------------------------------------------------------------
-T['fmt_context_percent'] = MiniTest.new_set()
-
-T['fmt_context_percent']['zero or nil used returns empty'] = function()
-  _G.child.lua([[
-    local f = require('cc.statusline')._fmt_context_percent
-    _G._v1 = f(0, 200000)
-    _G._v2 = f(nil, 200000)
-  ]])
-  eq(_G.child.lua_get('_G._v1'), '')
-  eq(_G.child.lua_get('_G._v2'), '')
-end
-
-T['fmt_context_percent']['nil or zero total returns empty'] = function()
-  _G.child.lua([[
-    local f = require('cc.statusline')._fmt_context_percent
-    _G._v1 = f(1000, nil)
-    _G._v2 = f(1000, 0)
-  ]])
-  eq(_G.child.lua_get('_G._v1'), '')
-  eq(_G.child.lua_get('_G._v2'), '')
-end
-
-T['fmt_context_percent']['formats one decimal place with statusline-escaped %'] = function()
-  -- Statusline expressions parse `%` as a directive prefix; we need a literal
-  -- one in the output, so the format string emits `%%`. Doubling matters —
-  -- a single `%` would consume the highlight group that follows in
-  -- default_format (e.g. `%#CcStl#`) and leak it as visible text.
-  _G.child.lua([[_G._v = require('cc.statusline')._fmt_context_percent(2000, 200000)]])
-  eq(_G.child.lua_get('_G._v'), '1.0%%')
-end
-
--- ---------------------------------------------------------------------------
 -- context fields in build_state
 -- ---------------------------------------------------------------------------
 T['build_state']['context_window derived from model'] = function()
@@ -446,7 +412,7 @@ T['build_state']['user config still wins over CLI-reported window'] = function()
 end
 
 -- ---------------------------------------------------------------------------
--- token segment rendering: icon prefix + context percent
+-- token segment rendering: icon prefix only (no context percent in default)
 -- ---------------------------------------------------------------------------
 T['default_format']['token segment uses tau icon by default'] = function()
   _G.child.lua([[
@@ -459,7 +425,10 @@ T['default_format']['token segment uses tau icon by default'] = function()
   eq(out:find(' tokens', 1, true) == nil, true)
 end
 
-T['default_format']['token segment appends context percent when known'] = function()
+T['default_format']['default omits context percent even when window is known'] = function()
+  -- With a 1M-token budget the count and the percent encode the same number
+  -- (just shifted by a decimal), so the default layout drops the percent.
+  -- Custom format functions still get state.context_percent.
   _G.child.lua([[
     require('cc.config').setup({})
     _G._out = require('cc.statusline')._default_format({
@@ -468,31 +437,10 @@ T['default_format']['token segment appends context percent when known'] = functi
     })
   ]])
   local out = _G.child.lua_get('_G._out')
-  -- Exact escaped form: `1.1%%` in the format string survives one round of
-  -- statusline parsing as a literal `%`. A plain-text find of `1.1%` would
-  -- match either `1.1%` or `1.1%%` and would miss the bug — assert the
-  -- doubled form explicitly.
-  eq(out:find('τ 13.2k 1.1%%', 1, true) ~= nil, true)
-  -- And the percent must NOT be followed by `#` (which would mean we
-  -- emitted a single `%` and consumed the next highlight group).
-  eq(out:find('1.1%#', 1, true) == nil, true)
-end
-
-T['default_format']['percent does not consume the next highlight group'] = function()
-  -- Regression for the leak that produced `49.1%#CcStl#` on screen. After
-  -- the token segment, default_format concatenates SEP = `%#CcStl# ── `,
-  -- so the byte after the `%%` is `%`. Together that's `1.1%%%#CcStl#` —
-  -- which Vim parses as `1.1%` then `%#CcStl#`. Spot-check that pattern.
-  _G.child.lua([[
-    require('cc.config').setup({})
-    _G._out = require('cc.statusline')._default_format({
-      context_tokens = 13200,
-      context_window = 1200000,
-      mode = 'auto',
-    })
-  ]])
-  local out = _G.child.lua_get('_G._out')
-  eq(out:find('1.1%%%#CcStl#', 1, true) ~= nil, true)
+  eq(out:find('τ 13.2k', 1, true) ~= nil, true)
+  -- No percent in the rendered statusline.
+  eq(out:find('%%', 1, true) == nil, true)
+  eq(out:find('1.1', 1, true) == nil, true)
 end
 
 T['default_format']['tokens_icon override applies'] = function()

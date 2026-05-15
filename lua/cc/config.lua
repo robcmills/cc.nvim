@@ -103,9 +103,10 @@ local defaults = {
   statusline = {
     enabled = true,
     format = nil,
-    -- Context-window size used for the "% used" readout next to the
-    -- token count. nil = derive from session.model ([1m] suffix → 1,000,000;
-    -- otherwise 200,000). Set an integer to override.
+    -- Context-window size exposed to format functions as state.context_window
+    -- (and used to compute state.context_percent). nil = derive from
+    -- session.model ([1m] suffix → 1,000,000; otherwise 200,000). Set an
+    -- integer to override.
     context_window = nil,
     -- Glyph prefixed to the token count. Defaults to the Greek letter tau
     -- (τ) — renders in every terminal and reads as "tokens" without needing

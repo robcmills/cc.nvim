@@ -55,20 +55,6 @@ local function model_context_window(model)
   return 200000
 end
 
----@param used number?
----@param total number?
----@return string
-local function fmt_context_percent(used, total)
-  if type(used) ~= 'number' or used <= 0 then return '' end
-  if type(total) ~= 'number' or total <= 0 then return '' end
-  local pct = (used / total) * 100
-  -- %% in the format spec escapes to a literal `%` in the output. The result
-  -- is then interpolated into a Neovim statusline expression, where `%` is
-  -- itself a directive prefix — so we double it again so Vim renders one
-  -- literal `%`. Net: `%.1f%%%%` → `1.1%%` (string) → `1.1%` (on screen).
-  return string.format('%.1f%%%%', pct)
-end
-
 ---@param ms number?
 ---@return string
 local function fmt_elapsed(ms)
@@ -106,10 +92,11 @@ local function default_format(state)
     table.insert(segments, seg)
   end
   -- Show the live context size (input + cache_creation + cache_read on the
-  -- last turn), not the cumulative billing total — that way the count and
-  -- the "% of window" readout refer to the same quantity. Falls back to the
+  -- last turn), not the cumulative billing total. Falls back to the
   -- cumulative total when no result has been observed yet (e.g. mid-turn
-  -- before the first result message lands).
+  -- before the first result message lands). The state passed to user
+  -- format functions still carries `context_window` and `context_percent`
+  -- so custom layouts can render a % readout if they want one.
   local count = (state.context_tokens and state.context_tokens > 0)
     and state.context_tokens or state.total_tokens
   local toks = fmt_tokens(count)
@@ -119,8 +106,6 @@ local function default_format(state)
     local seg = HL_TOKENS
     if icon ~= '' then seg = seg .. icon .. ' ' end
     seg = seg .. toks
-    local pct = fmt_context_percent(state.context_tokens, state.context_window)
-    if pct ~= '' then seg = seg .. ' ' .. pct end
     table.insert(segments, seg)
   end
   if state.mode and state.mode ~= '' then
@@ -331,7 +316,6 @@ end
 M._default_format = default_format
 M._fmt_tokens = fmt_tokens
 M._fmt_elapsed = fmt_elapsed
-M._fmt_context_percent = fmt_context_percent
 M._model_context_window = model_context_window
 
 return M
