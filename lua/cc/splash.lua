@@ -46,7 +46,18 @@ local function build_virt_lines()
 
   sep()
   add({ 'Hide this splash:', 'Comment' })
-  add({ "require('cc').setup({ splash = false })", 'CcSplashKey' })
+  add(
+    { 'require', 'Function' },
+    { '(', 'Delimiter' },
+    { "'cc'", 'String' },
+    { ').', 'Delimiter' },
+    { 'setup', 'Function' },
+    { '({ ', 'Delimiter' },
+    { 'splash', 'Identifier' },
+    { ' = ', 'Operator' },
+    { 'false', 'Boolean' },
+    { ' })', 'Delimiter' }
+  )
 
   return lines
 end
