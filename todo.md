@@ -1,3 +1,4 @@
+- [ ] e2e tests are taking too long
 - [ ] Fix missing mode in statusline on startup
 - [ ] Better handling and exposure of error messages (401 logged out)
 - [ ] Implement /login /logout support

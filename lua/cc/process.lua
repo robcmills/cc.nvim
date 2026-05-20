@@ -54,6 +54,7 @@ function Process:spawn()
     '-p',
     '--input-format', 'stream-json',
     '--output-format', 'stream-json',
+    '--permission-prompt-tool', 'stdio',
     '--include-partial-messages',
     '--include-hook-events',
     '--verbose',
