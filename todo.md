@@ -2,7 +2,6 @@
 - [ ] Fix missing mode in statusline on startup
 - [ ] Better handling and exposure of error messages (401 logged out)
 - [ ] Implement /login /logout support
-- [ ] Debug /command completions
 - [ ] Improve /command completions (add descriptions, etc.)
 - [ ] Add rename with ai generated name
 - [ ] Add configurable markdown highlighting for Subagent prompts
@@ -24,6 +23,7 @@
 - [ ] Add support plan mode toggle
 - [ ] Add support for /compact (requires brainstorming)
 
+- [x] Debug /command completions
 - [x] Expose visibility into long running bash tool calls? (a way to "peek" output while it's running)
 - [x] Add context percentage to token count in statusline
 - [x] Cache session metadata → ~100× speedup on `:CcHistory`

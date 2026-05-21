@@ -28,7 +28,12 @@ output.lua    render to buffer  ←→  session.lua  (turn/token/cost state)
   one of these.
 - NDJSON protocol reference (when extending message handling):
   `~/src/claude-code/src/entrypoints/sdk/coreSchemas.ts` and
-  `~/src/claude-code/src/cli/structuredIO.ts`.
+  `~/src/claude-code/src/cli/structuredIO.ts`. **Caveat:** this local copy
+  is a snapshot from around March 2026 and will never be updated. Treat any
+  determination made from it as suspect and verify against the running CLI
+  before relying on it. The further we get from that snapshot date, the more
+  likely the source has drifted, and the more we'll have to reverse-engineer
+  observed CLI behavior when it doesn't match what the source predicts.
 
 ## Testing
 
