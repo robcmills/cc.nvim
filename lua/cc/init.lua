@@ -97,6 +97,11 @@ local function setup_prompt_keymaps(inst)
       vim.api.nvim_set_current_win(inst.output_winid)
     end
   end, { buffer = bufnr, silent = true, desc = 'cc.nvim: goto output' })
+  if keys.cycle_permission_mode then
+    vim.keymap.set({ 'n', 'i' }, keys.cycle_permission_mode,
+      function() M.cycle_permission_mode() end,
+      { buffer = bufnr, silent = true, desc = 'cc.nvim: cycle permission mode' })
+  end
 end
 
 local function setup_output_keymaps(inst)
@@ -108,6 +113,11 @@ local function setup_output_keymaps(inst)
       vim.cmd('startinsert')
     end
   end, { buffer = bufnr, silent = true, desc = 'cc.nvim: goto prompt' })
+  if keys.cycle_permission_mode then
+    vim.keymap.set('n', keys.cycle_permission_mode,
+      function() M.cycle_permission_mode() end,
+      { buffer = bufnr, silent = true, desc = 'cc.nvim: cycle permission mode' })
+  end
 end
 
 -- ---------------------------------------------------------------------------
@@ -1000,6 +1010,100 @@ function M.effort(level)
   M._handle_effort(get_current_instance(), level or '')
 end
 
+--- Permission modes accepted by `claude --permission-mode` and the
+--- `set_permission_mode` control_request. Order matches the picker layout.
+M.PERMISSION_MODES = {
+  'acceptEdits',
+  'auto',
+  'bypassPermissions',
+  'default',
+  'dontAsk',
+  'plan',
+}
+
+---@param mode string
+---@return boolean
+local function is_valid_permission_mode(mode)
+  for _, m in ipairs(M.PERMISSION_MODES) do
+    if m == mode then return true end
+  end
+  return false
+end
+
+--- Apply a permission_mode choice: if an active session is in the current
+--- buffer, send a set_permission_mode control_request so the live CLI
+--- switches without restart. Otherwise persist on Config.options so the
+--- next :Cc / :CcNew picks it up.
+---@param mode string
+local function apply_permission_mode(mode)
+  local inst = get_current_instance()
+  if inst and inst.process and inst.process:is_alive() then
+    local request_id = inst.process:send_control_set_permission_mode(mode)
+    if request_id then
+      vim.notify('cc.nvim: permission_mode → ' .. mode, vim.log.levels.INFO)
+    end
+    return
+  end
+  Config.options.permission_mode = mode
+  vim.notify(
+    'cc.nvim: permission_mode set to ' .. mode .. ' (applies to next :Cc / :CcNew)',
+    vim.log.levels.INFO)
+end
+
+--- Cycle order matches the upstream Claude Code TUI's Shift+Tab handler for
+--- non-ant users (`src/utils/permissions/getNextPermissionMode.ts`). Modes
+--- outside the cycle (auto / bypassPermissions / dontAsk) drop back to
+--- 'default' on the next press — we deliberately do NOT cycle into
+--- bypassPermissions because relaxing safety should be explicit.
+local CYCLE_NEXT = {
+  default = 'acceptEdits',
+  acceptEdits = 'plan',
+  plan = 'default',
+  auto = 'default',
+  bypassPermissions = 'default',
+  dontAsk = 'default',
+}
+
+--- Public: advance the permission mode one step in the Shift+Tab cycle.
+--- Reads the current mode from the active session (if any) or
+--- `Config.options.permission_mode` (treating nil as 'default'), then
+--- applies the next mode via the same path as `set_permission_mode`.
+function M.cycle_permission_mode()
+  local inst = get_current_instance()
+  local current
+  if inst and inst.process and inst.process:is_alive() and inst.session then
+    current = inst.session.permission_mode or 'default'
+  else
+    current = Config.options.permission_mode or 'default'
+  end
+  local next_mode = CYCLE_NEXT[current] or 'default'
+  apply_permission_mode(next_mode)
+end
+
+--- Public: set the permission mode. Empty/nil opens a picker; a valid mode
+--- string applies it directly. Invalid strings warn and change nothing.
+---@param mode string?
+function M.set_permission_mode(mode)
+  local arg = mode and mode:match('^%s*(.-)%s*$') or ''
+  if arg == '' then
+    vim.ui.select(M.PERMISSION_MODES, {
+      prompt = 'Permission mode',
+      format_item = function(item) return item end,
+    }, function(choice)
+      if choice then apply_permission_mode(choice) end
+    end)
+    return
+  end
+  if not is_valid_permission_mode(arg) then
+    vim.notify(
+      'cc.nvim: invalid permission mode "' .. arg .. '". Use one of: ' ..
+      table.concat(M.PERMISSION_MODES, ', '),
+      vim.log.levels.WARN)
+    return
+  end
+  apply_permission_mode(arg)
+end
+
 --- Apply the session-name-derived buffer name to the output buffer. Only
 --- the output is `buflisted`, so renaming the prompt (nofile/hide/unlisted)
 --- would not surface anywhere. Test stubs may omit `output`, so guard for nil.
@@ -1177,6 +1281,15 @@ end
 function M._reset_instances()
   for k in pairs(instances) do instances[k] = nil end
   next_instance_id = 1
+end
+
+--- Test-only: register a fake instance keyed by `bufnr`. Lets specs drive
+--- code paths that route through `get_current_instance()` without spawning
+--- a real claude subprocess.
+---@param bufnr integer
+---@param inst table
+function M._register_test_instance(bufnr, inst)
+  instances[bufnr] = inst
 end
 
 return M

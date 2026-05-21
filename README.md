@@ -147,6 +147,7 @@ on the bottom. Type your message, then press `<CR>` in normal mode (or run
 | `:CcStop` | Interrupt current turn (stream-json `control_request`) |
 | `:CcFold {n}` | Set output fold level (0..3) |
 | `:CcPlan` | Open in plan mode (`--permission-mode plan`) |
+| `:CcPermissionMode [mode]` | Set permission mode (no arg = picker; tab-completes the six modes). Sent live to an active session via `set_permission_mode` control_request, else stored for the next `:Cc` / `:CcNew`. |
 | `:CcPlanShow` | Open the most recent plan file |
 | `:CcResume [id]` | Resume a session (picker if no id) |
 | `:CcContinue` | Resume most recent session for current cwd |
@@ -166,6 +167,7 @@ on the bottom. Type your message, then press `<CR>` in normal mode (or run
 | `<C-c>` | Interrupt generation |
 | `<C-l>` | Clear prompt buffer |
 | `go` | Jump to output buffer |
+| `<S-Tab>` | Cycle permission mode (`default → acceptEdits → plan → default`) — also bound in insert mode |
 
 **Output buffer:**
 
@@ -174,13 +176,14 @@ on the bottom. Type your message, then press `<CR>` in normal mode (or run
 | `za` / `zo` / `zc` | Standard fold toggles |
 | `zM` / `zR` | Collapse / expand all folds |
 | `gp` | Jump to prompt buffer |
+| `<S-Tab>` | Cycle permission mode |
 
 ## Configuration
 
 ```lua
 require('cc').setup({
   claude_cmd = 'claude',       -- path to claude binary
-  permission_mode = nil,       -- nil | 'auto' | 'acceptEdits' | 'plan' | 'bypassPermissions'
+  permission_mode = nil,       -- nil | 'acceptEdits' | 'auto' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan'
   model = nil,                 -- nil | 'sonnet' | 'opus' | model string
   extra_args = {},             -- additional args passed to claude
 
@@ -236,6 +239,7 @@ require('cc').setup({
     clear_prompt = '<C-l>',
     goto_prompt = 'gp',
     goto_output = 'go',
+    cycle_permission_mode = '<S-Tab>',  -- false to disable
   },
 })
 ```

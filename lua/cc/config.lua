@@ -4,7 +4,7 @@ local M = {}
 local defaults = {
   -- Claude CLI
   claude_cmd = 'claude',
-  permission_mode = nil, -- nil | 'auto' | 'acceptEdits' | 'plan' | 'bypassPermissions'
+  permission_mode = nil, -- nil | 'acceptEdits' | 'auto' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan'
   model = nil, -- nil | 'sonnet' | 'opus' | model string
   extra_args = {}, -- additional CLI args
 
@@ -139,6 +139,10 @@ local defaults = {
     clear_prompt = '<C-l>',
     goto_prompt = 'gp', -- output buffer
     goto_output = 'go', -- prompt buffer
+    -- Shift+Tab cycles default → acceptEdits → plan → default, matching the
+    -- upstream Claude Code TUI. Bound in both prompt and output buffers.
+    -- Set to false to disable.
+    cycle_permission_mode = '<S-Tab>',
   },
 }
 

@@ -102,6 +102,13 @@ function Router:_handle_system(msg)
     if msg.status == 'compacting' then
       self.output:render_notice('Compacting context...')
     end
+    -- The CLI emits a system/status message with `permissionMode` set
+    -- whenever the live mode changes (Shift+Tab, /plan, ExitPlanMode dialog,
+    -- our set_permission_mode control_request, etc.). Mirror it onto the
+    -- session so the statusline refreshes to the new mode.
+    if msg.permissionMode and self.session then
+      self.session.permission_mode = msg.permissionMode
+    end
   end
 end
 

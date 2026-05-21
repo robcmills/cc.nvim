@@ -187,6 +187,25 @@ function Process:send_control_interrupt()
   return request_id
 end
 
+--- Send a stream-json control_request to change the live session's
+--- permission mode. The CLI applies the new mode and echoes it back in the
+--- next system/init message (which updates session.permission_mode). Returns
+--- the request_id so callers can correlate the response, or nil if the
+--- process is not alive.
+---@param mode string one of: acceptEdits, auto, bypassPermissions, default, dontAsk, plan
+---@return string?
+function Process:send_control_set_permission_mode(mode)
+  if not self.alive or not self.stdin then return nil end
+  local request_id = gen_uuid()
+  self._pending_controls[request_id] = 'set_permission_mode'
+  self:write({
+    type = 'control_request',
+    request_id = request_id,
+    request = { subtype = 'set_permission_mode', mode = mode },
+  })
+  return request_id
+end
+
 --- Consume a pending control_request by id. Returns the subtype if one was
 --- pending (and removes it), otherwise nil. Used by the router when a
 --- control_response arrives.

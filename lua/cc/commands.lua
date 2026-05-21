@@ -73,6 +73,22 @@ function M.create()
     desc = 'Set reasoning effort level (low|medium|high|xhigh|max|auto)',
   })
 
+  vim.api.nvim_create_user_command('CcPermissionMode', function(opts)
+    cc.set_permission_mode(opts.args)
+  end, {
+    nargs = '?',
+    complete = function(arg_lead)
+      local out = {}
+      for _, m in ipairs(cc.PERMISSION_MODES) do
+        if m:sub(1, #arg_lead) == arg_lead then
+          table.insert(out, m)
+        end
+      end
+      return out
+    end,
+    desc = 'Set permission mode (acceptEdits|auto|bypassPermissions|default|dontAsk|plan); no arg opens a picker',
+  })
+
   vim.api.nvim_create_user_command('CcPromptAutosize', function(opts)
     local arg = (opts.args or ''):lower()
     if arg ~= '' and arg ~= 'on' and arg ~= 'off' then
