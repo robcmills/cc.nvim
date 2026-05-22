@@ -203,6 +203,17 @@ require('cc').setup({
   -- History / resume
   history_max_records = 500,   -- cap records rendered on resume; older collapsed into a notice
 
+  -- Auto-rename: on the first prompt of a new session, ask `claude -p` for a
+  -- short descriptive title and apply it via the same code path as /rename.
+  auto_rename = {
+    enabled = true,
+    prompt = 'Generate a very short, descriptive kebab-case name (2-5 hyphenated lowercase words) for this user prompt. Return only the name — no commentary, no quotes, no trailing punctuation.\n\nPrompt: ${prompt}',
+    model = 'haiku',           -- claude --model used for the rename query
+    timeout_ms = 30000,        -- kill the subprocess if it hasn't exited
+    validate = nil,            -- function(raw) -> string|nil; nil = built-in sanitizer
+    placeholder = 'auto-generating-name...', -- statusline label while in flight; false/'' disables
+  },
+
   -- Display
   show_thinking = true,        -- show thinking blocks
   show_turn_cost = true,       -- show per-turn cost/usage line in the output buffer
@@ -453,6 +464,24 @@ between the two. The new title surfaces in:
   user message)
 - the prompt buffer name (`cc-<name>`), since it's the only buflisted
   surface and therefore the one your buffer list sees
+
+### Auto-rename
+
+The first prompt of a brand-new session is fed to a one-shot `claude -p`
+invocation (Haiku by default) that returns a short descriptive title.
+The result is applied through the same `/rename` code path, so the
+generated name is persisted as a `custom-title` record and round-trips
+with the upstream TUI. Skipped on resumed sessions (they already have a
+title), on fixture sessions, and when you've already typed `/rename`
+yourself.
+
+While the subprocess is in flight the statusline shows a placeholder
+(default `auto-generating-name...`) so you know a name is being chosen;
+it's display-only and never persisted. The whole feature is configurable
+via `auto_rename` — flip `enabled = false` to turn it off, or rewrite
+`prompt` to ask for CamelCase / sentence case / a different style. The
+`validate` hook gives you final say over the model's output before it
+lands.
 
 ## Highlights
 
