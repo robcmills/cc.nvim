@@ -291,8 +291,52 @@ Claude Code's interactive tools get specialized UI:
   always available.
 - **MCP elicitation** — URL requests open in your browser via `vim.ui.open`;
   form requests prompt each schema field via `vim.ui.input`.
-- **Permission prompts** — any other restricted tool triggers
-  Allow / Deny / Always Allow (session).
+- **Permission prompts** — any other restricted tool opens a floating
+  window showing the full tool input (Bash command, Edit diff, MCP YAML,
+  …) highlighted with the matching filetype, with `a` / `A` / `d` /
+  `q` for Allow / Always Allow (session) / Deny / Cancel. See
+  [Permission prompts](#permission-prompts-1) below.
+
+### Permission prompts
+
+<img src="assets/permission-prompt.png" alt="cc.nvim permission prompt" width="800">
+
+When the CLI requests permission for a tool call, cc.nvim opens a
+centered floating window instead of a one-line `vim.ui.select`. The
+title row shows the tool name plus a short description/summary
+(highlighted with `CcPermission`); the body shows the full input with
+an appropriate `filetype` so syntax highlighting kicks in (`bash` for
+Bash, `diff` for Edit/MultiEdit/Write, plain for everything else); the
+footer lists the available keys.
+
+| Key | Action |
+|---|---|
+| `a` | Allow once |
+| `A` | Always Allow for this session |
+| `d` | Deny |
+| `q` / `<Esc>` | Cancel (treated as Deny) |
+
+`A` persists by echoing the CLI's `permission_suggestions` (precise
+input-shape rules — e.g. a specific Bash command prefix) when the CLI
+sends them, falling back to a coarse tool-name rule otherwise. The
+rules are sent back via `updatedPermissions` in the `can_use_tool`
+control response and live for the rest of the session.
+
+### Permission mode
+
+cc.nvim tracks the CLI's current permission mode (`default`,
+`acceptEdits`, `plan`, `bypassPermissions`, `auto`, `dontAsk`) in the
+statusline. Change it mid-session:
+
+- `<S-Tab>` in either buffer cycles `default → acceptEdits → plan → default`
+- `:CcPermissionMode` opens a picker; `:CcPermissionMode <mode>` jumps
+  straight to a mode (tab-completes)
+
+Live sessions get a `set_permission_mode` control_request on stdin so
+the CLI switches without restart. If no session is running, the choice
+is stashed for the next `:Cc` / `:CcNew`. Mode changes the CLI initiates
+(Shift+Tab round-trip from inside the CLI, `ExitPlanMode`, etc.) flow
+back through `system`/`status` messages so the statusline stays in sync.
 
 ## Peeking at running Bash
 
@@ -444,6 +488,7 @@ cc.nvim spawns the `claude` CLI as a persistent bidirectional subprocess:
 
 ```
 claude -p --input-format stream-json --output-format stream-json \
+       --permission-prompt-tool stdio \
        --include-partial-messages --include-hook-events --verbose \
        [--resume <id>] [--permission-mode <mode>]
 ```
