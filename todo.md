@@ -1,14 +1,13 @@
+- [ ] Add auto-rename with ai generated name
+- [ ] ensure sessions named in cc.nvim appear in claude code /resume and vice versa
+- [ ] add timestamps to end-of-turn token counts
 - [ ] e2e tests are taking too long
-- [ ] Show full bash command requested in permission prompts
 - [ ] What happens when a permission request occurs in cc.nvim instance A, but instance B is active
-- [ ] Fix missing mode in statusline on startup
 - [ ] Better handling and exposure of error messages (401 logged out)
 - [ ] Implement /login /logout support
 - [ ] Improve /command completions (add descriptions, etc.)
-- [ ] Add rename with ai generated name
 - [ ] Add configurable markdown highlighting for Subagent prompts
 - [ ] Add session timing info
-- [ ] Investigate swapfile issue when two instances are editing the same file
 - [ ] Remove parens around tool timers (add around timeouts)
 - [ ] Explore potentially using foldcolumn
 - [ ] Unsloppify - identify most complex/fragile code and simplify (requires brainstorming)
@@ -16,14 +15,18 @@
 - [ ] Ensure system prompt additions are not hard-coded (instead user config)
 - [ ] Add configurable themes support for customizing highlight groups, icons, etc.
 - [ ] Add a "theme viewer/switcher" to show visually mock examples of what each type of tool looks like, and user can interactively switch themes and see what it looks like live
-- [ ] Implement better resume and history search (:CcSessionSearch)
+- [ ] Implement better history search (:CcSessionSearch) 
 - [ ] Make resume history picker window larger
 - [ ] Test/fix command completions (/rename, etc.)
 - [ ] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
 - [ ] Support "queued" prompts (submitted while agent is thinking or working)
 - [ ] Add support for /remote-control
 - [ ] Add support for /compact (requires brainstorming)
+- [ ] Add CcPrompts (like skills but just the prompt, not so verbose)
 
+- [x] Investigate swapfile issue when two instances are editing the same file
+- [x] Fix missing mode in statusline on startup
+- [x] Show full bash command requested in permission prompts
 - [x] Add permission modes toggle (CcPermissionMode)
 - [x] Debug /command completions
 - [x] Expose visibility into long running bash tool calls? (a way to "peek" output while it's running)

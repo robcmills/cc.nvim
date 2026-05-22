@@ -34,6 +34,9 @@ M.VERSION = '0.5.0'
 ---@field saved_prompt_view table? prompt winsaveview snapshot from the last close, restored on reopen
 ---@field last_focus 'prompt'|'output'? which cc buffer the user was last in; restored on reopen
 ---@field user_fold_level integer? user's chosen foldlevel from the last close, restored on reopen
+---@field auto_rename_in_flight boolean? true while the auto-rename subprocess is running
+---@field auto_rename_handle userdata? libuv handle of the active auto-rename subprocess
+---@field transient_rename_active boolean? true when pending_session_name holds a display-only placeholder that must not be persisted
 
 local instances = {} -- keyed by output bufnr
 local next_instance_id = 1
@@ -483,6 +486,7 @@ local function close_instance(inst)
     inst.process:close()
     inst.process = nil
   end
+  require('cc.auto_rename').cancel(inst)
   -- Clear per-instance autocmds before closing windows to avoid cascading.
   if inst.output and inst.output.bufnr > 0 then
     pcall(vim.api.nvim_del_augroup_by_name, 'cc.buffer_integration.' .. inst.output.bufnr)
@@ -957,6 +961,12 @@ function M.submit()
     return
   end
 
+  -- First-turn auto-rename (best-effort, before turns is incremented).
+  local AutoRename = require('cc.auto_rename')
+  if AutoRename.should_run(inst) then
+    AutoRename.start(inst, text)
+  end
+
   inst.prompt:clear()
   require('cc.autosize').reset(inst)
 
@@ -1143,9 +1153,17 @@ end
 --- If invoked before the transcript exists (fresh session, no first turn yet),
 --- the name is stashed on the instance and flushed by `_flush_pending_rename`
 --- once the JSONL appears on disk.
+---
+--- `opts.silent` suppresses user-facing notifications. `opts.transient` makes
+--- the call display-only: the placeholder is shown in the statusline via
+--- `pending_session_name`, but never persisted to disk and never flushed.
+--- The auto-rename feature uses this combination to surface "naming…"
+--- feedback while its subprocess runs.
 ---@param inst cc.Instance
 ---@param args string raw arguments after `/rename `
-function M._handle_rename(inst, args)
+---@param opts { silent: boolean?, transient: boolean? }?
+function M._handle_rename(inst, args, opts)
+  opts = opts or {}
   local name = args:match('^%s*(.-)%s*$') or ''
   local history = require('cc.history')
   local session_id = inst.last_session_id
@@ -1161,6 +1179,18 @@ function M._handle_rename(inst, args)
     end
     return
   end
+  if opts.transient then
+    -- Display-only placeholder: surface via pending_session_name so the
+    -- statusline picks it up, but mark the instance so flush + auto-rename
+    -- callback know this name must never be persisted.
+    inst.pending_session_name = name
+    inst.transient_rename_active = true
+    M._apply_session_buf_names(inst, name)
+    require('cc.statusline').refresh(inst)
+    return
+  end
+  -- Any prior transient placeholder is being replaced by a real rename.
+  inst.transient_rename_active = nil
   local path = session_id and session_id ~= '' and history.session_path(session_id) or nil
   if not path then
     -- Pre-begin or transcript not yet flushed: stash the name and rename the
@@ -1169,7 +1199,9 @@ function M._handle_rename(inst, args)
     inst.pending_session_name = name
     M._apply_session_buf_names(inst, name)
     require('cc.statusline').refresh(inst)
-    vim.notify('cc.nvim: rename queued — will persist when session begins', vim.log.levels.INFO)
+    if not opts.silent then
+      vim.notify('cc.nvim: rename queued — will persist when session begins', vim.log.levels.INFO)
+    end
     return
   end
   local ok, err = history.append_custom_title(path, session_id, name)
@@ -1180,15 +1212,22 @@ function M._handle_rename(inst, args)
   inst.session_name = name
   inst.pending_session_name = nil
   M._apply_session_buf_names(inst, name)
-  vim.notify('cc.nvim: session renamed to "' .. name .. '"', vim.log.levels.INFO)
+  if not opts.silent then
+    vim.notify('cc.nvim: session renamed to "' .. name .. '"', vim.log.levels.INFO)
+  end
   require('cc.statusline').refresh(inst)
 end
 
 --- Flush a pending pre-begin rename to disk if both the name and the
 --- transcript file are now available. Silent on no-op; warns only on
 --- write failure. Safe to call from any router event.
+---
+--- A transient placeholder (set by auto-rename to show "naming…" feedback)
+--- is intentionally skipped — it lives in `pending_session_name` for the
+--- statusline's benefit but must never be persisted.
 ---@param inst cc.Instance
 function M._flush_pending_rename(inst)
+  if inst and inst.transient_rename_active then return end
   local name = inst and inst.pending_session_name
   if not name or name == '' then return end
   local session_id = inst.last_session_id

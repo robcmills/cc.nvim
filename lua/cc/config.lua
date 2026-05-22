@@ -32,6 +32,33 @@ local defaults = {
   -- History / resume
   history_max_records = 500, -- cap records rendered on resume; older collapsed into a notice
 
+  -- Auto-rename: on the first prompt of a new session, ask `claude -p` for a
+  -- short descriptive title and apply it via the same path as `/rename`.
+  -- Skipped on resumed sessions (those already have a name) and on fixtures.
+  --   prompt: template sent to `claude -p`. `${prompt}` is substituted with
+  --     the user's first prompt text. Override to change output style
+  --     (e.g. CamelCase, sentence case, language, length).
+  --   model: claude --model value for the rename query. Default `haiku`
+  --     keeps latency and cost low.
+  --   timeout_ms: kill the rename subprocess if it has not exited by then.
+  --   validate: function(raw_output) -> string | nil. Sanitizes / validates
+  --     the model's stdout before it is applied. Return nil to reject.
+  --     nil here uses the built-in sanitizer: trim, strip surrounding
+  --     quotes, drop trailing lines, cap at 64 chars.
+  auto_rename = {
+    enabled = true,
+    prompt = 'Generate a very short, descriptive kebab-case name (2-5 hyphenated lowercase words) for this user prompt. Return only the name — no commentary, no quotes, no trailing punctuation.\n\nPrompt: ${prompt}',
+    model = 'haiku',
+    timeout_ms = 30000,
+    validate = nil,
+    -- Transient title shown in the statusline while the rename subprocess is
+    -- in flight. Cleared and replaced with the model's output on success, or
+    -- cleared silently on failure. Set to false or '' to disable the
+    -- placeholder (statusline shows no session title until the real name
+    -- lands).
+    placeholder = 'auto-generating-name...',
+  },
+
   -- Splash screen shown in the output window for new instances. Cleared on
   -- the first prompt submit. Set to false to suppress.
   splash = true,
