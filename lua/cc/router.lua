@@ -187,17 +187,31 @@ function Router:_handle_control_response(msg)
   local resp = msg.response
   if not resp or not resp.request_id then return end
   local subtype = self.process and self.process:consume_pending_control(resp.request_id)
-  if subtype ~= 'interrupt' then return end
-  if self.session then
-    self.session.interrupt_pending = false
-    self.session.is_streaming = false
-    self.session.turn_active = false
-  end
-  if resp.subtype == 'success' then
-    self.output:render_notice('Interrupted')
-  else
-    local err = resp.error or 'control_response error'
-    self.output:render_notice('Interrupt failed: ' .. tostring(err))
+  if subtype == 'interrupt' then
+    if self.session then
+      self.session.interrupt_pending = false
+      self.session.is_streaming = false
+      self.session.turn_active = false
+    end
+    if resp.subtype == 'success' then
+      self.output:render_notice('Interrupted')
+    else
+      local err = resp.error or 'control_response error'
+      self.output:render_notice('Interrupt failed: ' .. tostring(err))
+    end
+  elseif subtype == 'get_settings' then
+    -- Seed session.permission_mode from the CLI's effective settings so the
+    -- statusline shows the right mode before the user's first prompt
+    -- triggers an init message. Only fill in if nothing has set it yet —
+    -- if init or a set_permission_mode raced us, defer to that authoritative
+    -- value. permissions.defaultMode is optional; fall back to 'default'
+    -- (the CLI's own ultimate fallback when no settings layer specifies one).
+    if resp.subtype ~= 'success' then return end
+    if not self.session or self.session.permission_mode then return end
+    local inner = resp.response or {}
+    local effective = inner.effective or {}
+    local permissions = effective.permissions or {}
+    self.session.permission_mode = permissions.defaultMode or 'default'
   end
 end
 
@@ -220,6 +234,7 @@ function Router:_handle_permission_request(request_id, req)
   local tool_name = req.tool_name or 'unknown'
   local input = req.input
   local tool_use_id = req.tool_use_id
+  local suggestions = req.permission_suggestions
 
   -- Specialized handlers for interactive CC features.
   if tool_name == 'EnterPlanMode' then
@@ -238,47 +253,75 @@ function Router:_handle_permission_request(request_id, req)
 
   self.output:render_permission_request(tool_name, input)
 
-  vim.ui.select(
-    { 'Allow', 'Deny', 'Always Allow (session)' },
-    {
-      prompt = 'Tool permission: ' .. tool_name,
-      format_item = function(item) return item end,
-    },
-    function(choice)
-      if not choice then choice = 'Deny' end
-      local behavior = 'deny'
-      local response_body
-      if choice == 'Allow' or choice == 'Always Allow (session)' then
-        behavior = 'allow'
-        response_body = {
-          behavior = 'allow',
-          updatedInput = input,
-          toolUseID = tool_use_id,
-        }
-      else
-        response_body = {
-          behavior = 'deny',
-          message = 'User denied via cc.nvim',
-          toolUseID = tool_use_id,
-        }
-      end
-      self.output:render_permission_outcome(behavior, tool_name)
-      if self.process then
-        self.process:write({
-          type = 'control_response',
-          response = {
-            request_id = request_id,
-            subtype = 'success',
-            response = response_body,
-          },
-        })
-      end
-      if self.instance then
-        self.instance.remote_control_active = false
-        require('cc.statusline').refresh(self.instance)
-      end
+  require('cc.permission_prompt').ask(tool_name, input, function(behavior, variant)
+    local response_body = self:_build_permission_response(
+      behavior, variant, tool_name, input, tool_use_id, suggestions)
+    self.output:render_permission_outcome(behavior, tool_name)
+    if self.process then
+      self.process:write({
+        type = 'control_response',
+        response = {
+          request_id = request_id,
+          subtype = 'success',
+          response = response_body,
+        },
+      })
     end
-  )
+    if self.instance then
+      self.instance.remote_control_active = false
+      require('cc.statusline').refresh(self.instance)
+    end
+  end)
+end
+
+--- Build the `response` body for a can_use_tool control_response.
+---
+--- For `allow_always`, the CLI's `permission_suggestions` (if it sent any)
+--- are echoed back as `updatedPermissions` so the rule lands at whatever
+--- destination the CLI computed (typically `localSettings`, persisting to
+--- `.claude/settings.local.json`). When the CLI sent no suggestions we
+--- synthesize a coarse fallback that allows the whole tool, project-scoped.
+--- See coreSchemas.ts:PermissionResultSchema for the response shape.
+---@param behavior 'allow'|'deny'
+---@param variant 'allow_once'|'allow_always'|'deny'|'cancel'
+---@param tool_name string
+---@param input table?
+---@param tool_use_id string?
+---@param suggestions table[]? PermissionUpdate[] from req.permission_suggestions
+---@return table
+function Router:_build_permission_response(
+    behavior, variant, tool_name, input, tool_use_id, suggestions)
+  if behavior == 'allow' then
+    local body = {
+      behavior = 'allow',
+      updatedInput = input,
+      toolUseID = tool_use_id,
+    }
+    if variant == 'allow_always' then
+      if suggestions and #suggestions > 0 then
+        body.updatedPermissions = suggestions
+      else
+        body.updatedPermissions = {
+          {
+            type = 'addRules',
+            rules = { { toolName = tool_name } },
+            behavior = 'allow',
+            destination = 'localSettings',
+          },
+        }
+      end
+      body.decisionClassification = 'user_permanent'
+    else
+      body.decisionClassification = 'user_temporary'
+    end
+    return body
+  end
+  return {
+    behavior = 'deny',
+    message = 'User denied via cc.nvim',
+    toolUseID = tool_use_id,
+    decisionClassification = 'user_reject',
+  }
 end
 
 M.Router = Router

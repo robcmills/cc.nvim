@@ -532,6 +532,16 @@ function M.open(opts)
   local inst = create_instance()
   require('cc.splash').render(inst.output.bufnr)
 
+  -- Seed the session's permission_mode so the statusline reflects the
+  -- effective mode immediately, before the CLI's init message arrives.
+  -- Only set when we have an explicit value — when neither opts nor Config
+  -- specify one, we don't pass --permission-mode to the CLI, so its own
+  -- configured default takes over and we can't predict it. Wait for init
+  -- in that case rather than show a wrong mode (e.g. 'default') and have
+  -- it flip to the CLI's actual default ('auto', 'plan', …) seconds later.
+  inst.session.permission_mode =
+    opts.permission_mode or Config.options.permission_mode
+
   inst.router = Router.new({
     session = inst.session,
     output = inst.output,
@@ -575,6 +585,11 @@ function M.open(opts)
   if not ok then
     vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.ERROR)
     inst.process = nil
+  elseif not inst.session.permission_mode then
+    -- No explicit mode from opts/Config — ask the CLI for its effective
+    -- settings so the statusline can show the resolved defaultMode before
+    -- the first prompt triggers an init message.
+    inst.process:send_control_get_settings()
   end
 end
 
@@ -602,6 +617,10 @@ function M.new_session()
     reuse_output_winid = output_winid,
   })
   require('cc.splash').render(new_inst.output.bufnr)
+
+  -- Seed permission_mode for the same reason as M.open: keep the statusline
+  -- reflective of the effective mode before the CLI's init message lands.
+  new_inst.session.permission_mode = Config.options.permission_mode
 
   new_inst.router = Router.new({
     session = new_inst.session,
@@ -646,6 +665,8 @@ function M.new_session()
   if not ok then
     vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.ERROR)
     new_inst.process = nil
+  elseif not new_inst.session.permission_mode then
+    new_inst.process:send_control_get_settings()
   end
 end
 
@@ -799,6 +820,7 @@ function M.resume(session_id)
     require('cc.statusline').refresh(inst)
   else
     inst.output:render_notice('resuming ' .. session_id:sub(1, 8) .. ' (no local transcript found)')
+    inst.session.permission_mode = Config.options.permission_mode
   end
 
   inst.router = Router.new({

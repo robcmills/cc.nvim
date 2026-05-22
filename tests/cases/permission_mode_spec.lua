@@ -187,6 +187,223 @@ T['cycle with active session reads session.permission_mode and sends control_req
   eq(_G.child.lua_get('_G._test_config_mode'), vim.NIL)
 end
 
+T['M.open seeds session.permission_mode from opts before init arrives'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    -- Stub spawn so M.open doesn't fork a real claude. Anything past the
+    -- session.permission_mode assignment we don't care about for this test.
+    require('cc.process').spawn = function() end
+
+    require('cc').open({ permission_mode = 'plan' })
+
+    local inst = require('cc')._get_instance()
+    _G._test_mode = inst and inst.session and inst.session.permission_mode or nil
+  ]==])
+  eq(_G.child.lua_get('_G._test_mode'), 'plan')
+end
+
+T['M.open seeds session.permission_mode from Config when opts omits it'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    require('cc.config').options.permission_mode = 'acceptEdits'
+    require('cc.process').spawn = function() end
+
+    require('cc').open()
+
+    local inst = require('cc')._get_instance()
+    _G._test_mode = inst and inst.session and inst.session.permission_mode or nil
+  ]==])
+  eq(_G.child.lua_get('_G._test_mode'), 'acceptEdits')
+end
+
+T['M.open leaves session.permission_mode nil when nothing is configured'] = function()
+  -- When neither opts nor Config sets a mode, we don't pass --permission-mode
+  -- to the CLI, so the CLI's own default takes over and we can't predict it
+  -- synchronously. M.open fires a get_settings control_request to discover
+  -- the resolved mode; the response handler fills in session.permission_mode.
+  -- Before that response lands, the field stays nil.
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    require('cc.config').options.permission_mode = nil
+    require('cc.process').spawn = function() end
+    -- Stub send_control_get_settings so M.open doesn't try to write to a
+    -- non-existent stdin pipe; we just want to assert the seeded state.
+    require('cc.process').send_control_get_settings = function() end
+
+    require('cc').open()
+
+    local inst = require('cc')._get_instance()
+    _G._test_mode = inst and inst.session and inst.session.permission_mode or nil
+  ]==])
+  eq(_G.child.lua_get('_G._test_mode'), vim.NIL)
+end
+
+T['M.open fires get_settings control_request when no explicit mode is set'] = function()
+  -- M.open() only calls send_control_get_settings if the underlying spawn
+  -- succeeds (pcall returns ok=true). Process methods live on a local
+  -- metatable, so M.spawn = function() end on the require result doesn't
+  -- replace the real spawn. Wrap Process.new instead to inject a fake
+  -- process whose spawn is a no-op and whose send_control_get_settings
+  -- bumps a counter. Restore Process.new after the test so the shared
+  -- child neovim's later cases aren't polluted.
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    require('cc.config').options.permission_mode = nil
+    _G._test_get_settings_calls = 0
+    local Process = require('cc.process')
+    _G._test_orig_process_new = Process.new
+    Process.new = function(opts)
+      local p = _G._test_orig_process_new(opts)
+      p.spawn = function(self) self.alive = true; return true end
+      p.send_control_get_settings = function()
+        _G._test_get_settings_calls = _G._test_get_settings_calls + 1
+        return 'fake-request-id'
+      end
+      return p
+    end
+
+    local ok, err = pcall(function() require('cc').open() end)
+    Process.new = _G._test_orig_process_new
+    if not ok then error(err) end
+  ]==])
+  eq(_G.child.lua_get('_G._test_get_settings_calls'), 1)
+end
+
+T['M.open skips get_settings when an explicit mode is set'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    require('cc.config').options.permission_mode = nil
+    _G._test_get_settings_calls = 0
+    local Process = require('cc.process')
+    _G._test_orig_process_new = Process.new
+    Process.new = function(opts)
+      local p = _G._test_orig_process_new(opts)
+      p.spawn = function(self) self.alive = true; return true end
+      p.send_control_get_settings = function()
+        _G._test_get_settings_calls = _G._test_get_settings_calls + 1
+        return 'fake-request-id'
+      end
+      return p
+    end
+
+    local ok, err = pcall(function() require('cc').open({ permission_mode = 'plan' }) end)
+    Process.new = _G._test_orig_process_new
+    if not ok then error(err) end
+  ]==])
+  eq(_G.child.lua_get('_G._test_get_settings_calls'), 0)
+end
+
+T['get_settings control_response seeds session.permission_mode from effective.permissions.defaultMode'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    local Process = require('cc.process')
+    local Router = require('cc.router')
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-output-getset')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+
+    local process = Process.new({ claude_cmd = 'unused', on_message = function() end })
+    process.alive = true
+    process.stdin = {}
+    process.write = function() end
+
+    local router = Router.new({ session = session, output = output, process = process })
+
+    -- Simulate sending a get_settings control_request, then receiving its
+    -- response from the CLI.
+    local request_id = process:send_control_get_settings()
+    router:dispatch({
+      type = 'control_response',
+      response = {
+        subtype = 'success',
+        request_id = request_id,
+        response = {
+          effective = { permissions = { defaultMode = 'auto' } },
+          sources = {},
+        },
+      },
+    })
+
+    _G._test_mode = session.permission_mode
+  ]==])
+  eq(_G.child.lua_get('_G._test_mode'), 'auto')
+end
+
+T['get_settings response falls back to "default" when permissions.defaultMode is absent'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    local Process = require('cc.process')
+    local Router = require('cc.router')
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-output-getset2')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+
+    local process = Process.new({ claude_cmd = 'unused', on_message = function() end })
+    process.alive = true
+    process.stdin = {}
+    process.write = function() end
+
+    local router = Router.new({ session = session, output = output, process = process })
+
+    local request_id = process:send_control_get_settings()
+    router:dispatch({
+      type = 'control_response',
+      response = {
+        subtype = 'success',
+        request_id = request_id,
+        response = { effective = {}, sources = {} },
+      },
+    })
+
+    _G._test_mode = session.permission_mode
+  ]==])
+  eq(_G.child.lua_get('_G._test_mode'), 'default')
+end
+
+T['get_settings response does not overwrite a permission_mode already set by init'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    local Process = require('cc.process')
+    local Router = require('cc.router')
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+
+    local session = Session.new()
+    session.permission_mode = 'plan'  -- as if init or set_permission_mode raced us
+    local output = Output.new(session, 'cc-test-output-getset3')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+
+    local process = Process.new({ claude_cmd = 'unused', on_message = function() end })
+    process.alive = true
+    process.stdin = {}
+    process.write = function() end
+
+    local router = Router.new({ session = session, output = output, process = process })
+
+    local request_id = process:send_control_get_settings()
+    router:dispatch({
+      type = 'control_response',
+      response = {
+        subtype = 'success',
+        request_id = request_id,
+        response = { effective = { permissions = { defaultMode = 'auto' } } },
+      },
+    })
+
+    _G._test_mode = session.permission_mode
+  ]==])
+  eq(_G.child.lua_get('_G._test_mode'), 'plan')
+end
+
 T['system/status with permissionMode updates session.permission_mode'] = function()
   _G.child.lua([==[
     require('cc.config').setup({})

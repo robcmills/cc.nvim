@@ -1,4 +1,6 @@
 - [ ] e2e tests are taking too long
+- [ ] Show full bash command requested in permission prompts
+- [ ] What happens when a permission request occurs in cc.nvim instance A, but instance B is active
 - [ ] Fix missing mode in statusline on startup
 - [ ] Better handling and exposure of error messages (401 logged out)
 - [ ] Implement /login /logout support
@@ -20,9 +22,9 @@
 - [ ] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
 - [ ] Support "queued" prompts (submitted while agent is thinking or working)
 - [ ] Add support for /remote-control
-- [ ] Add support plan mode toggle
 - [ ] Add support for /compact (requires brainstorming)
 
+- [x] Add permission modes toggle (CcPermissionMode)
 - [x] Debug /command completions
 - [x] Expose visibility into long running bash tool calls? (a way to "peek" output while it's running)
 - [x] Add context percentage to token count in statusline

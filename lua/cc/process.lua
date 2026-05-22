@@ -206,6 +206,24 @@ function Process:send_control_set_permission_mode(mode)
   return request_id
 end
 
+--- Send a stream-json control_request to read the CLI's effective settings
+--- (the merge of user/project/local/policy settings.json files). Used at
+--- session startup to discover the resolved `permissions.defaultMode`
+--- before the user's first prompt triggers an init message. Returns the
+--- request_id, or nil if the process is not alive.
+---@return string?
+function Process:send_control_get_settings()
+  if not self.alive or not self.stdin then return nil end
+  local request_id = gen_uuid()
+  self._pending_controls[request_id] = 'get_settings'
+  self:write({
+    type = 'control_request',
+    request_id = request_id,
+    request = { subtype = 'get_settings' },
+  })
+  return request_id
+end
+
 --- Consume a pending control_request by id. Returns the subtype if one was
 --- pending (and removes it), otherwise nil. Used by the router when a
 --- control_response arrives.
