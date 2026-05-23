@@ -368,6 +368,234 @@ T['pre_begin']['flush is no-op when nothing pending'] = function()
   eq(result.session_name, nil)
 end
 
+-- ---------------------------------------------------------------------------
+-- find_unique_session_name (helper, direct)
+-- ---------------------------------------------------------------------------
+T['find_unique_session_name'] = MiniTest.new_set()
+
+T['find_unique_session_name']['returns desired when no collision'] = function()
+  local got = _G.child.lua_get([[(function()
+    local history = require('cc.history')
+    history.list_for_cwd = function() return {} end
+    return history.find_unique_session_name('foo')
+  end)()]])
+  eq(got, 'foo')
+end
+
+T['find_unique_session_name']['appends -2 on collision'] = function()
+  local got = _G.child.lua_get([[(function()
+    local history = require('cc.history')
+    history.list_for_cwd = function()
+      return { { session_id = 'other', custom_title = 'foo' } }
+    end
+    return history.find_unique_session_name('foo')
+  end)()]])
+  eq(got, 'foo-2')
+end
+
+T['find_unique_session_name']['walks past -2 to -3'] = function()
+  local got = _G.child.lua_get([[(function()
+    local history = require('cc.history')
+    history.list_for_cwd = function()
+      return {
+        { session_id = 's1', custom_title = 'foo' },
+        { session_id = 's2', custom_title = 'foo-2' },
+      }
+    end
+    return history.find_unique_session_name('foo')
+  end)()]])
+  eq(got, 'foo-3')
+end
+
+T['find_unique_session_name']['excludes given session_id from the taken set'] = function()
+  local got = _G.child.lua_get([[(function()
+    local history = require('cc.history')
+    history.list_for_cwd = function()
+      return { { session_id = 'self', custom_title = 'foo' } }
+    end
+    return history.find_unique_session_name('foo', nil, 'self')
+  end)()]])
+  eq(got, 'foo')
+end
+
+T['find_unique_session_name']['treats ai_title as taken'] = function()
+  local got = _G.child.lua_get([[(function()
+    local history = require('cc.history')
+    history.list_for_cwd = function()
+      return { { session_id = 'other', ai_title = 'foo' } }
+    end
+    return history.find_unique_session_name('foo')
+  end)()]])
+  eq(got, 'foo-2')
+end
+
+T['find_unique_session_name']['merges extra_taken'] = function()
+  local got = _G.child.lua_get([[(function()
+    local history = require('cc.history')
+    history.list_for_cwd = function() return {} end
+    return history.find_unique_session_name('foo', nil, nil, { 'foo' })
+  end)()]])
+  eq(got, 'foo-2')
+end
+
+-- ---------------------------------------------------------------------------
+-- dedupe wired into _handle_rename and _flush_pending_rename
+-- ---------------------------------------------------------------------------
+T['dedupe'] = MiniTest.new_set()
+
+T['dedupe']['_handle_rename suffixes when title already on disk'] = function()
+  local result = _G.child.lua_get([[(function()
+    local tmp_project = vim.fn.tempname()
+    vim.fn.mkdir(tmp_project, 'p')
+    local session_id = 'self-aaaa-bbbb-cccc'
+    local path = tmp_project .. '/' .. session_id .. '.jsonl'
+    local f = io.open(path, 'w')
+    f:write(vim.json.encode({ type='user', sessionId=session_id,
+      cwd=vim.fn.getcwd(), message={role='user',content='seed'} }) .. '\n')
+    f:close()
+
+    local history = require('cc.history')
+    history.session_path = function(sid) if sid == session_id then return path end end
+    history.list_for_cwd = function()
+      return { { session_id = 'sibling', custom_title = 'foo' } }
+    end
+
+    local orig_notify = vim.notify
+    vim.notify = function() end
+    local output_name_calls = {}
+    local inst = {
+      last_session_id = session_id,
+      session_name = nil,
+      session = {},
+      prompt = {},
+      output = {
+        set_buf_name = function(self, name) table.insert(output_name_calls, name) end,
+      },
+    }
+    require('cc')._handle_rename(inst, 'foo')
+    vim.notify = orig_notify
+
+    local lines = vim.fn.readfile(path)
+    local last = vim.json.decode(lines[#lines])
+    return {
+      session_name = inst.session_name,
+      last_title = last.customTitle,
+      output_name = output_name_calls[1],
+    }
+  end)()]])
+  eq(result.session_name, 'foo-2')
+  eq(result.last_title, 'foo-2')
+  eq(result.output_name, 'cc-foo-2')
+end
+
+T['dedupe']['_handle_rename leaves a sessions own title intact'] = function()
+  local result = _G.child.lua_get([[(function()
+    local tmp_project = vim.fn.tempname()
+    vim.fn.mkdir(tmp_project, 'p')
+    local session_id = 'self-1111-2222-3333'
+    local path = tmp_project .. '/' .. session_id .. '.jsonl'
+    local f = io.open(path, 'w')
+    f:write(vim.json.encode({ type='user', sessionId=session_id,
+      cwd=vim.fn.getcwd(), message={role='user',content='seed'} }) .. '\n')
+    f:close()
+
+    local history = require('cc.history')
+    history.session_path = function(sid) if sid == session_id then return path end end
+    history.list_for_cwd = function()
+      return { { session_id = session_id, custom_title = 'foo' } }
+    end
+
+    local orig_notify = vim.notify
+    vim.notify = function() end
+    local inst = {
+      last_session_id = session_id,
+      session_name = 'foo',
+      session = {},
+      prompt = {},
+      output = { set_buf_name = function() end },
+    }
+    require('cc')._handle_rename(inst, 'foo')
+    vim.notify = orig_notify
+    return { session_name = inst.session_name }
+  end)()]])
+  eq(result.session_name, 'foo')
+end
+
+T['dedupe']['pre-begin queue uses deduped title'] = function()
+  local result = _G.child.lua_get([[(function()
+    local history = require('cc.history')
+    history.session_path = function(_) return nil end
+    history.list_for_cwd = function()
+      return { { session_id = 'sibling', custom_title = 'foo' } }
+    end
+    local orig_notify = vim.notify
+    vim.notify = function() end
+    local output_name_calls = {}
+    local inst = {
+      last_session_id = nil,
+      session_name = nil,
+      pending_session_name = nil,
+      session = {},
+      prompt = {},
+      output = {
+        set_buf_name = function(self, name) table.insert(output_name_calls, name) end,
+      },
+    }
+    require('cc')._handle_rename(inst, 'foo')
+    vim.notify = orig_notify
+    return {
+      pending = inst.pending_session_name,
+      output_name = output_name_calls[1],
+    }
+  end)()]])
+  eq(result.pending, 'foo-2')
+  eq(result.output_name, 'cc-foo-2')
+end
+
+T['dedupe']['_flush_pending_rename re-dedupes against latest on-disk state'] = function()
+  local result = _G.child.lua_get([[(function()
+    local tmp_project = vim.fn.tempname()
+    vim.fn.mkdir(tmp_project, 'p')
+    local session_id = 'self-9999-8888-7777'
+    local path = tmp_project .. '/' .. session_id .. '.jsonl'
+    local f = io.open(path, 'w')
+    f:write(vim.json.encode({ type='user', sessionId=session_id,
+      cwd=vim.fn.getcwd(), message={role='user',content='seed'} }) .. '\n')
+    f:close()
+
+    local history = require('cc.history')
+    history.session_path = function(sid) if sid == session_id then return path end end
+    -- Between queue time and flush time, a sibling session claimed 'foo'.
+    history.list_for_cwd = function()
+      return { { session_id = 'sibling', custom_title = 'foo' } }
+    end
+
+    local output_name_calls = {}
+    local inst = {
+      last_session_id = session_id,
+      session_name = nil,
+      pending_session_name = 'foo',
+      session = {},
+      prompt = {},
+      output = {
+        set_buf_name = function(self, name) table.insert(output_name_calls, name) end,
+      },
+    }
+    require('cc')._flush_pending_rename(inst)
+
+    local lines = vim.fn.readfile(path)
+    local last = vim.json.decode(lines[#lines])
+    return {
+      session_name = inst.session_name,
+      last_title = last.customTitle,
+      output_name = output_name_calls[1],
+    }
+  end)()]])
+  eq(result.session_name, 'foo-2')
+  eq(result.last_title, 'foo-2')
+  eq(result.output_name, 'cc-foo-2')
+end
+
 T['pre_begin']['flush is no-op when transcript still missing'] = function()
   local result = _G.child.lua_get([[(function()
     local history = require('cc.history')

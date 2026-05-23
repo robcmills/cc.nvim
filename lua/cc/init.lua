@@ -1148,6 +1148,27 @@ function M._apply_session_buf_names(inst, name)
   end
 end
 
+--- Collect session names from every live instance except `exclude`. Used by
+--- the rename path to dedupe against in-memory titles that aren't yet on
+--- disk (two queued sessions racing before either has a transcript).
+---@param exclude cc.Instance?
+---@return string[]
+function M._live_taken_names(exclude)
+  local out = {}
+  for _, inst in pairs(instances) do
+    if inst ~= exclude then
+      if inst.session_name and inst.session_name ~= '' then
+        table.insert(out, inst.session_name)
+      end
+      if inst.pending_session_name and inst.pending_session_name ~= ''
+          and not inst.transient_rename_active then
+        table.insert(out, inst.pending_session_name)
+      end
+    end
+  end
+  return out
+end
+
 --- Persist a user-chosen session title. Matches Claude Code's on-disk format
 --- (a `custom-title` JSONL record) so renames are visible from the TUI too.
 --- If invoked before the transcript exists (fresh session, no first turn yet),
@@ -1182,7 +1203,8 @@ function M._handle_rename(inst, args, opts)
   if opts.transient then
     -- Display-only placeholder: surface via pending_session_name so the
     -- statusline picks it up, but mark the instance so flush + auto-rename
-    -- callback know this name must never be persisted.
+    -- callback know this name must never be persisted. Skips dedupe because
+    -- the placeholder string is configured per-user and is never written.
     inst.pending_session_name = name
     inst.transient_rename_active = true
     M._apply_session_buf_names(inst, name)
@@ -1191,6 +1213,10 @@ function M._handle_rename(inst, args, opts)
   end
   -- Any prior transient placeholder is being replaced by a real rename.
   inst.transient_rename_active = nil
+  -- Resolve a unique title before persisting or naming the buffer. Without
+  -- this, two sessions sharing a name collide both in the picker and in the
+  -- `cc-<title>` buffer namespace (E95 from nvim_buf_set_name).
+  name = history.find_unique_session_name(name, nil, session_id, M._live_taken_names(inst))
   local path = session_id and session_id ~= '' and history.session_path(session_id) or nil
   if not path then
     -- Pre-begin or transcript not yet flushed: stash the name and rename the
@@ -1235,6 +1261,9 @@ function M._flush_pending_rename(inst)
   local history = require('cc.history')
   local path = history.session_path(session_id)
   if not path then return end
+  -- Re-dedupe at flush time: other sessions may have claimed the queued name
+  -- between the original `/rename` and now.
+  name = history.find_unique_session_name(name, nil, session_id, M._live_taken_names(inst))
   local ok, err = history.append_custom_title(path, session_id, name)
   if not ok then
     vim.notify('cc.nvim /rename: failed to write queued title: ' .. tostring(err), vim.log.levels.ERROR)

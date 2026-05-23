@@ -1,4 +1,3 @@
-- [ ] Add auto-rename with ai generated name
 - [ ] ensure sessions named in cc.nvim appear in claude code /resume and vice versa
 - [ ] add timestamps to end-of-turn token counts
 - [ ] e2e tests are taking too long
@@ -24,6 +23,7 @@
 - [ ] Add support for /compact (requires brainstorming)
 - [ ] Add CcPrompts (like skills but just the prompt, not so verbose)
 
+- [x] Add auto-rename with ai generated name
 - [x] Investigate swapfile issue when two instances are editing the same file
 - [x] Fix missing mode in statusline on startup
 - [x] Show full bash command requested in permission prompts

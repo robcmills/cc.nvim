@@ -119,6 +119,40 @@ function M.session_path(session_id, cwd)
   return nil
 end
 
+--- Suggest a session title that does not collide with any existing title in
+--- the project at `cwd`. Checks every session's `custom_title` and `ai_title`
+--- on disk, plus any in-memory names supplied via `extra_taken` (used to
+--- include live, not-yet-persisted instances). Returns `desired` if free;
+--- otherwise appends `-2`, `-3`, … in kebab style until a free slot is found.
+--- Pass `exclude_session_id` so a session can re-rename to its own current
+--- title without bumping the suffix.
+---@param desired string non-empty proposed title
+---@param cwd string?
+---@param exclude_session_id string?
+---@param extra_taken string[]? additional names to treat as taken
+---@return string
+function M.find_unique_session_name(desired, cwd, exclude_session_id, extra_taken)
+  if not desired or desired == '' then return desired end
+  local taken = {}
+  for _, e in ipairs(M.list_for_cwd(cwd)) do
+    if e.session_id ~= exclude_session_id then
+      if e.custom_title and e.custom_title ~= '' then taken[e.custom_title] = true end
+      if e.ai_title and e.ai_title ~= '' then taken[e.ai_title] = true end
+    end
+  end
+  if extra_taken then
+    for _, n in ipairs(extra_taken) do
+      if n and n ~= '' then taken[n] = true end
+    end
+  end
+  if not taken[desired] then return desired end
+  local n = 2
+  while taken[desired .. '-' .. n] do
+    n = n + 1
+  end
+  return desired .. '-' .. n
+end
+
 --- Append a `custom-title` entry to a session's JSONL. Matches Claude Code's
 --- `saveCustomTitle` on-disk format so the TUI sees the rename.
 --- Empty string clears the custom title (readers treat it as no-title).
