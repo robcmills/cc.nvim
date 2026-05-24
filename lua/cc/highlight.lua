@@ -103,7 +103,7 @@ function M.apply_buffer_syntax(bufnr)
     -- for lines that also match their own patterns.
     vim.cmd([[syntax match CcTool    /^\s\+\S\+\s\+\%(\u\w*\|mcp__[[:alnum:]_-]\+\):.*$/ containedin=ALL]])
 
-    -- Tool timing chunk: "  ▶ Bash: cmd 󰔛 timeout 30s (5s)"
+    -- Tool timing chunk: "  ▶ Bash: cmd 󰔛 5s (timeout 30s)"
     -- Matches from the timer icon (nerdfont 󰔛 or unicode ⏱) to end of line.
     -- Declared after CcTool so it overrides that match for the timing chunk.
     vim.cmd([[syntax match CcToolTiming /\%(󰔛\|⏱\).*$/ containedin=ALL]])

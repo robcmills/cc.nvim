@@ -477,8 +477,8 @@ end
 
 T['tool_bash']['tool_progress updates tool header with elapsed time'] = function()
   helpers.replay_streaming(_G.child, 'tool_bash')
-  -- The tool_progress events should update the header with (2s)
-  assert_any_line_matches(_G.child, '%(2s%)')
+  -- The tool_progress events should update the header with " 2s"
+  assert_any_line_matches(_G.child, ' 2s$')
 end
 
 -- ---------------------------------------------------------------------------
@@ -488,8 +488,8 @@ T['tool_progress'] = MiniTest.new_set()
 
 T['tool_progress']['updates elapsed time on tool header'] = function()
   helpers.replay_streaming(_G.child, 'tool_progress')
-  -- After 5 tool_progress events (1-5s), header should show (5s)
-  assert_any_line_matches(_G.child, '%(5s%)')
+  -- After 5 tool_progress events (1-5s), header should show " 5s"
+  assert_any_line_matches(_G.child, ' 5s$')
 end
 
 T['tool_progress']['renders tool result'] = function()
@@ -503,14 +503,14 @@ T['tool_progress']['local timer drives elapsed time without tool_progress events
   -- Speed the timer way down for this test so we don't pay a real second.
   helpers.replay_streaming(_G.child, 'tool_no_progress', { tool_timer_interval_ms = 50 })
   _G.child.lua('vim.wait(120, function() return false end)')
-  assert_any_line_matches(_G.child, '%(%d+m?s%)')
+  assert_any_line_matches(_G.child, ' %d+m?s$')
 end
 
 -- Timeout rendering: when the agent sets Bash's timeout input, the tool
--- header includes "timeout Ns" between the command and the (Ms) timer.
+-- header includes "(timeout Ns)" after the elapsed-time chunk.
 T['tool_progress']['renders timeout when agent sets Bash timeout input'] = function()
   helpers.replay_streaming(_G.child, 'tool_with_timeout')
-  assert_any_line_matches(_G.child, 'timeout 30s')
+  assert_any_line_matches(_G.child, '%(timeout 30s%)')
 end
 
 -- The timing chunk (icon + timeout + elapsed) gets its own CcToolTiming

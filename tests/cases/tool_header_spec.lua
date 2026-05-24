@@ -1,5 +1,5 @@
 -- Tests for tool-call header rendering invariants:
---   * The timer icon and the elapsed-time `(Ns)` suffix must always be
+--   * The timer icon and the elapsed-time `Ns` suffix must always be
 --     present (or absent) together — neither alone is a valid display state.
 --   * The fold caret extmark for a tool header must stay on the header line
 --     after the header line is rewritten (timer tick / summary update).
@@ -54,7 +54,8 @@ T['timer']['elapsed suffix without timer icon is invalid'] = function()
   local timer_fb = '\xe2\x8f\xb1'
   local has_timer_icon = header:find(timer_nf, 1, true) ~= nil
     or header:find(timer_fb, 1, true) ~= nil
-  local has_duration = header:match('%(%d+m?s%)$') ~= nil
+  local has_duration = header:match(' %d+m?s$') ~= nil
+    or header:match(' %d+m?s %(timeout') ~= nil
 
   -- Invariant: the duration suffix never appears without the timer icon.
   if has_duration then
@@ -97,7 +98,8 @@ T['timer']['icon and suffix coexist after stop and tick'] = function()
 
   local timer_nf = '\xf3\xb0\x94\x9b'
   local has_timer_icon = header:find(timer_nf, 1, true) ~= nil
-  local has_duration = header:match('%(%d+m?s%)$') ~= nil
+  local has_duration = header:match(' %d+m?s$') ~= nil
+    or header:match(' %d+m?s %(timeout') ~= nil
   eq(has_timer_icon, true)
   eq(has_duration, true)
 end

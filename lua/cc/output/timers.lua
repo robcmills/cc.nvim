@@ -51,7 +51,7 @@ function M.stop(self, tool_use_id)
 end
 
 --- Update a tool header line in-place with the timer suffix
---- (" <icon> [timeout Ns] (Ns)"). This function owns the entire timer
+--- (" <icon> Ns [(timeout Ns)]"). This function owns the entire timer
 --- suffix — icon and duration are written and stripped together so the
 --- two glyphs never appear apart.
 ---@param tool_use_id string
@@ -66,32 +66,38 @@ function M.update_elapsed(self, tool_use_id, elapsed_seconds)
   local lines = vim.api.nvim_buf_get_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false)
   if not lines[1] then return end
   local new_ms = math.floor(elapsed_seconds * 1000)
-  -- Elapsed time only goes up; if a larger value is already displayed
-  -- (e.g. SDK tool_progress reported 5s while the local timer still says 0s
-  -- in synchronous fixture replay), keep the larger value.
-  local cur_secs = tonumber(lines[1]:match(' %((%d+)s%)$'))
-  local cur_ms_val = tonumber(lines[1]:match(' %((%d+)ms%)$'))
-  local cur_ms = cur_ms_val or (cur_secs and cur_secs * 1000) or nil
-  if cur_ms and new_ms < cur_ms then return end
 
   local icons = require('cc.icons')
   local timer_icon = icons.timer_icon()
-  -- Strip any prior timer suffix off the line. Match either "<icon>...(Ns)"
+  -- Elapsed time only goes up; if a larger value is already displayed
+  -- (e.g. SDK tool_progress reported 5s while the local timer still says 0s
+  -- in synchronous fixture replay), keep the larger value. The elapsed
+  -- chunk sits right after the timer icon, optionally followed by a
+  -- " (timeout Ns)" suffix for Bash tools.
+  local tre = vim.pesc(timer_icon)
+  local cur_secs = tonumber(lines[1]:match(tre .. ' (%d+)s$'))
+    or tonumber(lines[1]:match(tre .. ' (%d+)s %(timeout'))
+  local cur_ms_val = tonumber(lines[1]:match(tre .. ' (%d+)ms$'))
+    or tonumber(lines[1]:match(tre .. ' (%d+)ms %(timeout'))
+  local cur_ms = cur_ms_val or (cur_secs and cur_secs * 1000) or nil
+  if cur_ms and new_ms < cur_ms then return end
+
+  -- Strip any prior timer suffix off the line. Match either "<icon>..."
   -- (the canonical form this function produces) or a stray "(Ns)" with no
   -- icon (a transient state from prior buggy paths — kept defensive).
   local base = lines[1]
-    :gsub(' ' .. vim.pesc(timer_icon) .. '.*$', '')
+    :gsub(' ' .. tre .. '.*$', '')
     :gsub(' %(%d+m?s%)$', '')
   local suffix = ' ' .. timer_icon
+  if new_ms < 1000 then
+    suffix = suffix .. string.format(' %dms', new_ms)
+  else
+    suffix = suffix .. string.format(' %ds', math.floor(new_ms / 1000))
+  end
   local input = meta.input
   if meta.tool_name == 'Bash' and type(input) == 'table'
       and type(input.timeout) == 'number' and input.timeout > 0 then
-    suffix = suffix .. string.format(' timeout %ds', math.floor(input.timeout / 1000))
-  end
-  if new_ms < 1000 then
-    suffix = suffix .. string.format(' (%dms)', new_ms)
-  else
-    suffix = suffix .. string.format(' (%ds)', math.floor(new_ms / 1000))
+    suffix = suffix .. string.format(' (timeout %ds)', math.floor(input.timeout / 1000))
   end
   self:_with_tail_anchor(function()
     vim.bo[bufnr].modifiable = true
