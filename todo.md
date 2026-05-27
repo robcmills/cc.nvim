@@ -1,3 +1,4 @@
+- [ ] bugfix: interrupted tool call timer never stops
 - [ ] ensure sessions named in cc.nvim appear in claude code /resume and vice versa
 - [ ] add timestamps to end-of-turn token counts
 - [ ] e2e tests are taking too long
@@ -7,7 +8,6 @@
 - [ ] Improve /command completions (add descriptions, etc.)
 - [ ] Add configurable markdown highlighting for Subagent prompts
 - [ ] Add session timing info
-- [ ] Remove parens around tool timers (add around timeouts)
 - [ ] Explore potentially using foldcolumn
 - [ ] Unsloppify - identify most complex/fragile code and simplify (requires brainstorming)
 - [ ] Add config option to turn off tool icons
@@ -15,7 +15,6 @@
 - [ ] Add configurable themes support for customizing highlight groups, icons, etc.
 - [ ] Add a "theme viewer/switcher" to show visually mock examples of what each type of tool looks like, and user can interactively switch themes and see what it looks like live
 - [ ] Implement better history search (:CcSessionSearch) 
-- [ ] Make resume history picker window larger
 - [ ] Test/fix command completions (/rename, etc.)
 - [ ] Audit all claude code functionality for parity/selection of subset we will support (see tests/FEATURE_AUDIT.md)
 - [ ] Support "queued" prompts (submitted while agent is thinking or working)
@@ -23,6 +22,8 @@
 - [ ] Add support for /compact (requires brainstorming)
 - [ ] Add CcPrompts (like skills but just the prompt, not so verbose)
 
+- [x] Make resume history picker window larger
+- [x] Remove parens around tool timers (add around timeouts)
 - [x] Add auto-rename with ai generated name
 - [x] Investigate swapfile issue when two instances are editing the same file
 - [x] Fix missing mode in statusline on startup
