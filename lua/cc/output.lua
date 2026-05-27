@@ -1164,6 +1164,7 @@ do
   local timers = require('cc.output.timers')
   Output.start_tool_timer = timers.start
   Output.stop_tool_timer = timers.stop
+  Output.stop_all_tool_timers = timers.stop_all
   Output.update_tool_elapsed = timers.update_elapsed
 end
 return M

@@ -169,6 +169,10 @@ end
 
 function Router:_handle_result(msg)
   self.session:on_result(msg)
+  -- A `result` is the terminal message of a turn; every tool should have
+  -- completed by now. Any timer still running is orphaned (its tool_result
+  -- never arrived), so stop it before the cost line lands.
+  self.output:stop_all_tool_timers()
   self.output:render_result(msg)
   if self.instance then
     require('cc')._flush_pending_rename(self.instance)
@@ -194,6 +198,9 @@ function Router:_handle_control_response(msg)
       self.session.turn_active = false
     end
     if resp.subtype == 'success' then
+      -- A successful interrupt aborts the turn without a `result` message, so
+      -- any in-flight tool's timer would otherwise tick forever — stop them.
+      self.output:stop_all_tool_timers()
       self.output:render_notice('Interrupted')
     else
       local err = resp.error or 'control_response error'

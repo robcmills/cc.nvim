@@ -1,4 +1,4 @@
-- [ ] bugfix: interrupted tool call timer never stops
+- [x] bugfix: interrupted tool call timer never stops
 - [ ] ensure sessions named in cc.nvim appear in claude code /resume and vice versa
 - [ ] add timestamps to end-of-turn token counts
 - [ ] e2e tests are taking too long

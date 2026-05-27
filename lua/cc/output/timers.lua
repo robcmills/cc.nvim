@@ -50,6 +50,23 @@ function M.stop(self, tool_use_id)
   end
 end
 
+--- Stop and close every outstanding tool timer. Called when a turn ends
+--- (a `result` message, or an acknowledged interrupt) so a tool whose
+--- tool_result never arrives — e.g. a long-running tool aborted mid-flight
+--- by an interrupt — doesn't tick forever. Each timer gets the same final
+--- elapsed tick stop() writes, freezing the header at its actual duration.
+--- Keys are collected before stopping since stop() mutates _tool_timers.
+function M.stop_all(self)
+  if not self._tool_timers then return end
+  local ids = {}
+  for tool_use_id in pairs(self._tool_timers) do
+    ids[#ids + 1] = tool_use_id
+  end
+  for _, tool_use_id in ipairs(ids) do
+    self:stop_tool_timer(tool_use_id)
+  end
+end
+
 --- Update a tool header line in-place with the timer suffix
 --- (" <icon> Ns [(timeout Ns)]"). This function owns the entire timer
 --- suffix — icon and duration are written and stripped together so the

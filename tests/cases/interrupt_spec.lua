@@ -119,6 +119,62 @@ T['router handles error control_response for interrupt'] = function()
   end
 end
 
+-- A long-running tool aborted by an interrupt never gets a tool_result, so
+-- its 1Hz elapsed-time timer used to tick forever. A successful interrupt must
+-- stop every in-flight tool timer.
+T['successful interrupt stops in-flight tool timers'] = function()
+  setup_fake_process(_G.child)
+  _G.child.lua([[
+    _G._test_output:on_content_block_start({ type = 'tool_use', id = 'tool-1', name = 'Bash' })
+    _G._test_output:start_tool_timer('tool-1')
+    _G._test_had_timer = _G._test_output._tool_timers['tool-1'] ~= nil
+
+    _G._test_session.is_streaming = true
+    _G._test_session.interrupt_pending = true
+    local rid = _G._test_process:send_control_interrupt()
+    _G._test_router:dispatch({
+      type = 'control_response',
+      response = { subtype = 'success', request_id = rid },
+    })
+  ]])
+  eq(_G.child.lua_get('_G._test_had_timer'), true)
+  eq(_G.child.lua_get('_G._test_output._tool_timers["tool-1"]'), vim.NIL)
+end
+
+-- A failed interrupt means the turn is still live, so the tool is still
+-- running — its timer must keep ticking, not be stopped prematurely.
+T['failed interrupt leaves in-flight tool timers running'] = function()
+  setup_fake_process(_G.child)
+  _G.child.lua([[
+    _G._test_output:on_content_block_start({ type = 'tool_use', id = 'tool-1', name = 'Bash' })
+    _G._test_output:start_tool_timer('tool-1')
+    _G._test_session.is_streaming = true
+    _G._test_session.interrupt_pending = true
+    local rid = _G._test_process:send_control_interrupt()
+    _G._test_router:dispatch({
+      type = 'control_response',
+      response = { subtype = 'error', request_id = rid, error = 'nope' },
+    })
+    _G._test_still_running = _G._test_output._tool_timers['tool-1'] ~= nil
+    _G._test_output:stop_tool_timer('tool-1') -- clean up the libuv handle
+  ]])
+  eq(_G.child.lua_get('_G._test_still_running'), true)
+end
+
+-- The terminal `result` message is the catch-all: any tool whose result never
+-- arrived (e.g. a turn that errored mid-tool) is orphaned and must be stopped.
+T['result message stops orphaned tool timers'] = function()
+  setup_fake_process(_G.child)
+  _G.child.lua([[
+    _G._test_output:on_content_block_start({ type = 'tool_use', id = 'tool-1', name = 'Bash' })
+    _G._test_output:start_tool_timer('tool-1')
+    _G._test_had_timer = _G._test_output._tool_timers['tool-1'] ~= nil
+    _G._test_router:dispatch({ type = 'result', subtype = 'success', total_cost_usd = 0.01 })
+  ]])
+  eq(_G.child.lua_get('_G._test_had_timer'), true)
+  eq(_G.child.lua_get('_G._test_output._tool_timers["tool-1"]'), vim.NIL)
+end
+
 T['router ignores control_response with unknown request_id'] = function()
   setup_fake_process(_G.child)
   _G.child.lua([[
