@@ -135,7 +135,7 @@ function M.ask(tool_name, input, on_choice)
     footer = footer,
     footer_pos = 'center',
   })
-  vim.wo[winid].wrap = false
+  vim.wo[winid].wrap = true
   vim.wo[winid].cursorline = false
   vim.wo[winid].number = false
   vim.wo[winid].relativenumber = false
