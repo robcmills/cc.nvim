@@ -60,6 +60,35 @@ T['classify']['command-message produces command notice'] = function()
   eq(payload, 'command: /loop 5m /foo')
 end
 
+T['classify']['sibling command tags produce command notice'] = function()
+  -- Vanilla CC writes /exit-style commands as three sibling tags in one user
+  -- record. The single-tag wrap detector misses this — it must be recognized
+  -- as a multi-tag synthetic block, not leaked as a raw User: turn.
+  local body = '<command-name>/exit</command-name>\n'
+    .. '            <command-message>exit</command-message>\n'
+    .. '            <command-args></command-args>'
+  local kind, payload = classify(_G.child, body)
+  eq(kind, 'notice')
+  eq(payload, 'command: /exit')
+end
+
+T['classify']['sibling command tags with args produce command notice'] = function()
+  local body = '<command-name>/loop</command-name>\n'
+    .. '<command-message>loop</command-message>\n'
+    .. '<command-args>5m /foo</command-args>'
+  local kind, payload = classify(_G.child, body)
+  eq(kind, 'notice')
+  eq(payload, 'command: /loop 5m /foo')
+end
+
+T['classify']['mixed text + synthetic tag siblings stay as text'] = function()
+  -- A real prose message that happens to mention a tag must not be
+  -- misclassified as multi-tag synthetic.
+  local body = 'see this: <command-name>/foo</command-name> example'
+  local kind, _ = classify(_G.child, body)
+  eq(kind, 'text')
+end
+
 T['classify']['embedded system-reminder is stripped from real text'] = function()
   local body = 'real user text\n<system-reminder>injected context</system-reminder>'
   local kind, payload = classify(_G.child, body)

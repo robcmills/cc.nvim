@@ -69,6 +69,77 @@ T['read_transcript']['multi_turn produces multiple records'] = function()
 end
 
 -- ---------------------------------------------------------------------------
+-- _extract_metadata: synthetic-aware first_prompt
+-- ---------------------------------------------------------------------------
+T['extract_metadata'] = MiniTest.new_set()
+
+T['extract_metadata']['skips synthetic content when picking first_prompt'] = function()
+  -- Vanilla CC sessions that started with only `/exit` and friends have user
+  -- records containing nothing but synthetic wrappers. The picker title must
+  -- skip those instead of dumping raw `<local-command-caveat>...` content.
+  _G.child.lua([==[
+    local tmp = vim.fn.tempname() .. '.jsonl'
+    local lines = {
+      vim.json.encode({
+        type = 'user',
+        message = {
+          role = 'user',
+          content = '<local-command-caveat>Caveat: messages below…</local-command-caveat>',
+        },
+      }),
+      vim.json.encode({
+        type = 'user',
+        message = {
+          role = 'user',
+          content = '<command-name>/exit</command-name>\n<command-message>exit</command-message>\n<command-args></command-args>',
+        },
+      }),
+      vim.json.encode({
+        type = 'user',
+        message = {
+          role = 'user',
+          content = 'the actual first user prompt',
+        },
+      }),
+    }
+    vim.fn.writefile(lines, tmp)
+    _G._meta = require('cc.history')._extract_metadata(tmp)
+    vim.fn.delete(tmp)
+  ]==])
+  local meta = _G.child.lua_get('_G._meta')
+  eq(meta.first_prompt, 'the actual first user prompt')
+end
+
+T['extract_metadata']['leaves first_prompt nil when only synthetic content exists'] = function()
+  -- A session like `/exit` immediately after start has no real prompts. Picker
+  -- should fall back to '(empty)' rather than '<local-command-caveat>...'.
+  _G.child.lua([==[
+    local tmp = vim.fn.tempname() .. '.jsonl'
+    local lines = {
+      vim.json.encode({
+        type = 'user',
+        message = {
+          role = 'user',
+          content = '<local-command-caveat>caveat</local-command-caveat>',
+        },
+      }),
+      vim.json.encode({
+        type = 'user',
+        message = {
+          role = 'user',
+          content = '<command-name>/exit</command-name>\n<command-args></command-args>',
+        },
+      }),
+    }
+    vim.fn.writefile(lines, tmp)
+    local meta = require('cc.history')._extract_metadata(tmp)
+    vim.fn.delete(tmp)
+    _G._first_prompt_is_nil = meta.first_prompt == nil
+  ]==])
+  eq(_G.child.lua_get('_G._first_prompt_is_nil'), true)
+end
+
+-- ---------------------------------------------------------------------------
 -- render_historical_record
 -- ---------------------------------------------------------------------------
 T['render_historical'] = MiniTest.new_set()

@@ -82,6 +82,60 @@ local function summarize(tag, body)
   return (tag:gsub('-', ' '))
 end
 
+--- Walk `trimmed` as a sequence of `<tag>body</tag>` blocks separated only by
+--- whitespace. Returns the list of blocks, or nil if any non-tag content or a
+--- malformed/unclosed tag is encountered. Used by `classify` to recognize
+--- vanilla-CLI multi-tag user records like
+--- `<command-name>/exit</command-name>\n<command-message>exit</command-message>\n<command-args></command-args>`
+--- which the single-tag wrap detector misses.
+---@param trimmed string
+---@return { tag: string, body: string }[]?
+local function split_sibling_tags(trimmed)
+  local blocks = {}
+  local i = 1
+  local n = #trimmed
+  while i <= n do
+    -- Skip whitespace between sibling tags.
+    local ws_end = trimmed:find('%S', i)
+    if not ws_end then break end
+    i = ws_end
+    -- Expect an opening tag at i.
+    local tag, after_open = trimmed:match('^<([%w%-]+)>()', i)
+    if not tag then return nil end
+    local closing = '</' .. tag .. '>'
+    local close_s = trimmed:find(closing, after_open, true)
+    if not close_s then return nil end
+    table.insert(blocks, {
+      tag = tag,
+      body = trimmed:sub(after_open, close_s - 1),
+    })
+    i = close_s + #closing
+  end
+  if #blocks == 0 then return nil end
+  return blocks
+end
+
+--- Summarize a list of sibling tags as a single notice. Special-cases the
+--- command echo pattern (sibling `<command-name>` / `<command-args>`) so it
+--- reads "command: /foo args" instead of just "command name".
+---@param blocks { tag: string, body: string }[]
+---@return string
+local function summarize_siblings(blocks)
+  local command_name, command_args
+  for _, b in ipairs(blocks) do
+    if b.tag == 'command-name' then command_name = b.body end
+    if b.tag == 'command-args' then command_args = b.body end
+  end
+  if command_name and command_name ~= '' then
+    local name = vim.trim(command_name)
+    local args = command_args and vim.trim(command_args) or ''
+    if args ~= '' then return 'command: ' .. name .. ' ' .. args end
+    return 'command: ' .. name
+  end
+  -- Otherwise summarize as the first known block (or the kebab name).
+  return summarize(blocks[1].tag, blocks[1].body)
+end
+
 --- Classify a user-message string from a transcript record.
 --- Returns ('text', cleaned) for human input (possibly with embedded
 --- system-reminder blocks stripped) or ('notice', summary) for a synthetic
@@ -122,6 +176,33 @@ function M.classify(text)
       if tag:find('-') then
         notify_unknown(tag)
         return 'notice', (tag:gsub('-', ' '))
+      end
+    end
+  end
+
+  -- Multi-tag wrap: vanilla CC writes command echoes as three sibling tags
+  -- (<command-name>, <command-message>, <command-args>) in one user record.
+  -- Classify as synthetic only when every sibling is a known wrapper — if
+  -- any plain text or unrecognized tag appears, fall through to 'text' so
+  -- legitimate prose isn't suppressed.
+  if trimmed:sub(1, 1) == '<' then
+    local blocks = split_sibling_tags(trimmed)
+    if blocks and #blocks >= 2 then
+      local all_known = true
+      local kebab_unknown
+      for _, b in ipairs(blocks) do
+        if not KNOWN_TAGS[b.tag] then
+          if b.tag:find('-') then
+            kebab_unknown = b.tag
+          else
+            all_known = false
+            break
+          end
+        end
+      end
+      if all_known then
+        if kebab_unknown then notify_unknown(kebab_unknown) end
+        return 'notice', summarize_siblings(blocks)
       end
     end
   end

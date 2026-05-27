@@ -79,6 +79,7 @@ end
 ---@return { custom_title: string?, ai_title: string?, first_prompt: string?, cwd: string? }
 function M._extract_metadata(path)
   local meta = {}
+  local synthetic = require('cc.synthetic')
   local f = io.open(path, 'r')
   if not f then return meta end
   for line in f:lines() do
@@ -97,7 +98,13 @@ function M._extract_metadata(path)
       elseif not meta.first_prompt and rec.type == 'user' and type(rec.message) == 'table' then
         local c = rec.message.content
         if type(c) == 'string' and c ~= '' then
-          meta.first_prompt = c:gsub('\n', ' '):sub(1, 120)
+          -- Skip synthetic wrappers (slash-command echoes, local-command
+          -- output, caveats, etc.) so the picker title reflects the first
+          -- real human prompt instead of "<local-command-caveat>...".
+          local kind, payload = synthetic.classify(c)
+          if kind == 'text' and payload ~= '' then
+            meta.first_prompt = payload:gsub('\n', ' '):sub(1, 120)
+          end
         end
       end
     end
