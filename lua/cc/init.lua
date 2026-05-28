@@ -31,6 +31,7 @@ M.VERSION = '0.6.0'
 ---@field pending_session_name string? rename requested before transcript exists; flushed by `_flush_pending_rename`
 ---@field remote_control_active boolean?
 ---@field saved_output_view table? output winsaveview snapshot from the last close, restored on reopen
+---@field saved_output_following_tail boolean? whether the output cursor was on the tail at the last close; reopen re-pins to the new tail instead of restoring saved_output_view
 ---@field saved_prompt_view table? prompt winsaveview snapshot from the last close, restored on reopen
 ---@field last_focus 'prompt'|'output'? which cc buffer the user was last in; restored on reopen
 ---@field user_fold_level integer? user's chosen foldlevel from the last close, restored on reopen
@@ -159,7 +160,16 @@ local function setup_buffer_autocmds(inst)
     if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid)
         and vim.api.nvim_win_get_buf(inst.output_winid) == output_bufnr then
       local ok, view = pcall(vim.api.nvim_win_call, inst.output_winid, vim.fn.winsaveview)
-      if ok then inst.saved_output_view = view end
+      if ok then
+        inst.saved_output_view = view
+        -- Was the user following the tail (cursor on/after the last line)?
+        -- If so, reopen must re-pin to the *new* tail rather than restore this
+        -- now-stale view: an agent turn that keeps streaming while the layout
+        -- is collapsed grows the buffer past the saved cursor line, and
+        -- restoring it verbatim would freeze the window above the live tail.
+        local line_count = vim.api.nvim_buf_line_count(output_bufnr)
+        inst.saved_output_following_tail = view.lnum >= line_count
+      end
     end
     if inst.prompt_winid and vim.api.nvim_win_is_valid(inst.prompt_winid)
         and vim.api.nvim_win_get_buf(inst.prompt_winid) == prompt_bufnr then
@@ -264,14 +274,20 @@ local function setup_buffer_autocmds(inst)
         local output_winid = inst.output_winid
         local prompt_winid = inst.prompt_winid
         local saved_output_view = inst.saved_output_view
+        local saved_output_following_tail = inst.saved_output_following_tail
         local saved_prompt_view = inst.saved_prompt_view
         inst.saved_output_view = nil
+        inst.saved_output_following_tail = nil
         inst.saved_prompt_view = nil
         vim.schedule(function()
           if output_winid and vim.api.nvim_win_is_valid(output_winid)
               and vim.api.nvim_win_get_buf(output_winid) == output_bufnr then
             pcall(vim.api.nvim_win_call, output_winid, function()
-              if saved_output_view then
+              -- Re-pin to the tail when the user was following it on leave (the
+              -- saved view points at a now-stale line if the buffer grew while
+              -- the layout was collapsed); otherwise restore their exact
+              -- scroll position.
+              if saved_output_view and not saved_output_following_tail then
                 vim.fn.winrestview(saved_output_view)
               else
                 local last = vim.api.nvim_buf_line_count(output_bufnr)

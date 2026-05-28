@@ -619,4 +619,83 @@ T['follow_tail_works_after_nav_away_from_prompt_and_back'] = function()
   h.assert_pinned_to_bottom(_G.child, after.output_winid)
 end
 
+-- ---------------------------------------------------------------------------
+-- Test 9: tail-follow RESUMES after navigating away during an active stream.
+--
+-- Scenario: the user is following a live agent turn (cursor at the output
+-- tail), navigates to another file mid-turn, and returns. While the cc layout
+-- is collapsed the turn keeps streaming, growing the buffer well past where it
+-- was when the user left.
+--
+-- Bug: the reopen path restores the snapshot taken on leave verbatim via
+-- winrestview. That snapshot's cursor line was the tail *at leave time*, which
+-- now sits far above the live tail — so the window reopens frozen above the
+-- streaming output and never re-pins (the BufWinEnter `Gzb` only fires when
+-- the cursor is already at/after the last line).
+--
+-- Desired: if the user was following the tail when they left, reopen re-pins
+-- to the NEW tail so streaming output keeps scrolling into view.
+-- ---------------------------------------------------------------------------
+
+T['tail_follow_resumes_after_nav_away_during_active_stream'] = function()
+  _G.child = h.spawn({ lines = 22, columns = 100 })
+  -- Slow stream so we can navigate away mid-turn. many_lines overflows the
+  -- ~10-line output window many times over.
+  h.open_with_fixture(_G.child, 'many_lines', { slow_delay_ms = 30 })
+
+  -- Wait until the output window exists and the buffer has overflowed (so we
+  -- are genuinely tailing a long buffer) while the stream is still in flight.
+  local winid
+  local ok = _G.child:wait_for(function(c)
+    winid = c:find_winid_for_buf('cc-nvim-output')
+    if not winid then return false end
+    local lc = c:lua([[ return vim.api.nvim_buf_line_count(vim.fn.bufnr('cc-nvim-output')) ]])
+    return lc and lc >= 12
+  end, 4000)
+  if not ok then error('output never overflowed mid-stream') end
+
+  -- Focus the output window and pin the cursor to the live tail.
+  _G.child:lua(string.format([[
+    vim.api.nvim_set_current_win(%d)
+    vim.cmd('normal! G')
+  ]], winid))
+  _G.child:sleep(30)
+
+  local line_at_leave =
+    _G.child:lua([[ return vim.api.nvim_buf_line_count(vim.fn.bufnr('cc-nvim-output')) ]])
+
+  -- Navigate away to a regular file from the OUTPUT window. This collapses the
+  -- cc layout and snapshots the output view (cursor at the tail).
+  _G.child:lua([[ pcall(vim.cmd, 'edit plugin/cc.lua') ]])
+  _G.child:sleep(50)
+
+  -- Let the rest of the turn stream in while the layout is collapsed, so the
+  -- buffer grows well past where it was when we left.
+  if not h.wait_for_session_end(_G.child, 8000) then
+    error('session did not end while navigated away')
+  end
+
+  -- In real use the claude CLI stays alive across navigation; the fixture
+  -- process has exited, so fake liveness to let the reopen path recreate.
+  force_alive(_G.child)
+
+  local line_after_grow =
+    _G.child:lua([[ return vim.api.nvim_buf_line_count(vim.fn.bufnr('cc-nvim-output')) ]])
+  if line_after_grow <= line_at_leave then
+    error(string.format('buffer did not grow while away (leave=%d, after=%d) — test is not exercising the bug',
+      line_at_leave, line_after_grow))
+  end
+
+  -- Return to the cc session.
+  switch_to_buf_by_name(_G.child, 'cc-nvim-output')
+  _G.child:sleep(300)
+
+  local out_winid = _G.child:find_winid_for_buf('cc-nvim-output')
+  if not out_winid then error('output window not recreated on return') end
+
+  -- Tailing should have resumed: the view is pinned to the NEW tail, not
+  -- frozen at the stale pre-navigation position.
+  h.assert_pinned_to_bottom(_G.child, out_winid)
+end
+
 return T
