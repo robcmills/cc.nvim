@@ -1005,8 +1005,9 @@ function M._try_handle_client_command(inst, text)
   return false
 end
 
---- Set or report the reasoning effort level. Persisted across sessions and
---- applied to the next spawned claude process via CLAUDE_CODE_EFFORT_LEVEL.
+--- Set or report the reasoning effort level. In-memory and session-scoped
+--- (not persisted to disk); applied to the next spawned claude process via
+--- CLAUDE_CODE_EFFORT_LEVEL.
 ---@param inst cc.Instance?
 ---@param args string raw arguments after `/effort` or `:CcEffort`
 function M._handle_effort(inst, args)

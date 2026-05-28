@@ -10,6 +10,7 @@ local M = {}
 ---@field model string?
 ---@field tools table
 ---@field permission_mode string?
+---@field resolved_effort string? the CLI's resolved effort level (applied.effort from get_settings); lets the statusline show what 'auto' resolves to
 ---@field turns table[]
 ---@field current_message table?
 ---@field current_blocks table<integer, table>
@@ -39,6 +40,7 @@ function M.new()
     model = nil,
     tools = {},
     permission_mode = nil,
+    resolved_effort = nil,
     turns = {},
     current_message = nil,
     current_blocks = {},

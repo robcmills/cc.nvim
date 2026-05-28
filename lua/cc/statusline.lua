@@ -113,7 +113,10 @@ local function default_format(state)
   end
   if state.effort and state.effort ~= '' then
     local Effort = require('cc.effort')
-    local sym = Effort.symbol(state.effort)
+    -- When the level was auto-resolved from the CLI (setting is 'auto', but we
+    -- learned what it resolves to), keep the 'auto' glyph as a hint while
+    -- showing the resolved label — e.g. "◎ high" rather than a pinned "◑ high".
+    local sym = Effort.symbol(state.effort_resolved and 'auto' or state.effort)
     local lbl = Effort.label(state.effort)
     local seg = HL_EFFORT
     if sym ~= '' then seg = seg .. sym .. ' ' end
@@ -178,6 +181,20 @@ function M.build_state(instance)
     local uv = vim.uv or vim.loop
     turn_elapsed_ms = uv.now() - session.turn_started_at
   end
+  -- Effort: an explicit user choice wins. When the setting is 'auto', show
+  -- what the CLI told us it resolves to (session.resolved_effort, from the
+  -- get_settings control_response) — falling back to 'auto' until that lands.
+  local Effort = require('cc.effort')
+  local effort_setting = Effort.get()
+  local effort_display = effort_setting
+  local effort_resolved = false
+  if effort_setting == 'auto' then
+    local r = session and session.resolved_effort
+    if type(r) == 'string' and r ~= '' and r ~= 'auto' then
+      effort_display = r
+      effort_resolved = true
+    end
+  end
   return {
     is_thinking = session and session.turn_active or false,
     spinner_frame = spinner_frame,
@@ -193,7 +210,9 @@ function M.build_state(instance)
     mode = session and session.permission_mode or nil,
     branch = require('cc.git').branch(on_update),
     pr = require('cc.git').pr(on_update),
-    effort = require('cc.effort').get(),
+    effort = effort_display,
+    effort_setting = effort_setting,
+    effort_resolved = effort_resolved,
     model = model,
     cli_version = require('cc.version').get(on_update),
     session_name = instance and instance.session_name or nil,

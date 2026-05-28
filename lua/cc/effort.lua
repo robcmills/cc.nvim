@@ -1,9 +1,12 @@
--- Reasoning effort level: persisted user preference applied to spawned
--- claude processes via the CLAUDE_CODE_EFFORT_LEVEL env var (read by the
--- claude CLI's effort resolver, see claude-code/src/utils/effort.ts).
+-- Reasoning effort level: an in-memory, session-scoped preference applied to
+-- spawned claude processes via the CLAUDE_CODE_EFFORT_LEVEL env var (read by
+-- the claude CLI's effort resolver, see claude-code/src/utils/effort.ts).
+-- Deliberately not persisted to disk — it resets to the default on each
+-- Neovim restart.
 --
 -- Six levels match the upstream /effort menu: low | medium | high | xhigh |
--- max | auto. 'auto' means "let the model decide" — we omit the env var.
+-- max | auto. 'auto' means "let the model decide" — we omit the env var, so
+-- the CLI/model picks the default (e.g. 'high' on Opus 4.8).
 
 local M = {}
 
@@ -41,30 +44,6 @@ local NERDFONT = {
 }
 
 local current = 'auto'
-local loaded = false
-
-local function state_paths()
-  local dir = vim.fn.stdpath('data') .. '/cc.nvim'
-  return dir, dir .. '/effort'
-end
-
-local function load()
-  if loaded then return end
-  loaded = true
-  local _, path = state_paths()
-  if vim.fn.filereadable(path) ~= 1 then return end
-  local ok, lines = pcall(vim.fn.readfile, path, '', 1)
-  local v = ok and lines and lines[1] or nil
-  if v and LEVEL_SET[v] then current = v end
-end
-
-local function save()
-  local dir, path = state_paths()
-  if vim.fn.isdirectory(dir) ~= 1 then
-    vim.fn.mkdir(dir, 'p')
-  end
-  pcall(vim.fn.writefile, { current }, path)
-end
 
 ---@return string[]
 function M.levels()
@@ -79,7 +58,6 @@ end
 
 ---@return string current level
 function M.get()
-  load()
   return current
 end
 
@@ -87,9 +65,7 @@ end
 ---@return boolean ok
 function M.set(v)
   if not M.is_valid(v) then return false end
-  load()
   current = v
-  save()
   return true
 end
 
@@ -139,7 +115,6 @@ M._NERDFONT = NERDFONT
 M._LABELS = LABELS
 function M._reset()
   current = 'auto'
-  loaded = false
 end
 
 return M

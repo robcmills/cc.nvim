@@ -207,18 +207,32 @@ function Router:_handle_control_response(msg)
       self.output:render_notice('Interrupt failed: ' .. tostring(err))
     end
   elseif subtype == 'get_settings' then
+    if resp.subtype ~= 'success' then return end
+    if not self.session then return end
+    local inner = resp.response or {}
+    -- Capture the CLI's resolved effort level (the `applied` section reports
+    -- the fully-resolved value, including the model default when no env/setting
+    -- pins it — e.g. 'auto' resolving to 'high' on Opus). The statusline uses
+    -- this to show what 'auto' resolves to. Captured independently of the
+    -- permission_mode seeding below, which may bail early on an init race.
+    local applied = inner.applied or {}
+    if type(applied.effort) == 'string' and applied.effort ~= '' then
+      self.session.resolved_effort = applied.effort
+    end
     -- Seed session.permission_mode from the CLI's effective settings so the
     -- statusline shows the right mode before the user's first prompt
     -- triggers an init message. Only fill in if nothing has set it yet —
     -- if init or a set_permission_mode raced us, defer to that authoritative
     -- value. permissions.defaultMode is optional; fall back to 'default'
     -- (the CLI's own ultimate fallback when no settings layer specifies one).
-    if resp.subtype ~= 'success' then return end
-    if not self.session or self.session.permission_mode then return end
-    local inner = resp.response or {}
-    local effective = inner.effective or {}
-    local permissions = effective.permissions or {}
-    self.session.permission_mode = permissions.defaultMode or 'default'
+    if not self.session.permission_mode then
+      local effective = inner.effective or {}
+      local permissions = effective.permissions or {}
+      self.session.permission_mode = permissions.defaultMode or 'default'
+    end
+    if self.instance then
+      require('cc.statusline').refresh(self.instance)
+    end
   end
 end
 

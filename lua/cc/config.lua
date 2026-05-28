@@ -120,8 +120,11 @@ local defaults = {
   -- format = function(state) -> string (Neovim statusline syntax).
   -- state fields: is_thinking, spinner_frame, total_tokens, input_tokens,
   --   output_tokens, context_tokens, context_window, context_percent,
-  --   cost_usd, mode, branch, pr, effort, model, cli_version,
-  --   session_name, session_id, remote_control.
+  --   cost_usd, mode, branch, pr, effort, effort_setting, effort_resolved,
+  --   model, cli_version, session_name, session_id, remote_control.
+  -- effort is the level to display; effort_setting is the raw user choice
+  -- ('auto' included); effort_resolved is true when effort was auto-resolved
+  -- from the CLI (setting is 'auto' but we know what it resolves to).
   -- is_thinking is true from user submit through the final result message,
   -- i.e. the whole span in which the agent is busy (including tool calls
   -- and permission prompts).
