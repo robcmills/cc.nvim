@@ -21,6 +21,9 @@ luacov.*.out
 .DS_Store
 Thumbs.db
 
+# Large local assets (demo recordings) — host externally, don't commit
+assets/*.mov
+
 # Local config / secrets
 .env
 .env.*

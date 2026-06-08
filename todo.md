@@ -1,4 +1,8 @@
-- [x] bugfix: interrupted tool call timer never stops
+
+if :CcNew is invoked when the only buffer is my custom VerticalBuffers plugin 
+I get an error
+
+- [ ] prevent :CcNew when active buffer is a floating permission window
 - [ ] ensure sessions named in cc.nvim appear in claude code /resume and vice versa
 - [ ] add timestamps to end-of-turn token counts
 - [ ] e2e tests are taking too long
@@ -22,6 +26,7 @@
 - [ ] Add support for /compact (requires brainstorming)
 - [ ] Add CcPrompts (like skills but just the prompt, not so verbose)
 
+- [x] bugfix: interrupted tool call timer never stops
 - [x] Make resume history picker window larger
 - [x] Remove parens around tool timers (add around timeouts)
 - [x] Add auto-rename with ai generated name
