@@ -21,6 +21,15 @@ function M.fmt_duration(ms)
   return string.format('%dh %dm', hours, minutes)
 end
 
+--- Format a unix epoch (seconds) as an ISO 8601 UTC timestamp, second
+--- precision: e.g. "2026-06-08T21:31:53Z". Falls back to the current time
+--- when `t` is nil.
+---@param t integer?
+---@return string
+function M.fmt_timestamp(t)
+  return os.date('!%Y-%m-%dT%H:%M:%SZ', t)
+end
+
 --- Default formatter for the per-turn result line. Returns the inner text
 --- (without the leading/trailing "──" separators) or nil if nothing to show.
 ---@param result table
@@ -43,6 +52,10 @@ function M.default_format(result)
     table.insert(parts, Usage.fmt_compact(u.cache_creation) .. ' cache write')
   end
   if #parts == 0 then return nil end
+  -- Lead with the ISO timestamp, but only when there's real data to stamp.
+  if type(result.turn_ended_at) == 'number' then
+    table.insert(parts, 1, M.fmt_timestamp(result.turn_ended_at))
+  end
   return table.concat(parts, ' │ ')
 end
 

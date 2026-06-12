@@ -2,6 +2,23 @@
 if :CcNew is invoked when the only buffer is my custom VerticalBuffers plugin 
 I get an error
 
+
+- [ ] interrupted agent turns' time/token usage stamp should omit cost and token counts
+  example:
+```
+  Committed and pushed `9ccc2ece03` to `rob/app-modules` — 28 files, 716 insertions. Lint, prettier, and LSP diagnostics were all clean before staging; the commit includes your README and AlphaProviders edits (ToastProvider removal) along with the api move and new route-one components.
+  ── 2026-06-12T22:59:27Z │ 1m 25s │ $8.2650 │ 144 in │ 2546 out │ 1027k cache read │ 11.8k cache write ──
+
+User:
+  update pr description to account for these modular app api paradigms
+
+Agent:
+  ∴ Thinking... 
+  ── Interrupted ──
+  ── 2026-06-12T23:06:15Z │ 5s │ $8.2650 ──
+```
+
+- [ ] using skills aliases confuses autoname
 - [ ] prevent :CcNew when active buffer is a floating permission window
 - [ ] ensure sessions named in cc.nvim appear in claude code /resume and vice versa
 - [ ] add timestamps to end-of-turn token counts

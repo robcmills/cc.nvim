@@ -226,6 +226,9 @@ end
 function Session:on_result(msg)
   self.interrupt_pending = false
   self.turn_active = false
+  -- Wall-clock time the turn ended (os.time, not the monotonic uv.now used
+  -- for elapsed) so the cost line can carry an ISO 8601 timestamp.
+  msg.turn_ended_at = os.time()
   if self.turn_started_at then
     msg.turn_elapsed_ms = now_ms() - self.turn_started_at
     self.turn_started_at = nil

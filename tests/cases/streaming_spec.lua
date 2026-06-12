@@ -712,6 +712,33 @@ T['result_line']['omits cache parts when zero'] = function()
   eq(line:find('cache read', 1, true), nil)
 end
 
+T['result_line']['leads with an ISO 8601 UTC timestamp when turn_ended_at set'] = function()
+  -- 1749418313 == 2025-06-08T21:31:53Z
+  local line = render_result_line(_G.child, {}, {
+    turn_ended_at = 1749418313,
+    turn_elapsed_ms = 205000,
+    total_cost_usd = 3.4356,
+    usage = { input_tokens = 419, output_tokens = 13974 },
+  })
+  assert(line, 'expected a result line')
+  -- Timestamp leads, immediately after the "── " separator, second precision.
+  assert(
+    line:match('── 2025%-06%-08T21:31:53Z │ 3m 25s │'),
+    'expected leading ISO timestamp, got: ' .. line
+  )
+  -- No fractional seconds.
+  eq(line:find('%.%d+Z') ~= nil, false)
+end
+
+T['result_line']['omits timestamp when turn_ended_at absent'] = function()
+  local line = render_result_line(_G.child, {}, {
+    total_cost_usd = 0.01,
+    usage = { input_tokens = 5, output_tokens = 10 },
+  })
+  assert(line, 'expected a result line')
+  eq(line:find('%d%d%d%dT%d%d:%d%d:%d%dZ') ~= nil, false)
+end
+
 T['result_line']['show_turn_cost = false suppresses the line'] = function()
   local line = render_result_line(_G.child, { show_turn_cost = false }, {
     total_cost_usd = 0.01,
