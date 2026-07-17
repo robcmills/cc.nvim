@@ -2,7 +2,31 @@ local M = {}
 
 ---@class cc.Config
 local defaults = {
-  -- Claude CLI
+  -- Active provider: 'claude' (default) or 'codex'. Global for now; every
+  -- new/resumed session uses the selected provider.
+  provider = 'claude',
+
+  -- Per-provider configuration. Claude values here take precedence over the
+  -- legacy top-level keys (claude_cmd, permission_mode, model, extra_args),
+  -- which remain supported for backwards compatibility.
+  providers = {
+    claude = {
+      cmd = nil, -- nil = fall back to top-level claude_cmd
+      permission_mode = nil,
+      model = nil,
+      extra_args = nil,
+    },
+    codex = {
+      cmd = 'codex',
+      model = nil, -- nil = codex config.toml default
+      approval_policy = nil, -- nil | 'untrusted' | 'on-request' | 'never'
+      sandbox = nil, -- nil | 'read-only' | 'workspace-write' | 'danger-full-access'
+      effort = nil, -- nil | codex reasoning effort ('low'|'medium'|'high'|'xhigh')
+      extra_args = {}, -- extra args appended to `codex app-server`
+    },
+  },
+
+  -- Claude CLI (legacy top-level keys; see providers.claude above)
   claude_cmd = 'claude',
   permission_mode = nil, -- nil | 'acceptEdits' | 'auto' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan'
   model = nil, -- nil | 'sonnet' | 'opus' | model string
@@ -121,7 +145,10 @@ local defaults = {
   -- state fields: is_thinking, spinner_frame, total_tokens, input_tokens,
   --   output_tokens, context_tokens, context_window, context_percent,
   --   cost_usd, mode, branch, pr, effort, effort_setting, effort_resolved,
-  --   model, cli_version, session_name, session_id, remote_control.
+  --   model, cli_version, session_name, session_id, remote_control,
+  --   provider. Fields are provider-dependent: cost_usd stays 0 for codex,
+  --   and mode shows the codex approval-policy/sandbox pair rather than a
+  --   Claude permission mode. Branch on state.provider to customize.
   -- effort is the level to display; effort_setting is the raw user choice
   -- ('auto' included); effort_resolved is true when effort was auto-resolved
   -- from the CLI (setting is 'auto' but we know what it resolves to).

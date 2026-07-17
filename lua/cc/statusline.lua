@@ -195,7 +195,22 @@ function M.build_state(instance)
       effort_resolved = true
     end
   end
+  -- Provider of this instance (falls back to the configured provider so a
+  -- custom format can branch even before a subprocess is attached). The
+  -- CLI version probed is the active provider's binary.
+  local Providers = require('cc.providers')
+  local provider_name = (instance and instance.provider and instance.provider.name)
+    or Providers.current_name()
+  local provider_cmd = nil
+  do
+    local P = Providers.get(provider_name)
+    if P and P.options then
+      local ok, popts = pcall(P.options)
+      if ok and popts then provider_cmd = popts.cmd end
+    end
+  end
   return {
+    provider = provider_name,
     is_thinking = session and session.turn_active or false,
     spinner_frame = spinner_frame,
     turn_elapsed_ms = turn_elapsed_ms,
@@ -214,7 +229,7 @@ function M.build_state(instance)
     effort_setting = effort_setting,
     effort_resolved = effort_resolved,
     model = model,
-    cli_version = require('cc.version').get(on_update),
+    cli_version = require('cc.version').get(on_update, provider_cmd),
     session_name = instance and instance.session_name or nil,
     pending_session_name = instance and instance.pending_session_name or nil,
     session_id = instance and instance.last_session_id or nil,

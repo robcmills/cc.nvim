@@ -22,7 +22,7 @@ local BUF_NAME_DEFAULT = 'cc-nvim-output'
 
 -- Display-name overrides for tool headers. Keeps icon lookup and summary
 -- logic keyed by the real tool name while presenting a friendlier label.
-local TOOL_DISPLAY_NAMES = { Agent = 'Subagent' }
+local TOOL_DISPLAY_NAMES = { Agent = 'Subagent', FileChange = 'Edit' }
 local function display_tool_name(name)
   return TOOL_DISPLAY_NAMES[name] or name or '?'
 end
@@ -1141,6 +1141,38 @@ end
 function Output:render_task(phase, description)
   local text = string.format('    ⤷ Task %s: %s', phase, description or '')
   self:_append({ text }, { 2 }, false)
+end
+
+--- Render an agent plan snapshot (provider-neutral; e.g. codex
+--- turn/plan/updated). Each step gets a todo-style status marker. Renders
+--- as a foldable block at tool depth so repeated updates stay compact.
+---@param steps table[] each { step: string, status: 'pending'|'inProgress'|'completed' }?
+---@param explanation string?
+function Output:render_plan(steps, explanation)
+  if (not steps or #steps == 0) and (not explanation or explanation == '') then
+    return
+  end
+  self:_append({ '' }, { 1 }, false)
+  local header_lnum = self:_append({ '  ▣ Plan:' }, { '>2' }, true)
+  local lines = {}
+  if explanation and explanation ~= '' then
+    for _, l in ipairs(vim.split(explanation, '\n', { plain = true })) do
+      table.insert(lines, '    ' .. l)
+    end
+  end
+  for _, s in ipairs(steps or {}) do
+    local marker = '□'
+    if s.status == 'completed' then
+      marker = '✓'
+    elseif s.status == 'inProgress' or s.status == 'in_progress' then
+      marker = '◐'
+    end
+    table.insert(lines, '    ' .. marker .. ' ' .. tostring(s.step or s.title or ''))
+  end
+  local levels = {}
+  for i = 1, #lines do levels[i] = 2 end
+  self:_append(lines, levels, false)
+  return header_lnum
 end
 
 --- Set window-local foldlevel for the output window.

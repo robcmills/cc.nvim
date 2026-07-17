@@ -182,6 +182,27 @@ on the bottom. Type your message, then press `<CR>` in normal mode (or run
 
 ```lua
 require('cc').setup({
+  provider = 'claude',         -- 'claude' | 'codex' — CLI backing new sessions
+
+  -- Per-provider settings. providers.claude.* overrides the legacy
+  -- top-level keys below when set.
+  providers = {
+    claude = {
+      cmd = nil,               -- nil = use top-level claude_cmd
+      permission_mode = nil,
+      model = nil,
+      extra_args = nil,
+    },
+    codex = {
+      cmd = 'codex',           -- codex binary (spawned as `codex app-server`)
+      model = nil,             -- nil = codex config.toml default
+      approval_policy = nil,   -- nil | 'untrusted' | 'on-request' | 'never'
+      sandbox = nil,           -- nil | 'read-only' | 'workspace-write' | 'danger-full-access'
+      effort = nil,            -- nil | codex reasoning effort; nil defers to /effort
+      extra_args = {},         -- extra args appended to `codex app-server`
+    },
+  },
+
   claude_cmd = 'claude',       -- path to claude binary
   permission_mode = nil,       -- nil | 'acceptEdits' | 'auto' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan'
   model = nil,                 -- nil | 'sonnet' | 'opus' | model string
@@ -483,6 +504,37 @@ via `auto_rename` — flip `enabled = false` to turn it off, or rewrite
 `validate` hook gives you final say over the model's output before it
 lands.
 
+## Codex CLI support
+
+Setting `provider = 'codex'` backs sessions with OpenAI's Codex CLI instead
+of Claude Code. cc.nvim spawns `codex app-server` (the JSON-RPC interface
+Codex provides for rich clients) and translates its thread/turn/item events
+into the same buffers, folds, and statusline used for Claude.
+
+What works with Codex: prompting and streamed responses, reasoning summaries
+(rendered as thinking blocks), command execution and file changes (rendered
+as Bash/Edit tool calls with the server-supplied diff), MCP calls, web
+search, plan updates, interruption (`<C-c>` sends `turn/interrupt`),
+approvals (command and file-change approval prompts reuse the permission
+float; `a` → accept, `A` → accept for session, `d`/`q` → decline), token
+usage in the statusline and per-turn cost line, `:CcResume`/`:CcHistory`/
+`:CcContinue` (via `thread/list` + `thread/resume`), and `/rename` (via
+`thread/name/set`). `/effort` maps to Codex reasoning effort on the next
+turn (`max` maps to `xhigh`).
+
+Deliberately Claude-only: permission modes and Shift+Tab cycling (configure
+`providers.codex.approval_policy` / `sandbox` instead), `:CcPlan` plan mode,
+`:CcPeek` and its PreToolUse hook, slash-command completion, auto-rename,
+and USD cost (Codex does not report cost; the statusline hides it).
+Commands gated on these explain why instead of failing silently.
+
+Codex approval and sandbox behavior comes from your `~/.codex/config.toml`
+unless overridden per-session with `providers.codex.approval_policy` and
+`providers.codex.sandbox`. Provider selection is global: every new or
+resumed session uses the configured provider. Verified against codex-cli
+0.144.x; run `:checkhealth cc` to validate the binary, app-server support,
+and auth.
+
 ## Highlights
 
 Default highlight groups (all linked to existing groups so your colorscheme
@@ -512,6 +564,12 @@ drives them):
 Override any of them in your colorscheme or via `vim.api.nvim_set_hl`.
 
 ## Architecture
+
+Sessions are backed by a provider (`lua/cc/providers/`): `claude` (default)
+or `codex`. Providers own their subprocess, wire protocol, and approval
+encoding; the shared buffer rendering, folding, prompt, and statusline code
+never sees provider messages. The Codex provider speaks JSON-RPC to
+`codex app-server`; the rest of this section describes the Claude provider.
 
 cc.nvim spawns the `claude` CLI as a persistent bidirectional subprocess:
 

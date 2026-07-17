@@ -279,6 +279,20 @@ function M.default_tool_body(tool_name, input)
       table.insert(lines, todo_marker(t.status) .. ' ' .. tostring(text))
     end
     return lines
+  elseif tool_name == 'FileChange' and type(input.changes) == 'table' then
+    -- Codex fileChange item: changes[] of { path, kind, diff } where diff is
+    -- an app-server-supplied unified diff. Render the diff verbatim.
+    local lines = {}
+    for _, ch in ipairs(input.changes) do
+      local kind = type(ch.kind) == 'table' and ch.kind.type or tostring(ch.kind or 'update')
+      table.insert(lines, string.format('%s (%s)', tostring(ch.path or '?'), kind))
+      if type(ch.diff) == 'string' and ch.diff ~= '' then
+        for _, dl in ipairs(vim.split(ch.diff, '\n', { plain = true })) do
+          table.insert(lines, '  ' .. dl)
+        end
+      end
+    end
+    return lines
   end
   -- `description` and other fields already shown in the fold summary header.
   local read_skip = { file_path = true, offset = true, limit = true }
@@ -352,6 +366,12 @@ function M.summarize_tool_input(tool_name, input)
     return path
   elseif tool_name == 'Edit' or tool_name == 'Write' or tool_name == 'NotebookEdit' then
     return input.file_path or ''
+  elseif tool_name == 'FileChange' then
+    local paths = {}
+    for _, ch in ipairs(input.changes or {}) do
+      if ch.path then table.insert(paths, tostring(ch.path)) end
+    end
+    return table.concat(paths, ', ')
   elseif tool_name == 'Glob' then
     return input.pattern or ''
   elseif tool_name == 'Grep' then

@@ -1,13 +1,13 @@
--- cc.nvim: Claude Code Neovim plugin.
--- Spawns the `claude` CLI and renders its NDJSON stream into buffers.
--- Supports multiple simultaneous sessions, each with its own buffers.
+-- cc.nvim: agent CLI chat for Neovim.
+-- Spawns the configured provider CLI (`claude` stream-json or `codex
+-- app-server`) and renders its stream into buffers. Supports multiple
+-- simultaneous sessions, each with its own buffers.
 
 local Config = require('cc.config')
-local Process = require('cc.process')
 local Session = require('cc.session')
 local Output = require('cc.output')
 local Prompt = require('cc.prompt')
-local Router = require('cc.router')
+local Providers = require('cc.providers')
 
 local M = {}
 
@@ -19,10 +19,10 @@ M.VERSION = '0.6.0'
 
 ---@class cc.Instance
 ---@field session cc.Session?
----@field process cc.Process?
+---@field provider table? provider instance (cc.ClaudeProvider | cc.CodexProvider)
+---@field process table? transport surface (is_alive/close/start_dump/stop_dump); the cc.Process for claude, the provider itself for codex
 ---@field output cc.Output?
 ---@field prompt cc.Prompt?
----@field router cc.Router?
 ---@field output_winid integer?
 ---@field prompt_winid integer?
 ---@field last_session_id string?
@@ -325,10 +325,10 @@ local function create_instance(opts)
 
   local inst = {
     session = Session.new(),
+    provider = nil,
     process = nil,
     output = nil,
     prompt = nil,
-    router = nil,
     output_winid = nil,
     prompt_winid = nil,
     last_session_id = nil,
@@ -531,7 +531,63 @@ local function close_instance(inst)
   inst.session = nil
   inst.output = nil
   inst.prompt = nil
-  inst.router = nil
+  inst.provider = nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Provider wiring
+-- ---------------------------------------------------------------------------
+
+--- Build, wire, and spawn the configured provider for an instance. Shared
+--- by open, new_session, and resume so lifecycle handling lives in one place.
+---@param inst cc.Instance
+---@param opts { resume_id: string?, permission_mode: string? }?
+---@return boolean ok
+local function attach_provider(inst, opts)
+  opts = opts or {}
+  local P, perr = Providers.current()
+  if not P then
+    vim.notify('cc.nvim: ' .. tostring(perr), vim.log.levels.ERROR)
+    return false
+  end
+  local provider = P.attach({
+    instance = inst,
+    session = inst.session,
+    output = inst.output,
+    resume_id = opts.resume_id,
+    permission_mode = opts.permission_mode,
+    on_session_id = function(id)
+      inst.last_session_id = id
+      require('cc.statusline').refresh(inst)
+    end,
+    on_exit = function(code)
+      if code and code ~= 0 then
+        vim.notify('cc.nvim: ' .. P.name .. ' exited with code ' .. code, vim.log.levels.WARN)
+      end
+      if inst.output then
+        inst.output:render_notice('Session ended')
+      end
+      if inst.session then
+        inst.session.is_streaming = false
+        inst.session.turn_active = false
+      end
+      require('cc.statusline_spinner').stop(inst)
+      require('cc.statusline').refresh(inst)
+    end,
+  })
+  inst.provider = provider
+  -- Transport surface for callers that talk to inst.process directly
+  -- (teardown, :CcDumpNdjson, is_alive checks, VimLeavePre kill).
+  inst.process = provider.process or provider
+
+  local ok, err = pcall(function() provider:spawn() end)
+  if not ok then
+    vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.ERROR)
+    inst.provider = nil
+    inst.process = nil
+    return false
+  end
+  return true
 end
 
 -- ---------------------------------------------------------------------------
@@ -551,70 +607,17 @@ function M.open(opts)
 
   local inst = create_instance()
   require('cc.splash').render(inst.output.bufnr)
-
-  -- Seed the session's permission_mode so the statusline reflects the
-  -- effective mode immediately, before the CLI's init message arrives.
-  -- Only set when we have an explicit value — when neither opts nor Config
-  -- specify one, we don't pass --permission-mode to the CLI, so its own
-  -- configured default takes over and we can't predict it. Wait for init
-  -- in that case rather than show a wrong mode (e.g. 'default') and have
-  -- it flip to the CLI's actual default ('auto', 'plan', …) seconds later.
-  inst.session.permission_mode =
-    opts.permission_mode or Config.options.permission_mode
-
-  inst.router = Router.new({
-    session = inst.session,
-    output = inst.output,
-    instance = inst,
-    on_session_id = function(id)
-      inst.last_session_id = id
-      require('cc.statusline').refresh(inst)
-    end,
-  })
-
-  inst.process = Process.new({
-    claude_cmd = Config.options.claude_cmd,
-    cwd = vim.fn.getcwd(),
-    session_id = nil,
-    permission_mode = opts.permission_mode or Config.options.permission_mode,
-    model = Config.options.model,
-    extra_args = Config.options.extra_args,
-    on_message = function(msg) inst.router:dispatch(msg) end,
-    on_stderr = function(data)
-      vim.notify('cc.nvim [stderr]: ' .. data, vim.log.levels.WARN)
-    end,
-    on_exit = function(code, signal)
-      if code ~= 0 then
-        vim.notify('cc.nvim: claude exited with code ' .. code, vim.log.levels.WARN)
-      end
-      if inst.output then
-        inst.output:render_notice('Session ended')
-      end
-      if inst.session then
-        inst.session.is_streaming = false
-        inst.session.turn_active = false
-      end
-      require('cc.statusline_spinner').stop(inst)
-      require('cc.statusline').refresh(inst)
-    end,
-  })
-
-  inst.router:set_process(inst.process)
-
-  local ok, err = pcall(function() inst.process:spawn() end)
-  if not ok then
-    vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.ERROR)
-    inst.process = nil
-  elseif not inst.session.permission_mode then
-    -- No explicit mode from opts/Config — ask the CLI for its effective
-    -- settings so the statusline can show the resolved defaultMode before
-    -- the first prompt triggers an init message.
-    inst.process:send_control_get_settings()
-  end
+  attach_provider(inst, { permission_mode = opts.permission_mode })
 end
 
---- Public: open in plan mode.
+--- Public: open in plan mode (Claude-only).
 function M.plan()
+  local P = Providers.current()
+  if P and not P.capabilities.plan_mode then
+    vim.notify('cc.nvim: plan mode is not supported by the ' .. P.name .. ' provider',
+      vim.log.levels.WARN)
+    return
+  end
   M.open({ permission_mode = 'plan' })
 end
 
@@ -637,57 +640,7 @@ function M.new_session()
     reuse_output_winid = output_winid,
   })
   require('cc.splash').render(new_inst.output.bufnr)
-
-  -- Seed permission_mode for the same reason as M.open: keep the statusline
-  -- reflective of the effective mode before the CLI's init message lands.
-  new_inst.session.permission_mode = Config.options.permission_mode
-
-  new_inst.router = Router.new({
-    session = new_inst.session,
-    output = new_inst.output,
-    instance = new_inst,
-    on_session_id = function(id)
-      new_inst.last_session_id = id
-      require('cc.statusline').refresh(new_inst)
-    end,
-  })
-
-  new_inst.process = Process.new({
-    claude_cmd = Config.options.claude_cmd,
-    cwd = vim.fn.getcwd(),
-    session_id = nil,
-    permission_mode = Config.options.permission_mode,
-    model = Config.options.model,
-    extra_args = Config.options.extra_args,
-    on_message = function(msg) new_inst.router:dispatch(msg) end,
-    on_stderr = function(data)
-      vim.notify('cc.nvim [stderr]: ' .. data, vim.log.levels.WARN)
-    end,
-    on_exit = function(code)
-      if code ~= 0 then
-        vim.notify('cc.nvim: claude exited with code ' .. code, vim.log.levels.WARN)
-      end
-      if new_inst.output then
-        new_inst.output:render_notice('Session ended')
-      end
-      if new_inst.session then
-        new_inst.session.is_streaming = false
-        new_inst.session.turn_active = false
-      end
-      require('cc.statusline_spinner').stop(new_inst)
-      require('cc.statusline').refresh(new_inst)
-    end,
-  })
-
-  new_inst.router:set_process(new_inst.process)
-
-  local ok, err = pcall(function() new_inst.process:spawn() end)
-  if not ok then
-    vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.ERROR)
-    new_inst.process = nil
-  elseif not new_inst.session.permission_mode then
-    new_inst.process:send_control_get_settings()
-  end
+  attach_provider(new_inst)
 end
 
 -- Placeholder shown in the prompt buffer of a fixture-loaded session, also
@@ -766,7 +719,7 @@ function M.load_fixture(name_or_path)
       inst.output:render_historical_record(rec)
     end
   else
-    inst.router = Router.new({
+    inst.router = require('cc.router').new({
       session = inst.session,
       output = inst.output,
       instance = inst,
@@ -786,7 +739,8 @@ function M.load_fixture(name_or_path)
   require('cc.statusline').refresh(inst)
 end
 
---- Public: resume a specific session by id.
+--- Public: resume a specific session by id (Claude session id or Codex
+--- thread id, depending on the configured provider).
 ---@param session_id string
 function M.resume(session_id)
   if not session_id or session_id == '' then
@@ -794,119 +748,58 @@ function M.resume(session_id)
     return
   end
 
+  local P, perr = Providers.current()
+  if not P then
+    vim.notify('cc.nvim: ' .. tostring(perr), vim.log.levels.ERROR)
+    return
+  end
+
   local inst = create_instance()
-
-  -- Pre-render transcript so the UI shows past conversation.
-  local history = require('cc.history')
-  local entries = history.list_for_cwd()
-  local path
-  for _, e in ipairs(entries) do
-    if e.session_id == session_id then path = e.path; break end
+  -- Pre-render transcript so the UI shows past conversation. Claude reads
+  -- the local JSONL; Codex replays history from the thread/resume response
+  -- once the app-server connects.
+  if P.prerender_resume then
+    P.prerender_resume(inst, session_id)
   end
-  if not path then
-    for _, e in ipairs(history.list_all()) do
-      if e.session_id == session_id then path = e.path; break end
-    end
-  end
-
-  if path then
-    local config = Config.options
-    local meta = history.read_session_meta(path)
-    inst.session.input_tokens = meta.input_tokens
-    inst.session.output_tokens = meta.output_tokens
-    inst.session.cache_creation_input_tokens = meta.cache_creation_input_tokens
-    inst.session.cache_read_input_tokens = meta.cache_read_input_tokens
-    inst.session.context_tokens = meta.context_tokens
-    inst.session.cost_usd = meta.cost_usd
-    inst.session.model = meta.model or inst.session.model
-    inst.session.permission_mode =
-      meta.permission_mode or config.permission_mode or inst.session.permission_mode
-    inst.session_name = meta.custom_title or meta.ai_title or inst.session_name
-    if inst.session_name and inst.session_name ~= '' then
-      M._apply_session_buf_names(inst, inst.session_name)
-    end
-    local records = history.read_transcript(path)
-    local max = config.history_max_records or 200
-    local start_idx = 1
-    if #records > max then
-      start_idx = #records - max + 1
-      inst.output:render_notice(string.format(
-        'earlier history hidden (%d records); showing last %d', start_idx - 1, max))
-    end
-    for i = start_idx, #records do
-      inst.output:render_historical_record(records[i])
-    end
-    inst.output:render_notice('resumed ' .. session_id:sub(1, 8))
-    require('cc.statusline').refresh(inst)
-  else
-    inst.output:render_notice('resuming ' .. session_id:sub(1, 8) .. ' (no local transcript found)')
-    inst.session.permission_mode = Config.options.permission_mode
-  end
-
-  inst.router = Router.new({
-    session = inst.session,
-    output = inst.output,
-    instance = inst,
-    on_session_id = function(id)
-      inst.last_session_id = id
-      require('cc.statusline').refresh(inst)
-    end,
-  })
-  inst.process = Process.new({
-    claude_cmd = Config.options.claude_cmd,
-    cwd = vim.fn.getcwd(),
-    session_id = session_id,
-    permission_mode = Config.options.permission_mode,
-    model = Config.options.model,
-    extra_args = Config.options.extra_args,
-    on_message = function(msg) inst.router:dispatch(msg) end,
-    on_stderr = function(data) vim.notify('cc.nvim [stderr]: ' .. data, vim.log.levels.WARN) end,
-    on_exit = function(code)
-      if code ~= 0 then
-        vim.notify('cc.nvim: claude exited with code ' .. code, vim.log.levels.WARN)
-      end
-      if inst.output then inst.output:render_notice('Session ended') end
-      if inst.session then
-        inst.session.is_streaming = false
-        inst.session.turn_active = false
-      end
-      require('cc.statusline_spinner').stop(inst)
-      require('cc.statusline').refresh(inst)
-    end,
-  })
-  inst.router:set_process(inst.process)
   inst.last_session_id = session_id
-  local ok, err = pcall(function() inst.process:spawn() end)
-  if not ok then
-    vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.ERROR)
-    inst.process = nil
-  end
+  attach_provider(inst, { resume_id = session_id })
 end
 
 --- Public: resume most recent session for the current cwd.
 function M.continue_last()
-  local entries = require('cc.history').list_for_cwd()
-  if #entries == 0 then
-    vim.notify('cc.nvim: no prior sessions for this cwd', vim.log.levels.INFO)
+  local P, perr = Providers.current()
+  if not P then
+    vim.notify('cc.nvim: ' .. tostring(perr), vim.log.levels.ERROR)
     return
   end
-  M.resume(entries[1].session_id)
+  P.list_history({ all = false }, function(entries)
+    if #entries == 0 then
+      vim.notify('cc.nvim: no prior sessions for this cwd', vim.log.levels.INFO)
+      return
+    end
+    M.resume(entries[1].session_id)
+  end)
 end
 
 --- Public: pick a session to resume.
 ---@param all_projects boolean? if true, include sessions from other cwds
 function M.history(all_projects)
-  local history = require('cc.history')
-  local entries = all_projects and history.list_all() or history.list_for_cwd()
-  if #entries == 0 then
-    vim.notify('cc.nvim: no sessions found', vim.log.levels.INFO)
+  local P, perr = Providers.current()
+  if not P then
+    vim.notify('cc.nvim: ' .. tostring(perr), vim.log.levels.ERROR)
     return
   end
-  require('cc.picker').select(entries, {
-    prompt = all_projects and 'Resume session (all projects)' or 'Resume session',
-    format_item = function(e) return history.format_entry(e, all_projects or false) end,
-  }, function(choice)
-    if choice then M.resume(choice.session_id) end
+  P.list_history({ all = all_projects or false }, function(entries)
+    if #entries == 0 then
+      vim.notify('cc.nvim: no sessions found', vim.log.levels.INFO)
+      return
+    end
+    require('cc.picker').select(entries, {
+      prompt = all_projects and 'Resume session (all projects)' or 'Resume session',
+      format_item = function(e) return P.format_history_entry(e, all_projects or false) end,
+    }, function(choice)
+      if choice then M.resume(choice.session_id) end
+    end)
   end)
 end
 
@@ -978,8 +871,11 @@ function M.submit()
   end
 
   -- First-turn auto-rename (best-effort, before turns is incremented).
+  -- Skipped for providers that don't support it (codex threads get named
+  -- via /rename → thread/name/set instead).
+  local caps = inst.provider and inst.provider.capabilities or {}
   local AutoRename = require('cc.auto_rename')
-  if AutoRename.should_run(inst) then
+  if caps.auto_rename ~= false and AutoRename.should_run(inst) then
     AutoRename.start(inst, text)
   end
 
@@ -993,12 +889,18 @@ function M.submit()
   require('cc.statusline_spinner').sync(inst)
   require('cc.statusline').refresh(inst)
 
-  inst.process:write({
-    type = 'user',
-    session_id = inst.last_session_id or '',
-    message = { role = 'user', content = text },
-    parent_tool_use_id = vim.NIL,
-  })
+  if inst.provider then
+    inst.provider:send(text)
+  else
+    -- Test stubs register instances with a bare process; keep the legacy
+    -- direct-write path working for them.
+    inst.process:write({
+      type = 'user',
+      session_id = inst.last_session_id or '',
+      message = { role = 'user', content = text },
+      parent_tool_use_id = vim.NIL,
+    })
+  end
 end
 
 --- Client-side slash command dispatch. Returns true if the text was handled
@@ -1044,10 +946,13 @@ function M._handle_effort(inst, args)
     return
   end
   Effort.set(arg)
-  vim.notify(
-    'cc.nvim: effort set to ' .. arg ..
-    ' (applies to next claude spawn — :CcClear or restart to take effect)',
-    vim.log.levels.INFO)
+  local scope_note = ' (applies to next claude spawn — :CcClear or restart to take effect)'
+  if inst and inst.provider and inst.provider.name == 'codex' then
+    scope_note = ' (applies from the next codex turn)'
+  elseif Providers.current_name() == 'codex' then
+    scope_note = ' (applies from the next codex turn)'
+  end
+  vim.notify('cc.nvim: effort set to ' .. arg .. scope_note, vim.log.levels.INFO)
   if inst then
     require('cc.statusline').refresh(inst)
   end
@@ -1079,6 +984,28 @@ local function is_valid_permission_mode(mode)
   return false
 end
 
+--- True when the active context (live instance, else configured provider)
+--- supports Claude permission modes. Notifies with guidance when it doesn't.
+---@param inst cc.Instance?
+---@return boolean
+local function permission_modes_supported(inst)
+  local caps
+  if inst and inst.provider then
+    caps = inst.provider.capabilities
+  else
+    local P = Providers.current()
+    caps = P and P.capabilities
+  end
+  if caps and caps.permission_modes == false then
+    vim.notify(
+      'cc.nvim: permission modes are Claude-specific. For codex, configure '
+      .. 'providers.codex.approval_policy / providers.codex.sandbox instead.',
+      vim.log.levels.WARN)
+    return false
+  end
+  return true
+end
+
 --- Apply a permission_mode choice: if an active session is in the current
 --- buffer, send a set_permission_mode control_request so the live CLI
 --- switches without restart. Otherwise persist on Config.options so the
@@ -1086,8 +1013,14 @@ end
 ---@param mode string
 local function apply_permission_mode(mode)
   local inst = get_current_instance()
+  if not permission_modes_supported(inst) then return end
   if inst and inst.process and inst.process:is_alive() then
-    local request_id = inst.process:send_control_set_permission_mode(mode)
+    local request_id
+    if inst.provider and inst.provider.set_permission_mode then
+      request_id = inst.provider:set_permission_mode(mode)
+    elseif inst.process.send_control_set_permission_mode then
+      request_id = inst.process:send_control_set_permission_mode(mode)
+    end
     if request_id then
       vim.notify('cc.nvim: permission_mode → ' .. mode, vim.log.levels.INFO)
     end
@@ -1230,6 +1163,38 @@ function M._handle_rename(inst, args, opts)
   end
   -- Any prior transient placeholder is being replaced by a real rename.
   inst.transient_rename_active = nil
+
+  -- Provider-native rename (codex: thread/name/set). The provider owns
+  -- persistence; no local JSONL is written and no cwd-wide dedupe applies.
+  if inst.provider and inst.provider.rename then
+    local function apply_locally()
+      inst.session_name = name
+      inst.pending_session_name = nil
+      M._apply_session_buf_names(inst, name)
+      require('cc.statusline').refresh(inst)
+    end
+    local sent = inst.provider:rename(name, function(rok, rerr)
+      if not rok and not opts.silent then
+        vim.notify('cc.nvim /rename: ' .. tostring(rerr or 'rename failed'), vim.log.levels.ERROR)
+      end
+    end)
+    if sent then
+      apply_locally()
+      if not opts.silent then
+        vim.notify('cc.nvim: session renamed to "' .. name .. '"', vim.log.levels.INFO)
+      end
+    else
+      -- Thread not started yet: queue and flush once the session begins.
+      inst.pending_session_name = name
+      M._apply_session_buf_names(inst, name)
+      require('cc.statusline').refresh(inst)
+      if not opts.silent then
+        vim.notify('cc.nvim: rename queued — will persist when session begins', vim.log.levels.INFO)
+      end
+    end
+    return
+  end
+
   -- Resolve a unique title before persisting or naming the buffer. Without
   -- this, two sessions sharing a name collide both in the picker and in the
   -- `cc-<title>` buffer namespace (E95 from nvim_buf_set_name).
@@ -1273,6 +1238,17 @@ function M._flush_pending_rename(inst)
   if inst and inst.transient_rename_active then return end
   local name = inst and inst.pending_session_name
   if not name or name == '' then return end
+  -- Provider-native rename (codex): flush through thread/name/set.
+  if inst.provider and inst.provider.rename then
+    local sent = inst.provider:rename(name, function() end)
+    if sent then
+      inst.session_name = name
+      inst.pending_session_name = nil
+      M._apply_session_buf_names(inst, name)
+      require('cc.statusline').refresh(inst)
+    end
+    return
+  end
   local session_id = inst.last_session_id
   if not session_id or session_id == '' then return end
   local history = require('cc.history')
@@ -1308,15 +1284,20 @@ function M.rename(name)
 end
 
 --- Public: interrupt the current turn without killing the CLI process.
---- Sends a stream-json control_request; the "Interrupted" notice is rendered
---- once the CLI acknowledges with a control_response (see router).
+--- Routed through the provider (claude: interrupt control_request; codex:
+--- turn/interrupt). The "Interrupted" notice renders on acknowledgement.
 function M.stop()
   local inst = get_current_instance()
   if not inst or not inst.process or not inst.process:is_alive() then return end
   if not inst.session or not inst.session.turn_active then return end
   if inst.session.interrupt_pending then return end
-  local request_id = inst.process:send_control_interrupt()
-  if request_id then
+  local sent
+  if inst.provider then
+    sent = inst.provider:interrupt()
+  else
+    sent = inst.process.send_control_interrupt and inst.process:send_control_interrupt()
+  end
+  if sent then
     inst.session.interrupt_pending = true
     require('cc.statusline').refresh(inst)
   end

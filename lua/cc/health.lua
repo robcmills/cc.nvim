@@ -11,20 +11,8 @@ local function version_ge(v, min)
   return vb >= mb
 end
 
-function M.check()
-  local h = vim.health or require('health')
-  h.start('cc.nvim')
-
-  -- Neovim version
-  local nvim_version = vim.fn.has('nvim-0.10') == 1 and '0.10+' or 'older'
-  if vim.fn.has('nvim-0.10') == 1 then
-    h.ok('Neovim ' .. nvim_version .. ' (inline virt_text supported)')
-  else
-    h.error('Neovim 0.10+ required for inline virt_text carets')
-  end
-
-  -- claude binary
-  local cmd = require('cc.config').options.claude_cmd
+local function check_claude(h)
+  local cmd = require('cc.providers.claude').options().cmd
   local exe = vim.fn.exepath(cmd)
   if exe == '' then
     h.error('`' .. cmd .. '` not found in PATH')
@@ -45,13 +33,6 @@ function M.check()
     h.warn('could not parse claude --version output: ' .. version_out:sub(1, 60))
   end
 
-  -- libuv availability
-  if vim.uv or vim.loop then
-    h.ok('libuv: available (spawn + pipes work)')
-  else
-    h.error('libuv not available')
-  end
-
   -- Optional: auth status (best-effort — claude's output format isn't stable)
   h.info('Checking claude auth status...')
   local auth = vim.fn.system({ cmd, 'auth', 'status' })
@@ -59,6 +40,89 @@ function M.check()
     h.ok('claude auth: ok')
   else
     h.warn('claude auth check failed:\n' .. auth:sub(1, 200))
+  end
+end
+
+local function check_codex(h)
+  local codex = require('cc.providers.codex')
+  local opts = codex.options()
+  local exe = vim.fn.exepath(opts.cmd)
+  if exe == '' then
+    h.error('`' .. opts.cmd .. '` not found in PATH')
+    return
+  end
+  h.ok('codex binary: ' .. exe)
+
+  local version_out = vim.fn.system({ opts.cmd, '--version' })
+  local version = version_out:match('(%d+%.%d+%.%d+)')
+  if version then
+    h.ok('codex version: ' .. version)
+  else
+    h.warn('could not parse codex --version output: ' .. version_out:sub(1, 60))
+  end
+
+  -- app-server subcommand availability (cc.nvim's codex transport).
+  vim.fn.system({ opts.cmd, 'app-server', '--help' })
+  if vim.v.shell_error == 0 then
+    h.ok('codex app-server: available')
+  else
+    h.error('`' .. opts.cmd .. ' app-server` not available — upgrade codex '
+      .. '(cc.nvim was verified against codex-cli 0.144.x)')
+  end
+
+  -- Validate provider-specific option values.
+  local POLICIES = { untrusted = true, ['on-request'] = true, never = true }
+  if opts.approval_policy and not POLICIES[opts.approval_policy] then
+    h.error('providers.codex.approval_policy "' .. tostring(opts.approval_policy)
+      .. '" invalid (expected untrusted | on-request | never)')
+  end
+  local SANDBOXES = { ['read-only'] = true, ['workspace-write'] = true, ['danger-full-access'] = true }
+  if opts.sandbox and not SANDBOXES[opts.sandbox] then
+    h.error('providers.codex.sandbox "' .. tostring(opts.sandbox)
+      .. '" invalid (expected read-only | workspace-write | danger-full-access)')
+  end
+
+  h.info('Checking codex auth status...')
+  local auth = vim.fn.system({ opts.cmd, 'login', 'status' })
+  if vim.v.shell_error == 0 then
+    h.ok('codex auth: ' .. (auth:gsub('%s+$', '')))
+  else
+    h.warn('codex auth check failed:\n' .. auth:sub(1, 200))
+  end
+end
+
+function M.check()
+  local h = vim.health or require('health')
+  h.start('cc.nvim')
+
+  -- Neovim version
+  local nvim_version = vim.fn.has('nvim-0.10') == 1 and '0.10+' or 'older'
+  if vim.fn.has('nvim-0.10') == 1 then
+    h.ok('Neovim ' .. nvim_version .. ' (inline virt_text supported)')
+  else
+    h.error('Neovim 0.10+ required for inline virt_text carets')
+  end
+
+  -- libuv availability
+  if vim.uv or vim.loop then
+    h.ok('libuv: available (spawn + pipes work)')
+  else
+    h.error('libuv not available')
+  end
+
+  -- Provider selection + provider-specific checks.
+  local Providers = require('cc.providers')
+  local provider_name = Providers.current_name()
+  local P, perr = Providers.current()
+  if not P then
+    h.error(tostring(perr))
+    return
+  end
+  h.ok('provider: ' .. provider_name)
+  if provider_name == 'codex' then
+    check_codex(h)
+  else
+    check_claude(h)
   end
 
   -- ---------------------------------------------------------------------------

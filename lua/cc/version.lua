@@ -1,32 +1,34 @@
--- Cached probes of claude CLI versions:
---   M.get()        — installed version (from `claude --version`)
---   M.get_latest() — latest version on the npm registry
+-- Cached probes of provider CLI versions:
+--   M.get(cb, cmd) — installed version (from `<cmd> --version`); cmd
+--                    defaults to the configured claude binary
+--   M.get_latest() — latest claude-code version on the npm registry
+--                    (Claude-specific; never probed for other providers)
 
 local M = {}
 
-local cached ---@type string?
-local probed = false
+---@type table<string, { probed: boolean, value: string? }>
+local by_cmd = {}
 
 local cached_latest ---@type string?
 local probed_latest = false
 local probing_latest = false
 local latest_callbacks = {} ---@type function[]
 
+---@param cmd string
 ---@param on_done function?
-local function probe(on_done)
-  local cmd = require('cc.config').options.claude_cmd
+local function probe(cmd, on_done)
+  local entry = by_cmd[cmd]
   if vim.fn.executable(cmd) ~= 1 then
-    cached = nil
-    probed = true
+    entry.probed = true
     return
   end
   vim.system(
     { cmd, '--version' },
     { text = true },
     vim.schedule_wrap(function(res)
-      probed = true
+      entry.probed = true
       if res and res.code == 0 and res.stdout then
-        cached = res.stdout:match('(%d+%.%d+%.%d+)')
+        entry.value = res.stdout:match('(%d+%.%d+%.%d+)')
       end
       if on_done then pcall(on_done) end
     end)
@@ -60,12 +62,17 @@ local function probe_latest()
 end
 
 ---@param on_update function? called if the background probe populates the value
+---@param cmd string? CLI binary to probe; defaults to the configured claude cmd
 ---@return string?
-function M.get(on_update)
-  if not probed then
-    probe(on_update)
+function M.get(on_update, cmd)
+  cmd = cmd or require('cc.config').options.claude_cmd
+  local entry = by_cmd[cmd]
+  if not entry then
+    entry = { probed = false, value = nil }
+    by_cmd[cmd] = entry
+    probe(cmd, on_update)
   end
-  return cached
+  return entry.value
 end
 
 --- Latest version of @anthropic-ai/claude-code on the npm registry.
@@ -82,8 +89,7 @@ end
 
 --- For tests.
 function M._reset()
-  cached = nil
-  probed = false
+  by_cmd = {}
   cached_latest = nil
   probed_latest = false
   probing_latest = false
