@@ -2,7 +2,8 @@
 
 A Neovim-native coding agent plugin built on the Claude Code CLI. Replaces the
 Claude Code TUI with two Neovim buffers: an editable markdown prompt and a
-foldable, progressive-disclosure output buffer.
+foldable, progressive-disclosure output buffer. The same UI can also drive
+OpenAI's Codex CLI — see [Codex CLI support](#codex-cli-support).
 
 <img src="assets/demo-screenshot.png" alt="cc.nvim screenshot1" width="800">
 <img src="assets/cc-nvim.png" alt="cc.nvim screenshot2" width="800">
@@ -102,6 +103,9 @@ full list.
 
 - Neovim **0.10+** (required for inline `virt_text` carets)
 - `claude` CLI in `$PATH`, version **2.1+** (for `--include-partial-messages`)
+- Optional: `codex` CLI in `$PATH` if you set `provider = 'codex'` — must
+  support the `codex app-server` subcommand; verified against **0.144.x**
+  (see [Codex CLI support](#codex-cli-support))
 - Optional: [nvim-cmp](https://github.com/hrsh7th/nvim-cmp) for richer slash
   command completion (an omnifunc fallback ships for users without it)
 
@@ -643,7 +647,10 @@ tests/
 │   ├── statusline_spinner_spec.lua  # spinner timer lifecycle and frame resolution
 │   ├── streaming_spec.lua           # streaming-only types: hooks, tool_progress, api_retry, etc.
 │   ├── history_resume_spec.lua      # :CcResume transcript re-rendering
-│   └── process_integration_spec.lua # full pipeline via fake_claude.sh subprocess
+│   ├── process_integration_spec.lua # full pipeline via fake_claude.sh subprocess
+│   ├── provider_spec.lua            # provider interface contract + selection
+│   ├── codex_provider_spec.lua      # codex JSON-RPC protocol (stubbed transport)
+│   └── codex_integration_spec.lua   # codex pipeline via fake_codex.sh subprocess
 ├── e2e/                                    # end-to-end specs (RPC-driven child nvim)
 │   ├── harness.lua                  # spawn(), wait_for(), viewport(), sample_during_stream()
 │   └── cases/
@@ -654,10 +661,12 @@ tests/
 │       └── captured_replay_spec.lua     # generic replay (gated by CC_REPLAY_FIXTURE env)
 ├── fixtures/
 │   ├── jsonl/              # 18 JSONL fixtures (resume path — curated from real sessions)
-│   ├── ndjson/             # 15 NDJSON fixtures (streaming path — captured via :CcDumpNdjson)
+│   ├── ndjson/             # 18 NDJSON fixtures (streaming path — captured via :CcDumpNdjson)
+│   ├── codex/              # codex app-server JSON-RPC captures (from a live session)
 │   ├── fake_claude.sh      # bash replay script — emits an entire fixture in one go
 │   ├── fake_claude_slow.sh # variant with CC_TEST_DELAY_MS between lines (real streaming timing)
-│   └── fake_claude.lua     # nvim-l replay script (alternative)
+│   ├── fake_claude.lua     # nvim-l replay script (alternative)
+│   └── fake_codex.sh       # canned codex app-server JSON-RPC responder (+ fake_codex.lua)
 ├── CLAUDE_CODE_FEATURES.md # raw Claude Code feature set audit
 └── FEATURE_AUDIT.md        # cross-reference: CC features × cc.nvim coverage × test tiers
 ```
@@ -817,13 +826,13 @@ zX', true)` — see the comment in `fold_flash_spec.lua` for context.
 
 ## Troubleshooting
 
-Run `:checkhealth cc`. It verifies:
+Run `:checkhealth cc`. It verifies Neovim ≥ 0.10, libuv, and the configured
+provider, then runs provider-specific checks:
 
-- Neovim ≥ 0.10
-- `claude` binary is in `$PATH`
-- `claude` version ≥ 2.1
-- libuv is available
-- `claude auth status` succeeds
+- **claude:** binary in `$PATH`, version ≥ 2.1, `claude auth status` succeeds
+- **codex:** binary in `$PATH`, `codex app-server` subcommand available,
+  `providers.codex.approval_policy` / `sandbox` values are valid,
+  `codex login status` succeeds
 
 If slash completion doesn't trigger: ensure nvim-cmp is loaded before cc.nvim
 sources its `plugin/cc.lua`, or fall back to `<C-x><C-o>` manually.

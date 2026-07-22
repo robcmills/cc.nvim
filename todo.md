@@ -1,9 +1,10 @@
+- [ ] codex support
+  + [ ] fix permission mode
+  + [ ] fix autoname
 
-if :CcNew is invoked when the only buffer is my custom VerticalBuffers plugin 
-I get an error
+- [ ] fix when :CcNew is invoked and the only buffer is my custom VerticalBuffers plugin
 
-
-- [ ] interrupted agent turns' time/token usage stamp should omit cost and token counts
+- [ ] interrupted agent turns' time/token usage stamp should omit cost and token counts (because it is inaccurate)
   example:
 ```
   Committed and pushed `9ccc2ece03` to `rob/app-modules` — 28 files, 716 insertions. Lint, prettier, and LSP diagnostics were all clean before staging; the commit includes your README and AlphaProviders edits (ToastProvider removal) along with the api move and new route-one components.
@@ -18,20 +19,17 @@ Agent:
   ── 2026-06-12T23:06:15Z │ 5s │ $8.2650 ──
 ```
 
-- [ ] using skills aliases confuses autoname
+- [ ] using skills aliases confuses autoname (wd)
 - [ ] prevent :CcNew when active buffer is a floating permission window
 - [ ] ensure sessions named in cc.nvim appear in claude code /resume and vice versa
-- [ ] add timestamps to end-of-turn token counts
 - [ ] e2e tests are taking too long
 - [ ] What happens when a permission request occurs in cc.nvim instance A, but instance B is active
 - [ ] Better handling and exposure of error messages (401 logged out)
 - [ ] Implement /login /logout support
 - [ ] Improve /command completions (add descriptions, etc.)
 - [ ] Add configurable markdown highlighting for Subagent prompts
-- [ ] Add session timing info
 - [ ] Explore potentially using foldcolumn
 - [ ] Unsloppify - identify most complex/fragile code and simplify (requires brainstorming)
-- [ ] Add config option to turn off tool icons
 - [ ] Ensure system prompt additions are not hard-coded (instead user config)
 - [ ] Add configurable themes support for customizing highlight groups, icons, etc.
 - [ ] Add a "theme viewer/switcher" to show visually mock examples of what each type of tool looks like, and user can interactively switch themes and see what it looks like live
@@ -43,6 +41,8 @@ Agent:
 - [ ] Add support for /compact (requires brainstorming)
 - [ ] Add CcPrompts (like skills but just the prompt, not so verbose)
 
+- [x] Add session timing info
+- [x] add timestamps to end-of-turn token counts
 - [x] bugfix: interrupted tool call timer never stops
 - [x] Make resume history picker window larger
 - [x] Remove parens around tool timers (add around timeouts)
@@ -110,4 +110,3 @@ Agent:
   + [x] completed task icons are green
   + [x] in progress task icons are yellow
   + [x] incomplete task icons are gray
-

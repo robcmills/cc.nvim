@@ -10,8 +10,9 @@ it on yours.
 
 - **File an issue.** Bugs, crashes, weird rendering, UX papercuts,
   feature requests. Include your Neovim version (`nvim --version`), your
-  `claude` CLI version (`claude --version`), OS, and — ideally — a
-  reproduction (a minimal prompt, a fixture, or steps).
+  CLI version (`claude --version`, or `codex --version` if you use
+  `provider = 'codex'`), OS, and — ideally — a reproduction (a minimal
+  prompt, a fixture, or steps).
 - **Capture a fixture.** If you hit a rendering glitch, run
   `./tests/run.sh --capture <name>`, reproduce the issue, and attach the
   resulting `tests/fixtures/ndjson/<name>.ndjson`. That alone makes bugs
@@ -75,10 +76,10 @@ how to write specs against them.
 ## Scope
 
 Things that are in scope: anything that improves the editor experience of
-using the Claude Code CLI from Neovim. Things that are probably out of
-scope: reimplementing features that belong in the `claude` CLI itself
-(auth, model routing, MCP protocol internals). When in doubt, open an
-issue and ask.
+using the supported CLIs (Claude Code, and Codex via the provider layer)
+from Neovim. Things that are probably out of scope: reimplementing
+features that belong in the CLIs themselves (auth, model routing, MCP
+protocol internals). When in doubt, open an issue and ask.
 
 On my todo list is to extensively audit claude code functionality and 
 determine what subset of that cc.nvim will support. In my opinion, claude
