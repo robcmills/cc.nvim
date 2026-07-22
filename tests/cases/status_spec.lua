@@ -63,6 +63,35 @@ T['build_lines']['placeholders for missing values'] = function()
   if n < 5 then error('expected several "—" placeholders, got ' .. tostring(n)) end
 end
 
+T['build_lines']['uses configured provider effort'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      provider = 'codex',
+      providers = { codex = { effort = 'medium' } },
+      tool_icons = { use_nerdfont = false },
+    })
+    local Session = require('cc.session')
+    local provider = require('cc.providers.codex').attach({ headless = true })
+    local lines = require('cc.status').build_lines({
+      session = Session.new(),
+      provider = provider,
+    })
+    for _, line in ipairs(lines) do
+      if line.text:match('^%s+effort%s+') then
+        _G._effort_line = line.text
+        break
+      end
+    end
+  ]])
+  local line = _G.child.lua_get('_G._effort_line')
+  if not (line or ''):find('med', 1, true) then
+    error('configured effort not rendered: ' .. tostring(line))
+  end
+  if (line or ''):find('auto', 1, true) then
+    error('default effort rendered instead of configured effort: ' .. tostring(line))
+  end
+end
+
 T['build_lines']['spans carry highlight groups'] = function()
   _G.child.lua([[
     local Session = require('cc.session')

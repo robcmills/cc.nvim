@@ -131,7 +131,7 @@ function M.build_lines(inst)
   add(row('model', session and session.model or ''))
   add(row('permission', session and session.permission_mode or ''))
   local Effort = require('cc.effort')
-  local effort_cur = Effort.get()
+  local effort_cur = Effort.get_display(inst)
   local effort_sym = Effort.symbol(effort_cur)
   local effort_lbl = Effort.label(effort_cur)
   local effort_text = effort_sym ~= '' and (effort_sym .. ' ' .. effort_lbl) or effort_lbl

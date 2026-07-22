@@ -185,16 +185,7 @@ function M.build_state(instance)
   -- what the CLI told us it resolves to (session.resolved_effort, from the
   -- get_settings control_response) — falling back to 'auto' until that lands.
   local Effort = require('cc.effort')
-  local effort_setting = Effort.get()
-  local effort_display = effort_setting
-  local effort_resolved = false
-  if effort_setting == 'auto' then
-    local r = session and session.resolved_effort
-    if type(r) == 'string' and r ~= '' and r ~= 'auto' then
-      effort_display = r
-      effort_resolved = true
-    end
-  end
+  local effort_display, effort_setting, effort_resolved = Effort.get_display(instance)
   -- Provider of this instance (falls back to the configured provider so a
   -- custom format can branch even before a subprocess is attached). The
   -- CLI version probed is the active provider's binary.

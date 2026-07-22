@@ -61,6 +61,47 @@ function M.get()
   return current
 end
 
+--- Resolve the effort setting that applies to an instance. Provider-level
+--- configuration has the same precedence here that it has when a turn is
+--- submitted; the session-scoped /effort setting is the fallback.
+---@param instance cc.Instance?
+---@return string setting
+function M.get_effective(instance)
+  local provider = instance and instance.provider
+  local configured = provider and provider.opts and provider.opts.effort
+
+  -- Before a provider is attached, fall back to the active provider's
+  -- options so diagnostic callers still report the configured value.
+  if configured == nil and not provider then
+    local ok, Providers = pcall(require, 'cc.providers')
+    if ok then
+      local P = Providers.current()
+      if P and P.options then
+        local opts_ok, opts = pcall(P.options)
+        if opts_ok and opts then configured = opts.effort end
+      end
+    end
+  end
+
+  if M.is_valid(configured) then return configured end
+  return M.get()
+end
+
+--- Resolve the setting and the value to display. When an automatic setting
+--- has subsequently been resolved by the CLI, display that resolved value.
+---@param instance cc.Instance?
+---@return string display, string setting, boolean resolved
+function M.get_display(instance)
+  local setting = M.get_effective(instance)
+  if setting == 'auto' then
+    local resolved = instance and instance.session and instance.session.resolved_effort
+    if M.is_valid(resolved) and resolved ~= 'auto' then
+      return resolved, setting, true
+    end
+  end
+  return setting, setting, false
+end
+
 ---@param v string
 ---@return boolean ok
 function M.set(v)
