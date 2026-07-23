@@ -1,5 +1,5 @@
 - [ ] codex support
-  + [ ] fix permission mode
+  + [ ] fix permission mode naming
   + [ ] fix autoname
 
 - [ ] fix when :CcNew is invoked and the only buffer is my custom VerticalBuffers plugin
