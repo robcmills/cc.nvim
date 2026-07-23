@@ -109,7 +109,7 @@ local function default_format(state)
     table.insert(segments, seg)
   end
   if state.mode and state.mode ~= '' then
-    table.insert(segments, HL_MODE .. state.mode .. ' mode')
+    table.insert(segments, HL_MODE .. state.mode)
   end
   if state.effort and state.effort ~= '' then
     local Effort = require('cc.effort')

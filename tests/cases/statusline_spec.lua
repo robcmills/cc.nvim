@@ -205,7 +205,7 @@ T['default_format']['falls back to hourglass when no spinner_frame'] = function(
   eq(_G.child.lua_get("_G._out:find('⏳', 1, true) ~= nil"), true)
 end
 
-T['default_format']['shows mode, tokens, branch+pr, session name, remote'] = function()
+T['default_format']['shows permission, tokens, branch+pr, session name, remote'] = function()
   _G.child.lua([[
     _G._out = require('cc.statusline')._default_format({
       is_thinking = true,
@@ -218,7 +218,8 @@ T['default_format']['shows mode, tokens, branch+pr, session name, remote'] = fun
     })
   ]])
   local out = _G.child.lua_get('_G._out')
-  eq(out:find('auto mode', 1, true) ~= nil, true)
+  eq(out:find('auto', 1, true) ~= nil, true)
+  eq(out:find('auto mode', 1, true) == nil, true)
   eq(out:find('1.5k', 1, true) ~= nil, true)
   eq(out:find('main', 1, true) ~= nil, true)
   eq(out:find('#42', 1, true) ~= nil, true)
@@ -227,6 +228,18 @@ T['default_format']['shows mode, tokens, branch+pr, session name, remote'] = fun
   eq(out:find('⚡', 1, true) ~= nil, true)
   -- Right-aligned via %=
   eq(out:find('%=', 1, true) ~= nil, true)
+end
+
+T['default_format']['omits mode suffix for codex approval and sandbox'] = function()
+  _G.child.lua([[
+    _G._out = require('cc.statusline')._default_format({
+      provider = 'codex',
+      mode = 'never/dangerFullAccess',
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('never/dangerFullAccess', 1, true) ~= nil, true)
+  eq(out:find('never/dangerFullAccess mode', 1, true) == nil, true)
 end
 
 T['default_format']['shows pending_session_name when no persisted name'] = function()

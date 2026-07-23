@@ -80,7 +80,7 @@ local defaults = {
       effort = 'medium', -- 'low'|'medium'|'high'|'xhigh'|'max'|'auto'
       extra_args = {},
       model = 'fable',
-      permission_mode = nil,
+      permission_mode = nil, -- nil | 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions' | 'auto'
     },
     codex = {
       approval_policy = nil, -- nil | 'untrusted' | 'on-request' | 'never'

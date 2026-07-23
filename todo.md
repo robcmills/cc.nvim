@@ -1,6 +1,9 @@
 - [ ] codex support
-  + [ ] fix permission mode naming
-  + [ ] fix autoname
+  + [x] fix permission mode naming
+  + [x] fix autoname
+  + [x] fix codex edit highlighting
+- [ ] add ability to switch /effort at runtime
+- [ ] add ability to switch /model at runtime
 
 - [ ] fix when :CcNew is invoked and the only buffer is my custom VerticalBuffers plugin
 
