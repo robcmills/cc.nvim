@@ -1,5 +1,7 @@
--- Auto-rename: on the first prompt of a new session, ask `claude -p` for a
--- short title and apply it via cc._handle_rename (same path as `/rename`).
+-- Auto-rename: on the first prompt of a new session, ask the active provider
+-- for a short title and apply it via cc._handle_rename (same path as
+-- `/rename`). Providers own their CLI command and output contract; this
+-- module owns the shared lifecycle, validation, timeout, and UI state.
 --
 -- Skipped on resumed sessions (they already have a name), on fixtures, and
 -- when the user has already renamed (or queued a rename). The rename is
@@ -9,28 +11,12 @@ local Config = require('cc.config')
 
 local M = {}
 
---- Generate a v4-ish UUID. Good enough for naming the one-shot rename
---- subprocess so we can locate (and delete) its leaked JSONL afterwards.
----@return string
-local function gen_uuid()
-  local function h(n) return string.format('%0' .. n .. 'x', math.random(0, 16 ^ n - 1)) end
-  return h(8) .. '-' .. h(4) .. '-4' .. h(3) .. '-' .. h(4) .. '-' .. h(8) .. h(4)
-end
-
---- Delete the JSONL file the rename subprocess leaves on disk despite
---- `--no-session-persistence`. As of the snapshot date the CLI still writes
---- an `ai-title` record (and only that) for `-p` invocations, which would
---- otherwise show up as a second entry in `:CcResume`. Best-effort, silent.
----@param session_id string
-local function cleanup_subprocess_jsonl(session_id)
-  local history = require('cc.history')
-  local path = history.projects_dir() .. '/'
-    .. history.encode_cwd(vim.fn.getcwd()) .. '/'
-    .. session_id .. '.jsonl'
-  local uv = vim.uv or vim.loop
-  if uv.fs_stat(path) then
-    pcall(uv.fs_unlink, path)
-  end
+---@param path string
+---@return string?
+local function read_output_file(path)
+  local ok, lines = pcall(vim.fn.readfile, path)
+  if not ok then return nil end
+  return table.concat(lines, '\n')
 end
 
 --- Substitute `${prompt}` in the auto-rename template. `gsub`'s replacement
@@ -88,8 +74,8 @@ local function clear_placeholder(inst)
   pcall(function() require('cc.statusline').refresh(inst) end)
 end
 
---- Fire-and-forget: spawn `claude -p` in a one-shot non-interactive query to
---- generate a short session title, then apply it via `cc._handle_rename`.
+--- Fire-and-forget: spawn the active provider's one-shot naming command,
+--- then apply its result via `cc._handle_rename`.
 --- Best-effort polish — silent on failure, never blocks submit.
 ---
 --- Before spawning, sets a transient placeholder via `cc._handle_rename` so
@@ -103,25 +89,17 @@ function M.start(inst, prompt_text)
   if not cfg then return end
   local rendered = M.render_prompt(cfg.prompt or '', prompt_text)
   if rendered == '' then return end
+  local provider = inst and inst.provider
+  if not provider or type(provider.auto_rename_spec) ~= 'function' then return end
+  local ok_spec, spec = pcall(provider.auto_rename_spec, provider, rendered, cfg)
+  if not ok_spec or type(spec) ~= 'table' or type(spec.cmd) ~= 'string'
+      or type(spec.args) ~= 'table' then
+    return
+  end
 
   local uv = vim.uv or vim.loop
   local stdout = uv.new_pipe(false)
   local stderr = uv.new_pipe(false)
-
-  -- Pin the subprocess's session id so we can locate its leaked JSONL.
-  -- `--no-session-persistence` only stops user/assistant records — the CLI
-  -- still writes an `ai-title` entry, which without cleanup would show up
-  -- as a duplicate session in `:CcResume`.
-  local subprocess_session_id = gen_uuid()
-
-  local args = {
-    '-p', rendered,
-    '--model', cfg.model or 'haiku',
-    '--tools', '',
-    '--no-session-persistence',
-    '--session-id', subprocess_session_id,
-    '--output-format', 'text',
-  }
 
   local stdout_chunks = {}
   inst.auto_rename_in_flight = true
@@ -136,45 +114,76 @@ function M.start(inst, prompt_text)
   end
 
   local handle
-  handle = uv.spawn(Config.options.claude_cmd, {
-    args = args,
+  local exit_code
+  local stdout_done = false
+  local finished = false
+
+  local function cleanup()
+    if type(spec.cleanup) == 'function' then pcall(spec.cleanup) end
+  end
+
+  local function finish()
+    if finished or exit_code == nil or not stdout_done then return end
+    finished = true
+    local is_current = inst.auto_rename_handle == handle
+    if is_current then
+      inst.auto_rename_in_flight = false
+      inst.auto_rename_handle = nil
+    end
+
+    local raw
+    if spec.output_path then
+      raw = read_output_file(spec.output_path)
+    else
+      raw = table.concat(stdout_chunks)
+    end
+    cleanup()
+    pcall(function() if not stdout:is_closing() then stdout:close() end end)
+    pcall(function() if not stderr:is_closing() then stderr:close() end end)
+    pcall(function() if handle and not handle:is_closing() then handle:close() end end)
+
+    -- A cancelled/replaced worker must never overwrite later UI state.
+    if not is_current then return end
+    if exit_code ~= 0 then
+      clear_placeholder(inst)
+      return
+    end
+    local validate = cfg.validate or M.default_validate
+    local ok, name = pcall(validate, raw)
+    if not ok or type(name) ~= 'string' or name == '' then
+      clear_placeholder(inst)
+      return
+    end
+    -- If a user-initiated rename landed in the meantime, leave it. Our own
+    -- transient placeholder doesn't count: it lives in
+    -- `pending_session_name` but is marked by `transient_rename_active`.
+    if inst.session_name and inst.session_name ~= '' then
+      clear_placeholder(inst)
+      return
+    end
+    if inst.pending_session_name and inst.pending_session_name ~= ''
+        and not inst.transient_rename_active then
+      return
+    end
+    -- _handle_rename clears transient_rename_active as a side effect.
+    require('cc')._handle_rename(inst, name, { silent = true })
+  end
+
+  handle = uv.spawn(spec.cmd, {
+    args = spec.args,
     stdio = { nil, stdout, stderr },
     cwd = vim.fn.getcwd(),
   }, function(code, _signal)
     vim.schedule(function()
-      inst.auto_rename_in_flight = false
-      inst.auto_rename_handle = nil
-      cleanup_subprocess_jsonl(subprocess_session_id)
-      if code ~= 0 then
-        clear_placeholder(inst)
-        return
-      end
-      local raw = table.concat(stdout_chunks)
-      local validate = cfg.validate or M.default_validate
-      local ok, name = pcall(validate, raw)
-      if not ok or type(name) ~= 'string' or name == '' then
-        clear_placeholder(inst)
-        return
-      end
-      -- If a user-initiated rename landed in the meantime, leave it. Our own
-      -- transient placeholder doesn't count: it lives in
-      -- `pending_session_name` but is marked by `transient_rename_active`.
-      if inst.session_name and inst.session_name ~= '' then
-        clear_placeholder(inst)
-        return
-      end
-      if inst.pending_session_name and inst.pending_session_name ~= ''
-          and not inst.transient_rename_active then
-        return
-      end
-      -- _handle_rename clears transient_rename_active as a side effect.
-      require('cc')._handle_rename(inst, name, { silent = true })
+      exit_code = code
+      finish()
     end)
   end)
 
   if not handle then
     inst.auto_rename_in_flight = false
     clear_placeholder(inst)
+    cleanup()
     pcall(function() stdout:close() end)
     pcall(function() stderr:close() end)
     return
@@ -182,8 +191,13 @@ function M.start(inst, prompt_text)
 
   inst.auto_rename_handle = handle
 
-  stdout:read_start(function(_err, data)
-    if data then table.insert(stdout_chunks, data) end
+  stdout:read_start(function(err, data)
+    if data then
+      table.insert(stdout_chunks, data)
+    elseif err or data == nil then
+      stdout_done = true
+      vim.schedule(finish)
+    end
   end)
   -- Discard stderr; auto-rename failures are silent by design.
   stderr:read_start(function(_err, _data) end)
@@ -205,6 +219,7 @@ function M.cancel(inst)
   end
   if inst then
     inst.auto_rename_handle = nil
+    inst.auto_rename_in_flight = false
     clear_placeholder(inst)
   end
 end

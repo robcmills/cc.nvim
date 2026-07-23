@@ -17,6 +17,7 @@
 --   :interrupt()           request turn interruption; truthy when sent
 --   :set_permission_mode(mode)  Claude-only (gate on capabilities)
 --   :rename(name, cb?)     optional: provider-native session rename
+--   :auto_rename_spec(prompt, cfg)  optional: one-shot title command
 --   :start_dump(path) / :stop_dump()  tee raw wire bytes for fixture capture
 --   .name, .capabilities   mirrors of the module fields
 --   .process               underlying transport when distinct from the instance
@@ -28,7 +29,7 @@ local M = {}
 ---@field effort boolean reasoning-effort control (/effort)
 ---@field cost_usd boolean provider reports USD cost per turn
 ---@field slash_commands boolean provider advertises slash commands / skills
----@field auto_rename boolean first-prompt auto-title via a provider subprocess
+---@field auto_rename boolean first-prompt auto-title via a provider command
 ---@field local_history boolean history read from local files without a subprocess
 ---@field plan_mode boolean Claude plan mode (:CcPlan)
 

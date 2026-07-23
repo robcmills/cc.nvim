@@ -269,7 +269,11 @@ function M.open_with_fixture(child, fixture_name, setup_opts)
   local slow = setup_opts.slow_delay_ms
   setup_opts.slow_delay_ms = nil
   local cmd = slow and M.fake_claude_slow or M.fake_claude
-  local opts_str = vim.inspect(vim.tbl_extend('force', { claude_cmd = cmd }, setup_opts))
+  local opts_str = vim.inspect(vim.tbl_deep_extend(
+    'force',
+    { providers = { claude = { cmd = cmd } } },
+    setup_opts
+  ))
   local delay_str = slow and string.format('vim.env.CC_TEST_DELAY_MS = %q\n', tostring(slow)) or ''
   child:lua(
     string.format(

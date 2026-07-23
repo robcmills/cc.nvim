@@ -1,4 +1,4 @@
--- Process-level integration tests: spawn fake_claude.sh as the claude_cmd,
+-- Process-level integration tests: spawn fake_claude.sh as the command,
 -- exercise the full pipeline: process.lua -> parser -> router -> output.
 local helpers = dofile('tests/helpers.lua')
 local MiniTest = require('mini.test')
@@ -56,7 +56,7 @@ local function spawn_with_fixture(child, fixture_name)
 
     local process_exited = false
     local process = Process.new({
-      claude_cmd = %q,
+      cmd = %q,
       cwd = vim.fn.getcwd(),
       on_message = function(msg)
         router:dispatch(msg)

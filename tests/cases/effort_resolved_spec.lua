@@ -12,6 +12,46 @@ local T = MiniTest.new_set({
 })
 
 -- ---------------------------------------------------------------------------
+-- Provider configuration and spawn environment
+-- ---------------------------------------------------------------------------
+T['provider_config'] = MiniTest.new_set()
+
+T['provider_config']['Claude effort overrides the session-scoped setting'] = function()
+  local out = _G.child.lua_get([[(function()
+    require('cc.config').setup({
+      providers = { claude = { effort = 'high' } },
+    })
+    local Effort = require('cc.effort')
+    Effort.set('low')
+    local provider = require('cc.providers.claude')
+    local effective = Effort.get_effective(nil)
+    local env = Effort.spawn_env(provider.options().effort)
+    local value
+    for _, entry in ipairs(env) do
+      value = entry:match('^CLAUDE_CODE_EFFORT_LEVEL=(.*)$') or value
+    end
+    Effort._reset()
+    return { effective = effective, env = value }
+  end)()]])
+  eq(out.effective, 'high')
+  eq(out.env, 'high')
+end
+
+T['provider_config']['Claude auto effort omits the environment override'] = function()
+  local present = _G.child.lua_get([[(function()
+    local Effort = require('cc.effort')
+    Effort.set('low')
+    local env = Effort.spawn_env('auto')
+    Effort._reset()
+    for _, entry in ipairs(env) do
+      if entry:match('^CLAUDE_CODE_EFFORT_LEVEL=') then return true end
+    end
+    return false
+  end)()]])
+  eq(present, false)
+end
+
+-- ---------------------------------------------------------------------------
 -- Router: capture applied.effort from get_settings
 -- ---------------------------------------------------------------------------
 T['router'] = MiniTest.new_set()
@@ -29,7 +69,7 @@ T['router']['get_settings response stores applied.effort on session.resolved_eff
     local bufnr = output:ensure_buffer()
     vim.api.nvim_set_current_buf(bufnr)
 
-    local process = Process.new({ claude_cmd = 'unused', on_message = function() end })
+    local process = Process.new({ cmd = 'unused', on_message = function() end })
     process.alive = true
     process.stdin = {}
     process.write = function() end
@@ -74,7 +114,7 @@ T['router']['captures applied.effort even when permission_mode was already set']
     local bufnr = output:ensure_buffer()
     vim.api.nvim_set_current_buf(bufnr)
 
-    local process = Process.new({ claude_cmd = 'unused', on_message = function() end })
+    local process = Process.new({ cmd = 'unused', on_message = function() end })
     process.alive = true
     process.stdin = {}
     process.write = function() end
@@ -110,8 +150,7 @@ T['statusline'] = MiniTest.new_set()
 
 T['statusline']['auto setting shows resolved level once known'] = function()
   _G.child.lua([[
-    require('cc.config').setup({})
-    require('cc.effort').get = function() return 'auto' end
+    require('cc.config').setup({ providers = { claude = { effort = 'auto' } } })
     local Session = require('cc.session')
     local session = Session.new()
     session.resolved_effort = 'high'
@@ -124,8 +163,7 @@ end
 
 T['statusline']['auto setting falls back to "auto" before the response lands'] = function()
   _G.child.lua([[
-    require('cc.config').setup({})
-    require('cc.effort').get = function() return 'auto' end
+    require('cc.config').setup({ providers = { claude = { effort = 'auto' } } })
     local Session = require('cc.session')
     local session = Session.new()
     -- resolved_effort still nil: get_settings response not yet received.
@@ -137,8 +175,7 @@ end
 
 T['statusline']['explicit setting wins over resolved_effort'] = function()
   _G.child.lua([[
-    require('cc.config').setup({})
-    require('cc.effort').get = function() return 'low' end
+    require('cc.config').setup({ providers = { claude = { effort = 'low' } } })
     local Session = require('cc.session')
     local session = Session.new()
     session.resolved_effort = 'high' -- should be ignored: user pinned 'low'

@@ -871,8 +871,7 @@ function M.submit()
   end
 
   -- First-turn auto-rename (best-effort, before turns is incremented).
-  -- Skipped for providers that don't support it (codex threads get named
-  -- via /rename → thread/name/set instead).
+  -- Skipped for providers that don't supply a one-shot naming command.
   local caps = inst.provider and inst.provider.capabilities or {}
   local AutoRename = require('cc.auto_rename')
   if caps.auto_rename ~= false and AutoRename.should_run(inst) then
@@ -1026,7 +1025,7 @@ local function apply_permission_mode(mode)
     end
     return
   end
-  Config.options.permission_mode = mode
+  Config.options.providers.claude.permission_mode = mode
   vim.notify(
     'cc.nvim: permission_mode set to ' .. mode .. ' (applies to next :Cc / :CcNew)',
     vim.log.levels.INFO)
@@ -1048,7 +1047,8 @@ local CYCLE_NEXT = {
 
 --- Public: advance the permission mode one step in the Shift+Tab cycle.
 --- Reads the current mode from the active session (if any) or
---- `Config.options.permission_mode` (treating nil as 'default'), then
+--- `Config.options.providers.claude.permission_mode` (treating nil as
+--- 'default'), then
 --- applies the next mode via the same path as `set_permission_mode`.
 function M.cycle_permission_mode()
   local inst = get_current_instance()
@@ -1056,7 +1056,7 @@ function M.cycle_permission_mode()
   if inst and inst.process and inst.process:is_alive() and inst.session then
     current = inst.session.permission_mode or 'default'
   else
-    current = Config.options.permission_mode or 'default'
+    current = Config.options.providers.claude.permission_mode or 'default'
   end
   local next_mode = CYCLE_NEXT[current] or 'default'
   apply_permission_mode(next_mode)

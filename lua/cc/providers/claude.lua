@@ -23,18 +23,17 @@ M.capabilities = {
   plan_mode = true,
 }
 
---- Effective claude options. providers.claude.* wins when set; the legacy
---- top-level keys (claude_cmd, permission_mode, model, extra_args) fill gaps
---- so existing configs keep working unchanged.
----@return { cmd: string, permission_mode: string?, model: string?, extra_args: string[] }
+--- Effective Claude options from Config.options.providers.claude.
+---@return { auto_rename_model: string, cmd: string, effort: string, extra_args: string[], model: string, permission_mode: string? }
 function M.options()
-  local o = Config.options
-  local p = (o.providers or {}).claude or {}
+  local p = (Config.options.providers or {}).claude or {}
   return {
-    cmd = p.cmd or o.claude_cmd or 'claude',
-    permission_mode = p.permission_mode or o.permission_mode,
-    model = p.model or o.model,
-    extra_args = p.extra_args or o.extra_args or {},
+    auto_rename_model = p.auto_rename_model or 'haiku',
+    cmd = p.cmd or 'claude',
+    effort = p.effort or 'medium',
+    extra_args = p.extra_args or {},
+    model = p.model or 'fable',
+    permission_mode = p.permission_mode,
   }
 end
 
@@ -49,6 +48,25 @@ end
 ---@field resume_id string?
 local Claude = {}
 Claude.__index = Claude
+
+--- Generate a v4-ish UUID for the one-shot naming subprocess.
+---@return string
+local function gen_uuid()
+  local function h(n) return string.format('%0' .. n .. 'x', math.random(0, 16 ^ n - 1)) end
+  return h(8) .. '-' .. h(4) .. '-4' .. h(3) .. '-' .. h(4) .. '-' .. h(8) .. h(4)
+end
+
+--- Remove the metadata-only JSONL that Claude may leave behind despite
+--- `--no-session-persistence`, so it cannot appear in :CcResume.
+---@param session_id string
+local function cleanup_auto_rename_jsonl(session_id)
+  local history = require('cc.history')
+  local path = history.projects_dir() .. '/'
+    .. history.encode_cwd(vim.fn.getcwd()) .. '/'
+    .. session_id .. '.jsonl'
+  local uv = vim.uv or vim.loop
+  if uv.fs_stat(path) then pcall(uv.fs_unlink, path) end
+end
 
 ---@class cc.ProviderCtx
 ---@field instance cc.Instance?
@@ -67,6 +85,7 @@ function M.attach(ctx)
   local self = setmetatable({
     name = M.name,
     capabilities = M.capabilities,
+    opts = opts,
     instance = ctx.instance,
     session = ctx.session,
     output = ctx.output,
@@ -91,11 +110,12 @@ function M.attach(ctx)
   })
 
   self.process = Process.new({
-    claude_cmd = opts.cmd,
+    cmd = opts.cmd,
     cwd = vim.fn.getcwd(),
     session_id = ctx.resume_id,
     permission_mode = effective_mode,
     model = opts.model,
+    effort = opts.effort,
     extra_args = opts.extra_args,
     on_message = function(msg) self.router:dispatch(msg) end,
     on_stderr = function(data)
@@ -106,6 +126,28 @@ function M.attach(ctx)
   self.router:set_process(self.process)
 
   return self
+end
+
+--- Build the provider-specific one-shot command used by auto-rename.
+---@param prompt string
+---@param cfg table
+---@return table
+function Claude:auto_rename_spec(prompt, _cfg)
+  local session_id = gen_uuid()
+  return {
+    cmd = self.opts.cmd,
+    args = {
+      '-p', prompt,
+      '--model', self.opts.auto_rename_model,
+      '--tools', '',
+      '--no-session-persistence',
+      '--session-id', session_id,
+      '--output-format', 'text',
+    },
+    cleanup = function()
+      cleanup_auto_rename_jsonl(session_id)
+    end,
+  }
 end
 
 function Claude:spawn()

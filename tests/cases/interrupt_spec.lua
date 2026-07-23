@@ -26,7 +26,7 @@ local function setup_fake_process(child)
 
     local sent = {}
     local process = Process.new({
-      claude_cmd = 'unused',
+      cmd = 'unused',
       on_message = function() end,
     })
     -- Stub out the fields :write() checks, redirect to capture.

@@ -132,7 +132,13 @@ T['handshake']['approval_policy and sandbox config forwarded'] = function()
 end
 
 T['handshake']['resume path calls thread/resume and replays turns'] = function()
-  setup_codex(_G.child)
+  setup_codex(_G.child, [[{
+    provider = 'codex',
+    providers = { codex = {
+      approval_policy = 'on-request',
+      sandbox = 'danger-full-access',
+    } },
+  }]])
   _G.child.lua([==[
     _G._test_provider.resume_id = 'thread-9'
     _G._test_provider:_start_protocol()
@@ -161,6 +167,8 @@ T['handshake']['resume path calls thread/resume and replays turns'] = function()
     } })
   ]==])
   eq(_G.child.lua_get('_G._test_resume_req.params.threadId'), 'thread-9')
+  eq(_G.child.lua_get('_G._test_resume_req.params.approvalPolicy'), 'on-request')
+  eq(_G.child.lua_get('_G._test_resume_req.params.sandbox'), 'danger-full-access')
   local text = buffer_text(_G.child)
   eq(text:find('User:', 1, true) ~= nil, true)
   eq(text:find('stored prompt', 1, true) ~= nil, true)

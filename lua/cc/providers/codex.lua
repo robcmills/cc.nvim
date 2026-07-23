@@ -24,22 +24,23 @@ M.capabilities = {
   effort = true,
   cost_usd = false,
   slash_commands = false,
-  auto_rename = false,
+  auto_rename = true,
   local_history = false,
   plan_mode = false,
 }
 
 --- Effective codex options from Config.options.providers.codex.
----@return { cmd: string, model: string?, approval_policy: string?, sandbox: string?, effort: string?, extra_args: string[] }
+---@return { approval_policy: string?, auto_rename_model: string, cmd: string, effort: string, extra_args: string[], model: string, sandbox: string? }
 function M.options()
   local p = (Config.options.providers or {}).codex or {}
   return {
-    cmd = p.cmd or 'codex',
-    model = p.model,
     approval_policy = p.approval_policy,
-    sandbox = p.sandbox,
-    effort = p.effort,
+    auto_rename_model = p.auto_rename_model or 'gpt-5.6-luna',
+    cmd = p.cmd or 'codex',
+    effort = p.effort or 'medium',
     extra_args = p.extra_args or {},
+    model = p.model or 'gpt-5.6-sol',
+    sandbox = p.sandbox,
   }
 end
 
@@ -185,7 +186,10 @@ function Codex:_start_protocol()
       return
     end
     if self.resume_id then
-      self:request('thread/resume', { threadId = self.resume_id }, function(result, rerr)
+      local params = { threadId = self.resume_id }
+      if self.opts.approval_policy then params.approvalPolicy = self.opts.approval_policy end
+      if self.opts.sandbox then params.sandbox = self.opts.sandbox end
+      self:request('thread/resume', params, function(result, rerr)
         if rerr then
           self:_notify_error('thread/resume failed', rerr)
           return
@@ -432,7 +436,7 @@ end
 --- else the /effort level (mapped; 'auto' → nil so codex uses its default).
 ---@return string?
 function Codex:_effort()
-  if self.opts.effort then return self.opts.effort end
+  if self.opts.effort then return EFFORT_MAP[self.opts.effort] end
   local level = require('cc.effort').get()
   return EFFORT_MAP[level]
 end
@@ -469,6 +473,41 @@ function Codex:rename(name, cb)
     if cb then cb(err == nil, err and err.message or nil) end
   end)
   return true
+end
+
+--- Build an isolated one-shot `codex exec` command used by auto-rename.
+--- `--ephemeral` keeps the helper turn out of thread history; the final
+--- message file avoids mixing Codex progress output with the title.
+---@param prompt string
+---@param cfg table
+---@return table
+function Codex:auto_rename_spec(prompt, _cfg)
+  local output_path = vim.fn.tempname()
+  local args = {
+    'exec',
+    '--ephemeral',
+    '--sandbox', 'read-only',
+    '--skip-git-repo-check',
+    '--ignore-rules',
+    '--color', 'never',
+    '--output-last-message', output_path,
+  }
+  local model = self.opts.auto_rename_model or self.opts.model
+  if type(model) == 'string' and model ~= '' then
+    table.insert(args, '--model')
+    table.insert(args, model)
+  end
+  table.insert(args, prompt)
+  return {
+    cmd = self.opts.cmd,
+    args = args,
+    output_path = output_path,
+    cleanup = function()
+      if (vim.uv or vim.loop).fs_stat(output_path) then
+        pcall((vim.uv or vim.loop).fs_unlink, output_path)
+      end
+    end,
+  }
 end
 
 function Codex:_refresh()

@@ -38,14 +38,15 @@ T['empty-string arg also opens the picker'] = function()
   eq(_G.child.lua_get('_G._test_ui_select_called'), true)
 end
 
-T['valid arg with no active session writes Config.options.permission_mode'] = function()
+T['valid arg with no active session writes providers.claude.permission_mode'] = function()
   _G.child.lua([==[
     require('cc.config').setup({})
     _G._test_notices = {}
     vim.notify = function(msg) table.insert(_G._test_notices, msg) end
     require('cc').set_permission_mode('plan')
   ]==])
-  eq(_G.child.lua_get([[require('cc.config').options.permission_mode]]), 'plan')
+  eq(_G.child.lua_get(
+    [[require('cc.config').options.providers.claude.permission_mode]]), 'plan')
   local notices = _G.child.lua_get('_G._test_notices')
   -- First notice should be the "set to plan" message.
   local found = false
@@ -67,7 +68,7 @@ T['valid arg with active session sends set_permission_mode control_request'] = f
     -- the outgoing payload without touching libuv. send_control_set_permission_mode
     -- consults self.alive and self.stdin before generating the request_id.
     local sent = {}
-    local process = Process.new({ claude_cmd = 'unused', on_message = function() end })
+    local process = Process.new({ cmd = 'unused', on_message = function() end })
     process.alive = true
     process.stdin = {}
     process.write = function(_self, msg) table.insert(sent, msg) end
@@ -85,7 +86,7 @@ T['valid arg with active session sends set_permission_mode control_request'] = f
     require('cc').set_permission_mode('acceptEdits')
 
     _G._test_sent = sent
-    _G._test_config_mode = require('cc.config').options.permission_mode
+    _G._test_config_mode = require('cc.config').options.providers.claude.permission_mode
   ]==])
 
   local sent = _G.child.lua_get('_G._test_sent')
@@ -104,7 +105,7 @@ T['active-session pending control is tracked by request_id'] = function()
     local Process = require('cc.process')
 
     local sent = {}
-    local process = Process.new({ claude_cmd = 'unused', on_message = function() end })
+    local process = Process.new({ cmd = 'unused', on_message = function() end })
     process.alive = true
     process.stdin = {}
     process.write = function(_self, msg) table.insert(sent, msg) end
@@ -128,11 +129,11 @@ T['cycle without session walks default → acceptEdits → plan → default via 
     local cc = require('cc')
     -- Starting from nil → treated as 'default'; first cycle picks acceptEdits.
     cc.cycle_permission_mode()
-    _G._test_mode_1 = require('cc.config').options.permission_mode
+    _G._test_mode_1 = require('cc.config').options.providers.claude.permission_mode
     cc.cycle_permission_mode()
-    _G._test_mode_2 = require('cc.config').options.permission_mode
+    _G._test_mode_2 = require('cc.config').options.providers.claude.permission_mode
     cc.cycle_permission_mode()
-    _G._test_mode_3 = require('cc.config').options.permission_mode
+    _G._test_mode_3 = require('cc.config').options.providers.claude.permission_mode
   ]==])
   eq(_G.child.lua_get('_G._test_mode_1'), 'acceptEdits')
   eq(_G.child.lua_get('_G._test_mode_2'), 'plan')
@@ -144,12 +145,12 @@ T['cycle skips bypassPermissions and dontAsk (drops back to default)'] = functio
     require('cc.config').setup({})
     vim.notify = function() end
     local cc = require('cc')
-    require('cc.config').options.permission_mode = 'bypassPermissions'
+    require('cc.config').options.providers.claude.permission_mode = 'bypassPermissions'
     cc.cycle_permission_mode()
-    _G._test_after_bypass = require('cc.config').options.permission_mode
-    require('cc.config').options.permission_mode = 'dontAsk'
+    _G._test_after_bypass = require('cc.config').options.providers.claude.permission_mode
+    require('cc.config').options.providers.claude.permission_mode = 'dontAsk'
     cc.cycle_permission_mode()
-    _G._test_after_dontask = require('cc.config').options.permission_mode
+    _G._test_after_dontask = require('cc.config').options.providers.claude.permission_mode
   ]==])
   eq(_G.child.lua_get('_G._test_after_bypass'), 'default')
   eq(_G.child.lua_get('_G._test_after_dontask'), 'default')
@@ -161,7 +162,7 @@ T['cycle with active session reads session.permission_mode and sends control_req
     local Process = require('cc.process')
 
     local sent = {}
-    local process = Process.new({ claude_cmd = 'unused', on_message = function() end })
+    local process = Process.new({ cmd = 'unused', on_message = function() end })
     process.alive = true
     process.stdin = {}
     process.write = function(_self, msg) table.insert(sent, msg) end
@@ -178,7 +179,7 @@ T['cycle with active session reads session.permission_mode and sends control_req
     require('cc').cycle_permission_mode()
     _G._test_sent = sent
     -- Config must NOT be touched when a session handles the change.
-    _G._test_config_mode = require('cc.config').options.permission_mode
+    _G._test_config_mode = require('cc.config').options.providers.claude.permission_mode
   ]==])
   local sent = _G.child.lua_get('_G._test_sent')
   eq(#sent, 1)
@@ -205,7 +206,7 @@ end
 T['M.open seeds session.permission_mode from Config when opts omits it'] = function()
   _G.child.lua([==[
     require('cc.config').setup({})
-    require('cc.config').options.permission_mode = 'acceptEdits'
+    require('cc.config').options.providers.claude.permission_mode = 'acceptEdits'
     require('cc.process').spawn = function() end
 
     require('cc').open()
@@ -224,7 +225,7 @@ T['M.open leaves session.permission_mode nil when nothing is configured'] = func
   -- Before that response lands, the field stays nil.
   _G.child.lua([==[
     require('cc.config').setup({})
-    require('cc.config').options.permission_mode = nil
+    require('cc.config').options.providers.claude.permission_mode = nil
     require('cc.process').spawn = function() end
     -- Stub send_control_get_settings so M.open doesn't try to write to a
     -- non-existent stdin pipe; we just want to assert the seeded state.
@@ -248,7 +249,7 @@ T['M.open fires get_settings control_request when no explicit mode is set'] = fu
   -- child neovim's later cases aren't polluted.
   _G.child.lua([==[
     require('cc.config').setup({})
-    require('cc.config').options.permission_mode = nil
+    require('cc.config').options.providers.claude.permission_mode = nil
     _G._test_get_settings_calls = 0
     local Process = require('cc.process')
     _G._test_orig_process_new = Process.new
@@ -272,7 +273,7 @@ end
 T['M.open skips get_settings when an explicit mode is set'] = function()
   _G.child.lua([==[
     require('cc.config').setup({})
-    require('cc.config').options.permission_mode = nil
+    require('cc.config').options.providers.claude.permission_mode = nil
     _G._test_get_settings_calls = 0
     local Process = require('cc.process')
     _G._test_orig_process_new = Process.new
@@ -306,7 +307,7 @@ T['get_settings control_response seeds session.permission_mode from effective.pe
     local bufnr = output:ensure_buffer()
     vim.api.nvim_set_current_buf(bufnr)
 
-    local process = Process.new({ claude_cmd = 'unused', on_message = function() end })
+    local process = Process.new({ cmd = 'unused', on_message = function() end })
     process.alive = true
     process.stdin = {}
     process.write = function() end
@@ -346,7 +347,7 @@ T['get_settings response falls back to "default" when permissions.defaultMode is
     local bufnr = output:ensure_buffer()
     vim.api.nvim_set_current_buf(bufnr)
 
-    local process = Process.new({ claude_cmd = 'unused', on_message = function() end })
+    local process = Process.new({ cmd = 'unused', on_message = function() end })
     process.alive = true
     process.stdin = {}
     process.write = function() end
@@ -382,7 +383,7 @@ T['get_settings response does not overwrite a permission_mode already set by ini
     local bufnr = output:ensure_buffer()
     vim.api.nvim_set_current_buf(bufnr)
 
-    local process = Process.new({ claude_cmd = 'unused', on_message = function() end })
+    local process = Process.new({ cmd = 'unused', on_message = function() end })
     process.alive = true
     process.stdin = {}
     process.write = function() end
@@ -433,7 +434,7 @@ end
 T['invalid arg warns and changes nothing'] = function()
   _G.child.lua([==[
     require('cc.config').setup({})
-    require('cc.config').options.permission_mode = nil
+    require('cc.config').options.providers.claude.permission_mode = nil
 
     _G._test_notices = {}
     vim.notify = function(msg, level)
@@ -444,7 +445,7 @@ T['invalid arg warns and changes nothing'] = function()
     -- so we can prove the invalid arg short-circuits before that point.
     local Process = require('cc.process')
     local sent = {}
-    local process = Process.new({ claude_cmd = 'unused', on_message = function() end })
+    local process = Process.new({ cmd = 'unused', on_message = function() end })
     process.alive = true
     process.stdin = {}
     process.write = function(_self, msg) table.insert(sent, msg) end
@@ -456,7 +457,7 @@ T['invalid arg warns and changes nothing'] = function()
     require('cc').set_permission_mode('garbage')
 
     _G._test_sent_len = #sent
-    _G._test_config_mode = require('cc.config').options.permission_mode
+    _G._test_config_mode = require('cc.config').options.providers.claude.permission_mode
   ]==])
   eq(_G.child.lua_get('_G._test_sent_len'), 0)
   eq(_G.child.lua_get('_G._test_config_mode'), vim.NIL)

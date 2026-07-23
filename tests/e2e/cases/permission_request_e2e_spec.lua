@@ -6,7 +6,7 @@
 -- Architecture:
 --   tests/fixtures/fake_claude_permission.sh emits init + can_use_tool, then
 --   captures one line from its stdin (the SDK control_response) into
---   $CC_TEST_RESPONSE_FILE. The spec spawns nvim with cc.claude_cmd pointed
+--   $CC_TEST_RESPONSE_FILE. The spec points providers.claude.cmd
 --   at the fake, waits for the float, presses a key, then JSON-decodes the
 --   captured response and asserts on its shape.
 
@@ -52,7 +52,9 @@ local function spawn_and_open(opts)
   -- The fake reads CC_TEST_RESPONSE_FILE from its env — uv.spawn inherits
   -- env from the parent (the child nvim), which got it from spawn() above.
   _G.child:lua(([[
-    require('cc').setup({ claude_cmd = %q })
+    require('cc').setup({
+      providers = { claude = { cmd = %q, permission_mode = 'default' } },
+    })
     require('cc').open()
   ]]):format(FAKE))
 

@@ -132,12 +132,14 @@ function M.label(level)
   return LABELS[level] or level
 end
 
---- Build the env array for uv.spawn. If the current level is 'auto' we leave
---- the env var unset so the CLI/SDK falls back to the model default.
+--- Build the env array for uv.spawn. A valid provider override wins over the
+--- session-scoped setting. If the effective level is 'auto' we leave the env
+--- var unset so the CLI/SDK falls back to the model default.
+---@param configured string? provider-level override
 ---@return string[]
-function M.spawn_env()
+function M.spawn_env(configured)
   local env = vim.fn.environ()
-  local cur = M.get()
+  local cur = M.is_valid(configured) and configured or M.get()
   if cur and cur ~= 'auto' then
     env.CLAUDE_CODE_EFFORT_LEVEL = cur
   else

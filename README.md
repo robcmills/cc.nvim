@@ -186,96 +186,105 @@ on the bottom. Type your message, then press `<CR>` in normal mode (or run
 
 ```lua
 require('cc').setup({
-  provider = 'claude',         -- 'claude' | 'codex' — CLI backing new sessions
-
-  -- Per-provider settings. providers.claude.* overrides the legacy
-  -- top-level keys below when set.
-  providers = {
-    claude = {
-      cmd = nil,               -- nil = use top-level claude_cmd
-      permission_mode = nil,
-      model = nil,
-      extra_args = nil,
-    },
-    codex = {
-      cmd = 'codex',           -- codex binary (spawned as `codex app-server`)
-      model = nil,             -- nil = codex config.toml default
-      approval_policy = nil,   -- nil | 'untrusted' | 'on-request' | 'never'
-      sandbox = nil,           -- nil | 'read-only' | 'workspace-write' | 'danger-full-access'
-      effort = nil,            -- nil | codex reasoning effort; nil defers to /effort
-      extra_args = {},         -- extra args appended to `codex app-server`
-    },
-  },
-
-  claude_cmd = 'claude',       -- path to claude binary
-  permission_mode = nil,       -- nil | 'acceptEdits' | 'auto' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan'
-  model = nil,                 -- nil | 'sonnet' | 'opus' | model string
-  extra_args = {},             -- additional args passed to claude
-
-  -- Layout
-  layout = 'horizontal',       -- 'horizontal' | 'vertical'
-  prompt_height = 10,          -- prompt buffer height (lines)
-
-  -- Folding
-  default_fold_level = 2,      -- 0=minimal, 1=summaries, 2=inputs, 3=all
-  max_tool_result_lines = 50,  -- tool results beyond this are truncated
-  foldtext = nil,              -- function(info) -> string; nil = built-in default
-
-  -- Tool input rendering: function(tool_name, input) -> string | nil
-  -- Return a string to render below a tool header, or nil to use the default.
-  tool_input_format = nil,
-
-  -- History / resume
-  history_max_records = 500,   -- cap records rendered on resume; older collapsed into a notice
-
-  -- Auto-rename: on the first prompt of a new session, ask `claude -p` for a
-  -- short descriptive title and apply it via the same code path as /rename.
   auto_rename = {
     enabled = true,
+    placeholder = 'auto-generating-name...', -- false/'' disables
     prompt = 'Generate a very short, descriptive kebab-case name (2-5 hyphenated lowercase words) for this user prompt. Return only the name — no commentary, no quotes, no trailing punctuation.\n\nPrompt: ${prompt}',
-    model = 'haiku',           -- claude --model used for the rename query
-    timeout_ms = 30000,        -- kill the subprocess if it hasn't exited
-    validate = nil,            -- function(raw) -> string|nil; nil = built-in sanitizer
-    placeholder = 'auto-generating-name...', -- statusline label while in flight; false/'' disables
+    timeout_ms = 30000,
+    validate = nil,
   },
 
-  -- Display
-  show_thinking = true,        -- show thinking blocks
-  show_turn_cost = true,       -- show per-turn cost/usage line in the output buffer
-  turn_cost_format = nil,      -- function(result) -> string | nil; nil uses default
-  tool_icons = {
-    use_nerdfont = nil,        -- nil = auto-detect; true/false forces
-    default = nil,             -- icon for unknown tools
-    icons = {},                -- per-tool overrides, e.g. { Read = '📖', Bash = '$' }
+  default_fold_level = 2,
+  foldtext = nil,
+
+  highlights = {
+    fold = nil,
   },
+
+  history_max_records = 500,
+
+  keymaps = {
+    clear_prompt = '<C-l>',
+    cycle_permission_mode = '<S-Tab>',
+    goto_output = 'go',
+    goto_prompt = 'gp',
+    interrupt = '<C-c>',
+    submit = '<CR>',
+  },
+
+  layout = 'horizontal',
+
   line_numbers = {
-    output = false,            -- show line numbers in the output window
-    prompt = false,            -- show line numbers in the prompt window
-  },
-  wrap = {
-    output = true,             -- soft-wrap lines in the output window
-    prompt = true,             -- soft-wrap lines in the prompt window
+    output = false,
+    prompt = false,
   },
 
-  -- Statusline rendered at the bottom of the output window
-  statusline = {
-    enabled = true,
-    format = nil,              -- function(state) -> string (Neovim statusline syntax)
-    spinner = {
-      use_nerdfont = nil,      -- nil = auto-detect; true/false forces
-      frames = nil,            -- override; nil resolves to frames_nerdfont / frames_unicode
-      interval_ms = 250,
+  markdown_highlight = {
+    agent = true,
+    user = true,
+  },
+
+  max_tool_result_lines = 50,
+  prompt_height = 10,
+  prompt_max_height = 30,
+  prompt_placeholder = 'Write prompt here. Press <Enter> in normal mode to submit.',
+  provider = 'claude', -- 'claude' | 'codex'
+
+  providers = {
+    claude = {
+      auto_rename_model = 'haiku',
+      cmd = 'claude',
+      effort = 'medium',
+      extra_args = {},
+      model = 'fable',
+      permission_mode = nil,
+    },
+    codex = {
+      approval_policy = nil,
+      auto_rename_model = 'gpt-5.6-luna',
+      cmd = 'codex',
+      effort = 'medium',
+      extra_args = {},
+      model = 'gpt-5.6-sol',
+      sandbox = nil,
     },
   },
 
-  -- Keymaps
-  keymaps = {
-    submit = '<CR>',
-    interrupt = '<C-c>',
-    clear_prompt = '<C-l>',
-    goto_prompt = 'gp',
-    goto_output = 'go',
-    cycle_permission_mode = '<S-Tab>',  -- false to disable
+  show_thinking = true,
+  show_turn_cost = true,
+  splash = true,
+
+  statusline = {
+    context_window = nil,
+    enabled = true,
+    format = nil,
+    spinner = {
+      frames = nil,
+      frames_nerdfont = {
+        '\xef\x89\x94',
+        '\xef\x89\x91',
+        '\xef\x89\x92',
+        '\xef\x89\x93',
+      },
+      frames_unicode = { '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏' },
+      interval_ms = 500,
+      use_nerdfont = nil,
+    },
+    tokens_icon = 'τ',
+  },
+
+  tool_icons = {
+    default = nil,
+    icons = {},
+    use_nerdfont = nil,
+  },
+
+  tool_input_format = nil,
+  turn_cost_format = nil,
+
+  wrap = {
+    output = true,
+    prompt = true,
   },
 })
 ```
@@ -492,8 +501,9 @@ between the two. The new title surfaces in:
 
 ### Auto-rename
 
-The first prompt of a brand-new session is fed to a one-shot `claude -p`
-invocation (Haiku by default) that returns a short descriptive title.
+The first prompt of a brand-new session is fed to a one-shot provider
+invocation (`claude -p`, using Haiku by default, or ephemeral `codex exec`)
+that returns a short descriptive title.
 The result is applied through the same `/rename` code path, so the
 generated name is persisted as a `custom-title` record and round-trips
 with the upstream TUI. Skipped on resumed sessions (they already have a
@@ -506,7 +516,9 @@ it's display-only and never persisted. The whole feature is configurable
 via `auto_rename` — flip `enabled = false` to turn it off, or rewrite
 `prompt` to ask for CamelCase / sentence case / a different style. The
 `validate` hook gives you final say over the model's output before it
-lands.
+lands. Configure the naming model with
+`providers.<provider>.auto_rename_model`. Claude defaults to `haiku`;
+Codex defaults to the fast, affordable `gpt-5.6-luna`.
 
 ## Codex CLI support
 

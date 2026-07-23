@@ -12,7 +12,12 @@ local function version_ge(v, min)
 end
 
 local function check_claude(h)
-  local cmd = require('cc.providers.claude').options().cmd
+  local opts = require('cc.providers.claude').options()
+  local cmd = opts.cmd
+  if opts.effort and not require('cc.effort').is_valid(opts.effort) then
+    h.error('providers.claude.effort "' .. tostring(opts.effort)
+      .. '" invalid (expected low | medium | high | xhigh | max | auto)')
+  end
   local exe = vim.fn.exepath(cmd)
   if exe == '' then
     h.error('`' .. cmd .. '` not found in PATH')
@@ -46,6 +51,10 @@ end
 local function check_codex(h)
   local codex = require('cc.providers.codex')
   local opts = codex.options()
+  if opts.effort and not require('cc.effort').is_valid(opts.effort) then
+    h.error('providers.codex.effort "' .. tostring(opts.effort)
+      .. '" invalid (expected low | medium | high | xhigh | max | auto)')
+  end
   local exe = vim.fn.exepath(opts.cmd)
   if exe == '' then
     h.error('`' .. opts.cmd .. '` not found in PATH')

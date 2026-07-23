@@ -2,68 +2,14 @@ local M = {}
 
 ---@class cc.Config
 local defaults = {
-  -- Active provider: 'claude' (default) or 'codex'. Global for now; every
-  -- new/resumed session uses the selected provider.
-  provider = 'claude',
-
-  -- Per-provider configuration. Claude values here take precedence over the
-  -- legacy top-level keys (claude_cmd, permission_mode, model, extra_args),
-  -- which remain supported for backwards compatibility.
-  providers = {
-    claude = {
-      cmd = nil, -- nil = fall back to top-level claude_cmd
-      permission_mode = nil,
-      model = nil,
-      extra_args = nil,
-    },
-    codex = {
-      cmd = 'codex',
-      model = nil, -- nil = codex config.toml default
-      approval_policy = nil, -- nil | 'untrusted' | 'on-request' | 'never'
-      sandbox = nil, -- nil | 'read-only' | 'workspace-write' | 'danger-full-access'
-      effort = nil, -- nil | codex reasoning effort ('low'|'medium'|'high'|'xhigh')
-      extra_args = {}, -- extra args appended to `codex app-server`
-    },
-  },
-
-  -- Claude CLI (legacy top-level keys; see providers.claude above)
-  claude_cmd = 'claude',
-  permission_mode = nil, -- nil | 'acceptEdits' | 'auto' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan'
-  model = nil, -- nil | 'sonnet' | 'opus' | model string
-  extra_args = {}, -- additional CLI args
-
-  -- Layout
-  layout = 'horizontal', -- 'horizontal' | 'vertical'
-  prompt_height = 10, -- lines for prompt buffer (horizontal layout)
-  -- Max lines the prompt window will auto-grow to when the prompt content
-  -- (counted as wrapped display rows) exceeds prompt_height. Set to the same
-  -- value as prompt_height to disable auto-growth. Manual `:resize` on the
-  -- prompt window disables autosize until the next prompt clear/submit; the
-  -- :CcPromptAutosize command toggles it explicitly.
-  prompt_max_height = 30,
-
-  -- Folding
-  default_fold_level = 2, -- 0=minimal, 1=summaries, 2=inputs, 3=all
-  max_tool_result_lines = 50,
-  foldtext = nil, -- function(info)->string or nil for default; see output.default_foldtext
-
-  -- Tool input body formatter.
-  -- function(tool_name, input) -> string | nil
-  -- Return a string (newlines allowed) to render below the tool header.
-  -- Return nil to defer to the default formatter. Indentation is added by the renderer.
-  tool_input_format = nil,
-
-  -- History / resume
-  history_max_records = 500, -- cap records rendered on resume; older collapsed into a notice
-
-  -- Auto-rename: on the first prompt of a new session, ask `claude -p` for a
-  -- short descriptive title and apply it via the same path as `/rename`.
+  -- Auto-rename: on the first prompt of a new session, ask the active
+  -- provider for a short descriptive title and apply it via `/rename`.
   -- Skipped on resumed sessions (those already have a name) and on fixtures.
-  --   prompt: template sent to `claude -p`. `${prompt}` is substituted with
-  --     the user's first prompt text. Override to change output style
+  --   prompt: template sent to the naming command. `${prompt}` is substituted
+  --     with the user's first prompt text. Override to change output style
   --     (e.g. CamelCase, sentence case, language, length).
-  --   model: claude --model value for the rename query. Default `haiku`
-  --     keeps latency and cost low.
+  --   Naming models are configured with
+  --   providers.<provider>.auto_rename_model.
   --   timeout_ms: kill the rename subprocess if it has not exited by then.
   --   validate: function(raw_output) -> string | nil. Sanitizes / validates
   --     the model's stdout before it is applied. Return nil to reject.
@@ -71,143 +17,145 @@ local defaults = {
   --     quotes, drop trailing lines, cap at 64 chars.
   auto_rename = {
     enabled = true,
+    -- Display-only title while the rename subprocess is in flight.
+    -- Set to false or '' to disable.
+    placeholder = 'auto-generating-name...',
     prompt = 'Generate a very short, descriptive kebab-case name (2-5 hyphenated lowercase words) for this user prompt. Return only the name — no commentary, no quotes, no trailing punctuation.\n\nPrompt: ${prompt}',
-    model = 'haiku',
     timeout_ms = 30000,
     validate = nil,
-    -- Transient title shown in the statusline while the rename subprocess is
-    -- in flight. Cleared and replaced with the model's output on success, or
-    -- cleared silently on failure. Set to false or '' to disable the
-    -- placeholder (statusline shows no session title until the real name
-    -- lands).
-    placeholder = 'auto-generating-name...',
   },
 
-  -- Splash screen shown in the output window for new instances. Cleared on
-  -- the first prompt submit. Set to false to suppress.
-  splash = true,
+  -- Folding: 0=minimal, 1=summaries, 2=inputs, 3=all.
+  default_fold_level = 2,
 
-  -- Inline placeholder shown in the prompt buffer when it is empty.
-  -- Rendered as `virt_text` overlaid on line 1, highlighted with
-  -- `CcPromptPlaceholder` (defaults to `Comment`). Set to false or '' to
-  -- disable.
-  prompt_placeholder = 'Write prompt here. Press <Enter> in normal mode to submit.',
+  -- function(info) -> string; nil uses output.default_foldtext.
+  foldtext = nil,
 
-  -- Markdown highlighting in the output buffer. The output buffer's filetype
-  -- is cc-output (no global parser); a markdown TS parser is attached only to
-  -- the registered prose ranges so tool input/results stay untouched.
-  --   agent: highlight agent text + thinking blocks (streamed and historical)
-  --   user:  highlight user prompt content
+  -- Highlight overrides for cc-owned groups.
+  highlights = {
+    fold = nil, -- any nvim_set_hl spec, e.g. { fg, bg, italic, link, ... }
+  },
+
+  -- Maximum transcript records rendered when resuming.
+  history_max_records = 500,
+
+  keymaps = {
+    clear_prompt = '<C-l>',
+    cycle_permission_mode = '<S-Tab>',
+    goto_output = 'go',
+    goto_prompt = 'gp',
+    interrupt = '<C-c>',
+    submit = '<CR>',
+  },
+
+  layout = 'horizontal', -- 'horizontal' | 'vertical'
+
+  line_numbers = {
+    output = false,
+    prompt = false,
+  },
+
   markdown_highlight = {
     agent = true,
     user = true,
   },
 
-  -- Display
+  max_tool_result_lines = 50,
+
+  prompt_height = 10,
+
+  -- Set equal to prompt_height to disable automatic prompt growth.
+  prompt_max_height = 30,
+
+  -- Set to false or '' to disable the empty-prompt virtual text.
+  prompt_placeholder = 'Write prompt here. Press <Enter> in normal mode to submit.',
+
+  -- Active provider for new and resumed sessions.
+  provider = 'claude', -- 'claude' | 'codex'
+
+  providers = {
+    claude = {
+      auto_rename_model = 'haiku',
+      cmd = 'claude',
+      effort = 'medium', -- 'low'|'medium'|'high'|'xhigh'|'max'|'auto'
+      extra_args = {},
+      model = 'fable',
+      permission_mode = nil,
+    },
+    codex = {
+      approval_policy = nil, -- nil | 'untrusted' | 'on-request' | 'never'
+      auto_rename_model = 'gpt-5.6-luna',
+      cmd = 'codex',
+      effort = 'medium', -- 'low'|'medium'|'high'|'xhigh'|'max'|'auto'
+      extra_args = {}, -- appended to `codex app-server`
+      model = 'gpt-5.6-sol',
+      sandbox = nil, -- nil | 'read-only' | 'workspace-write' | 'danger-full-access'
+    },
+  },
+
   show_thinking = true,
-  -- Per-turn cost/usage line appended to the output buffer after each turn.
-  -- (Distinct from the session-cumulative tokens shown in the statusline.)
+
   show_turn_cost = true,
-  -- Formatter for that line. function(result) -> string | nil
-  -- `result` is the raw CLI result message; relevant fields are
-  -- result.total_cost_usd and result.usage.{input_tokens, output_tokens,
-  -- cache_creation_input_tokens, cache_read_input_tokens}. Return a string
-  -- (the inner text — the `  ── ... ──` wrapping is added by the renderer)
-  -- or nil to fall back to the default format.
-  turn_cost_format = nil,
-  tool_icons = {
-    use_nerdfont = nil, -- nil = auto-detect (nvim-web-devicons / mini.icons); true/false to force
-    default = nil, -- icon for unknown tools; nil uses built-in fallback
-    icons = {}, -- per-tool override map, e.g. { Read = '📖', Bash = '$' }
-  },
-  line_numbers = {
-    output = false, -- show line numbers in the output window
-    prompt = false, -- show line numbers in the prompt window
-  },
-  wrap = {
-    output = true, -- soft-wrap lines in the output window
-    prompt = true, -- soft-wrap lines in the prompt window
-  },
 
-  -- Highlight overrides for cc-owned groups. When left nil, built-in
-  -- defaults apply (and colorschemes defining the same group still win).
-  -- When set, the spec is applied unconditionally — use this to force
-  -- a look regardless of the active colorscheme.
-  highlights = {
-    -- Folded line in the output window. Builtin default is { bg = 'NONE' }
-    -- so the fold inherits the normal background (keeps folds visually
-    -- quiet). Accepts any nvim_set_hl spec: { fg, bg, italic, link, ... }.
-    fold = nil,
-  },
+  -- Set to false to suppress the new-session splash.
+  splash = true,
 
-  -- Statusline on the output window.
-  -- format = function(state) -> string (Neovim statusline syntax).
-  -- state fields: is_thinking, spinner_frame, total_tokens, input_tokens,
-  --   output_tokens, context_tokens, context_window, context_percent,
-  --   cost_usd, mode, branch, pr, effort, effort_setting, effort_resolved,
-  --   model, cli_version, session_name, session_id, remote_control,
-  --   provider. Fields are provider-dependent: cost_usd stays 0 for codex,
-  --   and mode shows the codex approval-policy/sandbox pair rather than a
-  --   Claude permission mode. Branch on state.provider to customize.
-  -- effort is the level to display; effort_setting is the raw user choice
-  -- ('auto' included); effort_resolved is true when effort was auto-resolved
-  -- from the CLI (setting is 'auto' but we know what it resolves to).
-  -- is_thinking is true from user submit through the final result message,
-  -- i.e. the whole span in which the agent is busy (including tool calls
-  -- and permission prompts).
-  -- spinner.use_nerdfont: nil (auto-detect), true, or false. nil defers to
-  -- nvim-web-devicons / mini.icons being loadable.
   statusline = {
-    enabled = true,
-    format = nil,
-    -- Context-window size exposed to format functions as state.context_window
-    -- (and used to compute state.context_percent). nil = derive from
-    -- session.model ([1m] suffix → 1,000,000; otherwise 200,000). Set an
-    -- integer to override.
+    -- nil derives from the model ([1m] → 1,000,000; otherwise 200,000).
     context_window = nil,
-    -- Glyph prefixed to the token count. Defaults to the Greek letter tau
-    -- (τ) — renders in every terminal and reads as "tokens" without needing
-    -- a Nerd Font. Users can override with any string (e.g. a Nerd Font
-    -- glyph like '\u{f51e}' for fa-coins).
-    tokens_icon = 'τ',
+    enabled = true,
+    format = nil, -- function(state) -> Neovim statusline string
     spinner = {
-      -- nil = auto-detect (mirrors tool_icons.use_nerdfont); true/false forces.
-      use_nerdfont = nil,
-      -- Active frames. nil => resolve from frames_nerdfont / frames_unicode
-      -- based on use_nerdfont. Users may set any of these three.
       frames = nil,
-      -- Nerd Font fa-hourglass cycle (U+F254, U+F251, U+F252, U+F253).
       frames_nerdfont = {
         '\xef\x89\x94',
         '\xef\x89\x91',
         '\xef\x89\x92',
         '\xef\x89\x93',
       },
-      -- Plain Unicode braille cycle — renders in any terminal.
       frames_unicode = { '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏' },
       interval_ms = 500,
+      use_nerdfont = nil,
     },
+    tokens_icon = 'τ',
   },
 
-  -- Keymaps
-  keymaps = {
-    submit = '<CR>', -- prompt buffer, normal mode
-    interrupt = '<C-c>',
-    clear_prompt = '<C-l>',
-    goto_prompt = 'gp', -- output buffer
-    goto_output = 'go', -- prompt buffer
-    -- Shift+Tab cycles default → acceptEdits → plan → default, matching the
-    -- upstream Claude Code TUI. Bound in both prompt and output buffers.
-    -- Set to false to disable.
-    cycle_permission_mode = '<S-Tab>',
+  tool_icons = {
+    default = nil,
+    icons = {},
+    use_nerdfont = nil,
+  },
+
+  -- function(tool_name, input) -> string | nil
+  tool_input_format = nil,
+
+  -- function(result) -> string | nil
+  turn_cost_format = nil,
+
+  wrap = {
+    output = true,
+    prompt = true,
   },
 }
 
 M.options = vim.deepcopy(defaults)
 
+local REMOVED_CLAUDE_KEYS = {
+  'claude_cmd',
+  'extra_args',
+  'model',
+  'permission_mode',
+}
+
 ---@param opts table?
 function M.setup(opts)
   M.options = vim.tbl_deep_extend('force', vim.deepcopy(defaults), opts or {})
+  -- These former top-level Claude settings are intentionally unsupported.
+  -- Drop them even if an old setup table still supplies them so no caller
+  -- can accidentally observe or revive the compatibility path.
+  for _, key in ipairs(REMOVED_CLAUDE_KEYS) do
+    M.options[key] = nil
+  end
   -- Re-apply highlight defaults so config.highlights overrides from setup()
   -- take effect (plugin/cc.lua ran set_defaults before setup was called).
   pcall(require('cc.highlight').set_defaults)

@@ -32,7 +32,7 @@ local function gen_uuid()
   return h(8) .. '-' .. h(4) .. '-4' .. h(3) .. '-' .. h(4) .. '-' .. h(8) .. h(4)
 end
 
----@param opts { claude_cmd: string, cwd: string?, session_id: string?, permission_mode: string?, model: string?, extra_args: string[]?, on_message: fun(msg: table), on_stderr: fun(data: string)?, on_exit: fun(code: integer, signal: integer)? }
+---@param opts { cmd: string, cwd: string?, session_id: string?, permission_mode: string?, model: string?, effort: string?, extra_args: string[]?, on_message: fun(msg: table), on_stderr: fun(data: string)?, on_exit: fun(code: integer, signal: integer)? }
 function M.new(opts)
   return setmetatable({
     opts = opts,
@@ -82,11 +82,11 @@ function Process:spawn()
     table.insert(args, a)
   end
 
-  local handle, pid = uv.spawn(self.opts.claude_cmd, {
+  local handle, pid = uv.spawn(self.opts.cmd, {
     args = args,
     stdio = { self.stdin, self.stdout, self.stderr },
     cwd = self.opts.cwd or vim.fn.getcwd(),
-    env = require('cc.effort').spawn_env(),
+    env = require('cc.effort').spawn_env(self.opts.effort),
   }, function(code, signal)
     vim.schedule(function()
       self.alive = false

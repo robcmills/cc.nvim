@@ -162,4 +162,76 @@ T['custom_validate']['user validate function replaces the default'] = function()
   eq(out, 'HELLO-WORLD')
 end
 
+-- ---------------------------------------------------------------------------
+-- provider worker
+-- ---------------------------------------------------------------------------
+T['provider_worker'] = MiniTest.new_set()
+
+T['provider_worker']['waits for stdout EOF before applying title'] = function()
+  local out = _G.child.lua_get([[(function()
+    require('cc.config').setup({
+      auto_rename = { enabled = true, prompt = '${prompt}', placeholder = false },
+    })
+    local inst
+    local provider = {
+      auto_rename_spec = function()
+        return {
+          cmd = 'sh',
+          args = { '-c', 'printf generated-from-stdout' },
+        }
+      end,
+      rename = function(_, name, cb)
+        inst.applied_name = name
+        if cb then cb(true) end
+        return true
+      end,
+    }
+    inst = { provider = provider, session = { turns = {} } }
+    require('cc.auto_rename').start(inst, 'ignored')
+    vim.wait(2000, function() return inst.auto_rename_in_flight == false end, 10)
+    return {
+      name = inst.applied_name,
+      in_flight = inst.auto_rename_in_flight,
+    }
+  end)()]])
+  eq(out.name, 'generated-from-stdout')
+  eq(out.in_flight, false)
+end
+
+T['provider_worker']['reads and cleans provider output file'] = function()
+  local out = _G.child.lua_get([[(function()
+    require('cc.config').setup({
+      auto_rename = { enabled = true, prompt = '${prompt}', placeholder = false },
+    })
+    local inst
+    local output_path
+    local provider = {
+      auto_rename_spec = function()
+        output_path = vim.fn.tempname()
+        return {
+          cmd = 'sh',
+          args = { '-c', 'printf generated-from-file > "$1"', 'cc-auto-rename',
+            output_path },
+          output_path = output_path,
+          cleanup = function() pcall((vim.uv or vim.loop).fs_unlink, output_path) end,
+        }
+      end,
+      rename = function(_, name, cb)
+        inst.applied_name = name
+        if cb then cb(true) end
+        return true
+      end,
+    }
+    inst = { provider = provider, session = { turns = {} } }
+    require('cc.auto_rename').start(inst, 'ignored')
+    vim.wait(2000, function() return inst.auto_rename_in_flight == false end, 10)
+    return {
+      name = inst.applied_name,
+      output_removed = (vim.uv or vim.loop).fs_stat(output_path) == nil,
+    }
+  end)()]])
+  eq(out.name, 'generated-from-file')
+  eq(out.output_removed, true)
+end
+
 return T

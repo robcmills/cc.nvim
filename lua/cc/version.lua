@@ -62,10 +62,10 @@ local function probe_latest()
 end
 
 ---@param on_update function? called if the background probe populates the value
----@param cmd string? CLI binary to probe; defaults to the configured claude cmd
+---@param cmd string? CLI binary to probe; defaults to the configured Claude cmd
 ---@return string?
 function M.get(on_update, cmd)
-  cmd = cmd or require('cc.config').options.claude_cmd
+  cmd = cmd or require('cc.providers.claude').options().cmd
   local entry = by_cmd[cmd]
   if not entry then
     entry = { probed = false, value = nil }
