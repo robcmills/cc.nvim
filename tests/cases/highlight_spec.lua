@@ -155,6 +155,61 @@ T['highlight_groups']['CcDiffHunk syntax match is defined'] = function()
   eq(_G.child.lua_get('_G._test_syn_exists'), true)
 end
 
+T['highlight_groups']['Codex paths and 6-space diffs are highlighted'] = function()
+  _G.child.lua([==[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    require('cc.config').setup({})
+    local output = Output.new(Session.new(), 'cc-test-codex-edit-highlights')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+    output:begin_assistant_turn()
+    output:on_content_block_start({ type = 'tool_use', id = 'f1', name = 'FileChange' })
+    output:on_content_block_stop({
+      type = 'tool_use',
+      id = 'f1',
+      name = 'FileChange',
+      input = {
+        changes = {
+          {
+            path = '/tmp/README.md',
+            kind = { type = 'update' },
+            diff = '@@ -1 +1 @@\n-old\n+new',
+          },
+          {
+            path = '/tmp/provider.lua',
+            kind = { type = 'update' },
+            diff = '@@ -1 +1 @@\n-local enabled = false\n+local enabled = true',
+          },
+        },
+      },
+    }, { historical = true })
+    _G._test_bufnr = bufnr
+  ]==])
+
+  local lines = helpers.get_buffer_lines(_G.child)
+  local expected = {
+    ['/tmp/README.md'] = 'CcDiffPath',
+    ['/tmp/provider.lua'] = 'CcDiffPath',
+    ['@@ -1 +1 @@'] = 'CcDiffHunk',
+    ['-old'] = 'CcDiffDelete',
+    ['+new'] = 'CcDiffAdd',
+  }
+  for needle, group in pairs(expected) do
+    local found = false
+    for row, line in ipairs(lines) do
+      local col = line:find(needle, 1, true)
+      local is_body_path = group ~= 'CcDiffPath' or line:sub(1, 4) == '    '
+      if col and is_body_path then
+        assert_hl_in_stack(_G.child, row, col, group)
+        found = true
+        break
+      end
+    end
+    if not found then error('No rendered Codex edit row containing ' .. needle) end
+  end
+end
+
 -- Regression: when the cc-output buffer was filetype=markdown, vim's
 -- runtime markdown.vim loaded html.vim, whose "bogus comment" region (start
 -- `<!`, end `>`) rendered intervening content as htmlCommentError -> Error
@@ -458,7 +513,7 @@ T['highlight_groups']['all default groups exist'] = function()
     _G._hl_groups = {}
     local groups = {'CcUser', 'CcAgent', 'CcTool', 'CcOutput', 'CcError',
                     'CcCost', 'CcNotice', 'CcHook', 'CcPermission', 'CcCaret',
-                    'CcDiffAdd', 'CcDiffDelete', 'CcDiffHunk'}
+                    'CcDiffAdd', 'CcDiffDelete', 'CcDiffHunk', 'CcDiffPath'}
     for _, name in ipairs(groups) do
       local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name })
       _G._hl_groups[name] = ok and next(hl) ~= nil

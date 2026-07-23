@@ -21,6 +21,7 @@ local defaults = {
   CcDiffAdd    = { link = 'DiffAdd' },
   CcDiffDelete = { link = 'DiffDelete' },
   CcDiffHunk   = { link = 'DiffChange' },
+  CcDiffPath   = { link = 'Directory' },
   -- TodoWrite item status icons
   CcTodoCompleted  = { fg = '#a9e39a' }, -- light green
   CcTodoInProgress = { fg = '#e6c07b' }, -- warm yellow
@@ -79,7 +80,7 @@ end
 function M.apply_buffer_syntax(bufnr)
   vim.api.nvim_buf_call(bufnr, function()
     -- Clear any prior cc syntax to avoid duplicates on reopen.
-    pcall(vim.cmd, 'syntax clear CcUser CcAgent CcTool CcOutput CcError CcCost CcThinking CcNotice CcHook CcPermission CcToolInput CcToolTiming CcDiffAdd CcDiffDelete CcDiffHunk CcTodoCompleted CcTodoInProgress CcTodoIncomplete')
+    pcall(vim.cmd, 'syntax clear CcUser CcAgent CcTool CcOutput CcError CcCost CcThinking CcNotice CcHook CcPermission CcToolInput CcToolTiming CcDiffAdd CcDiffDelete CcDiffHunk CcDiffPath CcTodoCompleted CcTodoInProgress CcTodoIncomplete')
 
     -- Filetype is cc-output so vim's runtime markdown.vim/html.vim shouldn't
     -- load on its own. But user plugins occasionally `runtime! syntax/html.vim`
@@ -130,6 +131,14 @@ function M.apply_buffer_syntax(bufnr)
     vim.cmd([[syntax match CcDiffAdd    /^ \{8\}\zs+.*$/ containedin=ALL]])
     vim.cmd([[syntax match CcDiffDelete /^ \{8\}\zs-.*$/ containedin=ALL]])
     vim.cmd([[syntax match CcDiffHunk   /^ \{8\}\zs@@.*@@$/ containedin=ALL]])
+
+    -- Codex FileChange bodies add a per-file path at 4 spaces, then indent
+    -- the supplied unified diff by another 2 spaces. Keep Claude's 8-space
+    -- rules above and add the Codex-specific 6-space form alongside them.
+    vim.cmd([[syntax match CcDiffPath   /^ \{4\}\zs.*\ze (\%(add\|delete\|move\|rename\|update\))$/ containedin=ALL]])
+    vim.cmd([[syntax match CcDiffAdd    /^ \{6\}\zs+.*$/ containedin=ALL]])
+    vim.cmd([[syntax match CcDiffDelete /^ \{6\}\zs-.*$/ containedin=ALL]])
+    vim.cmd([[syntax match CcDiffHunk   /^ \{6\}\zs@@.*@@$/ containedin=ALL]])
 
     -- TodoWrite item icons. Glyphs must match output.lua's todo_marker().
     vim.cmd([[syntax match CcTodoCompleted  /^\s\+\zs✓\ze\s/ containedin=ALL]])

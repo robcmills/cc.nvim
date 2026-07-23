@@ -159,6 +159,56 @@ T['diff_fragments']['legacy render_edit returns lines only'] = function()
   eq(_G.child.lua_get('_G._t_first_is_string'), true)
 end
 
+T['diff_fragments']['Codex multi-file diffs yield per-language fragments'] = function()
+  _G.child.lua([[
+    local output = require('cc.output')
+    local body = output._default_tool_body('FileChange', {
+      changes = {
+        {
+          path = '/tmp/README.md',
+          kind = { type = 'update' },
+          diff = '@@ -1,2 +1,2 @@\n # Title\n-old text\n+new text',
+        },
+        {
+          path = '/tmp/provider.lua',
+          kind = { type = 'update' },
+          diff = '@@ -1 +1 @@\n-local enabled = false\n+local enabled = true',
+        },
+      },
+    })
+    _G._t_lines = body.lines
+    _G._t_n_snips = #body.snippets
+    _G._t_langs = {}
+    _G._t_maps_ok = true
+    for _, snip in ipairs(body.snippets) do
+      table.insert(_G._t_langs, snip.lang)
+      local source_rows = vim.split(snip.fragment.text, '\n', { plain = true })
+      for i, m in ipairs(snip.fragment.row_map) do
+        local line = body.lines[m.body_idx + 1]
+        if not line or line:sub(m.col_offset + 1) ~= source_rows[i] then
+          _G._t_maps_ok = false
+        end
+      end
+    end
+  ]])
+
+  eq(_G.child.lua_get('_G._t_lines'), {
+    '/tmp/README.md (update)',
+    '  @@ -1,2 +1,2 @@',
+    '   # Title',
+    '  -old text',
+    '  +new text',
+    '/tmp/provider.lua (update)',
+    '  @@ -1 +1 @@',
+    '  -local enabled = false',
+    '  +local enabled = true',
+  })
+  eq(_G.child.lua_get('_G._t_n_snips'), 4)
+  eq(_G.child.lua_get('_G._t_langs'),
+    { 'markdown', 'markdown', 'lua', 'lua' })
+  eq(_G.child.lua_get('_G._t_maps_ok'), true)
+end
+
 T['yaml_scalar'] = MiniTest.new_set()
 
 T['yaml_scalar']['extracts block scalar (multi-line value)'] = function()

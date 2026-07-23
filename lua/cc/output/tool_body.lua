@@ -281,18 +281,35 @@ function M.default_tool_body(tool_name, input)
     return lines
   elseif tool_name == 'FileChange' and type(input.changes) == 'table' then
     -- Codex fileChange item: changes[] of { path, kind, diff } where diff is
-    -- an app-server-supplied unified diff. Render the diff verbatim.
+    -- an app-server-supplied unified diff. Each path introduces a separately
+    -- indented diff, so build per-file TS fragments with body-relative maps.
     local lines = {}
+    local snippets = {}
+    local diff = require('cc.diff')
+    local tshl = require('cc.tshl')
     for _, ch in ipairs(input.changes) do
       local kind = type(ch.kind) == 'table' and ch.kind.type or tostring(ch.kind or 'update')
       table.insert(lines, string.format('%s (%s)', tostring(ch.path or '?'), kind))
       if type(ch.diff) == 'string' and ch.diff ~= '' then
-        for _, dl in ipairs(vim.split(ch.diff, '\n', { plain = true })) do
+        local diff_start = #lines
+        local diff_lines = vim.split(ch.diff, '\n', { plain = true })
+        for _, dl in ipairs(diff_lines) do
           table.insert(lines, '  ' .. dl)
+        end
+        local lang = tshl.lang_for_path(ch.path)
+        if lang then
+          -- Within body_lines, source starts after "  " + the diff glyph.
+          local fragments = diff.fragments_from_unified(ch.diff, diff_start, 3)
+          if fragments.after then
+            table.insert(snippets, { lang = lang, fragment = fragments.after })
+          end
+          if fragments.before then
+            table.insert(snippets, { lang = lang, fragment = fragments.before })
+          end
         end
       end
     end
-    return lines
+    return { lines = lines, snippets = snippets }
   end
   -- `description` and other fields already shown in the fold summary header.
   local read_skip = { file_path = true, offset = true, limit = true }

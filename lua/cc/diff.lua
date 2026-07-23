@@ -119,6 +119,66 @@ function M.render_edit_with_fragments(old_string, new_string)
   }
 end
 
+--- Reconstruct before/after source fragments from an already-rendered unified
+--- diff. This is used for Codex fileChange items, which supply the unified
+--- diff directly instead of old_string/new_string pairs.
+---
+--- `body_offset` is the 0-indexed body line where the first diff row will be
+--- rendered. `col_offset` is the body column where the source text begins
+--- after the renderer's indentation and the unified-diff glyph.
+---@param diff_text string?
+---@param body_offset integer?
+---@param col_offset integer?
+---@return { before: table?, after: table? }
+function M.fragments_from_unified(diff_text, body_offset, col_offset)
+  if type(diff_text) ~= 'string' or diff_text == '' then return {} end
+  body_offset = body_offset or 0
+  col_offset = col_offset or 1
+
+  local before_rows, before_idx = {}, {}
+  local after_rows, after_idx = {}, {}
+
+  for i, raw in ipairs(vim.split(diff_text, '\n', { plain = true })) do
+    local glyph = raw:sub(1, 1)
+    local is_metadata = raw:sub(1, 2) == '@@'
+      or raw:match('^diff %-%-git ')
+      or raw:match('^index ')
+      or raw:match('^%-%-%- ')
+      or raw:match('^%+%+%+ ')
+      or raw:match('^\\ No newline at end of file$')
+    if not is_metadata then
+      local code = raw:sub(2)
+      local body_idx = body_offset + i - 1
+      if glyph == '+' then
+        table.insert(after_rows, code)
+        table.insert(after_idx, body_idx)
+      elseif glyph == '-' then
+        table.insert(before_rows, code)
+        table.insert(before_idx, body_idx)
+      elseif glyph == ' ' then
+        table.insert(after_rows, code)
+        table.insert(after_idx, body_idx)
+        table.insert(before_rows, code)
+        table.insert(before_idx, body_idx)
+      end
+    end
+  end
+
+  local function build(rows, idx)
+    if #rows == 0 then return nil end
+    local row_map = {}
+    for i, body_idx in ipairs(idx) do
+      row_map[i] = { body_idx = body_idx, col_offset = col_offset }
+    end
+    return { text = table.concat(rows, '\n'), row_map = row_map }
+  end
+
+  return {
+    after = build(after_rows, after_idx),
+    before = build(before_rows, before_idx),
+  }
+end
+
 --- Render the initial content of a Write tool call (no diff vs disk —
 --- we'd need to read the file and we don't want side effects).
 ---@param content string?
