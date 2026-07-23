@@ -4,6 +4,7 @@
   + [x] fix codex edit highlighting
 - [ ] add ability to switch /effort at runtime
 - [ ] add ability to switch /model at runtime
+- [ ] make effort values configurable (defaults to current known values, but this enables users to fix changes before cc.nvim can be updated)
 
 - [ ] fix when :CcNew is invoked and the only buffer is my custom VerticalBuffers plugin
 

@@ -1,20 +1,26 @@
 # cc.nvim
 
-A Neovim-native coding agent plugin built on the Claude Code CLI. Replaces the
-Claude Code TUI with two Neovim buffers: an editable markdown prompt and a
-foldable, progressive-disclosure output buffer. The same UI can also drive
-OpenAI's Codex CLI — see [Codex CLI support](#codex-cli-support).
+A neovim-native coding agent wrapper.
+Works with Claude Code and Codex CLIs.
+Replaces TUI with a vertical split:
+
+- foldable tree display of chat and tool calls
+- editable markdown prompt buffer
+
+Both are native neovim buffers.
 
 <img src="assets/demo-screenshot.png" alt="cc.nvim screenshot1" width="800">
 <img src="assets/cc-nvim.png" alt="cc.nvim screenshot2" width="800">
 
 ## Why
 
-I built this because I kept running into the same pain points using the
-Claude Code TUI day-to-day, and eventually wanted a better UI for myself.
-Most of these are well-documented in the `anthropics/claude-code` issue
-tracker; cc.nvim sidesteps them by rendering into regular Neovim buffers
-instead of taking over the terminal:
+- I love neovim and dislike TUIs.
+- I just wanted a simple markdown buffer to edit my prompts in, with all the key bindings I'm used to.
+- I like the foldable tree as a way of visualizing agent sessions.
+- I'm obsessed with customizing my workflows. I hated having little control over the TUI.
+
+Additionally, there were some issues with claude code when I built this,
+(that may be out-of-date today):
 
 - **Scrollback:** Since the TUI switched to an alternate screen
   buffer ([#42670](https://github.com/anthropics/claude-code/issues/42670),
@@ -60,10 +66,10 @@ instead of taking over the terminal:
   `:CcFold 0..3` toggles global disclosure levels. Foldlevel 1 is great for
   scanning sessions at a glance. Then open folds to dig in.
 
-On top of avoiding the pain points above, cc.nvim uses the `claude` CLI
+On top of avoiding the pain points above, cc.nvim uses the `claude/codex` CLI
 directly (zero extra dependencies beyond what you already have), so all
-Claude Code features — skills, hooks, MCP servers, `CLAUDE.md`, your team
-subscription auth — work out-of-the-box unmodified.
+Claude Code/Codex features — commands, skills, hooks, MCP servers, your team
+subscription auth, etc. — work out-of-the-box unmodified.
 
 ## Make it yours
 
@@ -92,9 +98,6 @@ Nearly every visible element is configurable:
 - **Layout knobs.** `layout = 'horizontal' | 'vertical'`, `prompt_height`,
   per-window `line_numbers` and `wrap`, `default_fold_level`,
   `max_tool_result_lines`, custom `foldtext` function.
-- **Themes + interactive theme picker** *(coming soon).* A built-in
-  gallery of visual mocks for every tool/turn type, with live theme
-  switching so you can see your changes in real time.
 
 See [Configuration](#configuration) and [Highlights](#highlights) for the
 full list.
@@ -102,10 +105,7 @@ full list.
 ## Requirements
 
 - Neovim **0.10+** (required for inline `virt_text` carets)
-- `claude` CLI in `$PATH`, version **2.1+** (for `--include-partial-messages`)
-- Optional: `codex` CLI in `$PATH` if you set `provider = 'codex'` — must
-  support the `codex app-server` subcommand; verified against **0.144.x**
-  (see [Codex CLI support](#codex-cli-support))
+- `claude` or `codex` CLI in `$PATH`
 - Optional: [nvim-cmp](https://github.com/hrsh7th/nvim-cmp) for richer slash
   command completion (an omnifunc fallback ships for users without it)
 
