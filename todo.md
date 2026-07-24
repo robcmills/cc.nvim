@@ -1,34 +1,17 @@
-- [ ] codex support
-  + [x] fix permission mode naming
-  + [x] fix autoname
-  + [x] fix codex edit highlighting
-- [ ] add ability to switch /effort at runtime
-- [ ] add ability to switch /model at runtime
-- [ ] make effort values configurable (defaults to current known values, but this enables users to fix changes before cc.nvim can be updated)
-
+- [ ] audit token usage in statusline for codex accuracy
+- [ ] audit codex repo against cc.nvim repo for accuracy
+- [ ] remove CcPeek
 - [ ] fix when :CcNew is invoked and the only buffer is my custom VerticalBuffers plugin
+- [ ] prevent :CcNew when active buffer is a floating permission window
+- [ ] Better handling and exposure of error messages (401 logged out)
 
-- [ ] interrupted agent turns' time/token usage stamp should omit cost and token counts (because it is inaccurate)
-  example:
-```
-  Committed and pushed `9ccc2ece03` to `rob/app-modules` — 28 files, 716 insertions. Lint, prettier, and LSP diagnostics were all clean before staging; the commit includes your README and AlphaProviders edits (ToastProvider removal) along with the api move and new route-one components.
-  ── 2026-06-12T22:59:27Z │ 1m 25s │ $8.2650 │ 144 in │ 2546 out │ 1027k cache read │ 11.8k cache write ──
 
-User:
-  update pr description to account for these modular app api paradigms
-
-Agent:
-  ∴ Thinking... 
-  ── Interrupted ──
-  ── 2026-06-12T23:06:15Z │ 5s │ $8.2650 ──
-```
+## Maybe Do
 
 - [ ] using skills aliases confuses autoname (wd)
-- [ ] prevent :CcNew when active buffer is a floating permission window
 - [ ] ensure sessions named in cc.nvim appear in claude code /resume and vice versa
 - [ ] e2e tests are taking too long
 - [ ] What happens when a permission request occurs in cc.nvim instance A, but instance B is active
-- [ ] Better handling and exposure of error messages (401 logged out)
 - [ ] Implement /login /logout support
 - [ ] Improve /command completions (add descriptions, etc.)
 - [ ] Add configurable markdown highlighting for Subagent prompts
@@ -45,6 +28,16 @@ Agent:
 - [ ] Add support for /compact (requires brainstorming)
 - [ ] Add CcPrompts (like skills but just the prompt, not so verbose)
 
+
+## Done
+
+- [x] interrupted agent turns' time/token usage stamp should omit cost and token counts (because it is inaccurate)
+- [x] add ability to switch /effort at runtime
+- [x] add ability to switch /model at runtime
+- [x] codex support
+  + [x] fix permission mode naming
+  + [x] fix autoname
+  + [x] fix codex edit highlighting
 - [x] Add session timing info
 - [x] add timestamps to end-of-turn token counts
 - [x] bugfix: interrupted tool call timer never stops
