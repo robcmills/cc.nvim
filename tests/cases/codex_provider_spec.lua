@@ -161,6 +161,43 @@ T['handshake']['resume path calls thread/resume and replays turns'] = function()
         type = 'function_call_output', call_id = 'call-c0',
         output = 'Chunk ID: x\nProcess exited with code 0\nOutput:\nfile.txt\n',
       }),
+      rollout({
+        type = 'custom_tool_call', name = 'exec', call_id = 'call-c1',
+        input = 'const r = await tools.exec_command(' .. vim.json.encode({
+          cmd = 'printf custom-output', workdir = '/tmp',
+          yield_time_ms = 10000, max_output_tokens = 30000,
+        }) .. '); text(r.output);\n',
+      }),
+      rollout({
+        type = 'custom_tool_call_output', call_id = 'call-c1',
+        output = {
+          { type = 'input_text',
+            text = 'Script completed\nWall time 0.1 seconds\nOutput:\n' },
+          { type = 'input_text', text = 'plain-result' },
+        },
+      }),
+      rollout({
+        type = 'custom_tool_call', name = 'exec', call_id = 'call-c2',
+        input = 'const results = await Promise.all([\n'
+          .. '  tools.exec_command(' .. vim.json.encode({
+            cmd = 'printf first', workdir = '/tmp',
+          }) .. '),\n'
+          .. '  tools.exec_command(' .. vim.json.encode({
+            cmd = 'printf second } quoted', workdir = '/tmp',
+          }) .. ')\n'
+          .. ']); text(JSON.stringify(results));\n',
+      }),
+      rollout({
+        type = 'custom_tool_call_output', call_id = 'call-c2',
+        output = {
+          { type = 'input_text',
+            text = 'Script completed\nWall time 0.1 seconds\nOutput:\n' },
+          { type = 'input_text', text = vim.json.encode({
+            { exit_code = 0, output = 'first-output' },
+            { exit_code = 1, output = 'second-output' },
+          }) },
+        },
+      }),
     }, rollout_path)
     _G._test_rollout_path = rollout_path
     local req
@@ -197,16 +234,25 @@ T['handshake']['resume path calls thread/resume and replays turns'] = function()
   eq(text:find('Bash:', 1, true) ~= nil, true)
   eq(text:find('\n    ls', 1, true) ~= nil, true)
   eq(text:find('file.txt', 1, true) ~= nil, true)
+  eq(text:find('\n    printf custom-output', 1, true) ~= nil, true)
+  eq(text:find('plain-result', 1, true) ~= nil, true)
+  eq(text:find('\n    printf first', 1, true) ~= nil, true)
+  eq(text:find('first-output', 1, true) ~= nil, true)
+  eq(text:find('\n    printf second } quoted', 1, true) ~= nil, true)
+  eq(text:find('second-output', 1, true) ~= nil, true)
+  eq(text:find('exit 1', 1, true) ~= nil, true)
   eq(text:find('resumed thread%-9') ~= nil, true)
   _G.child.lua([==[
     local lines = vim.api.nvim_buf_get_lines(_G._test_bufnr, 0, -1, false)
     local header_lnum
+    local bash_headers = 0
     for i, line in ipairs(lines) do
       if line:match('Bash:$') then
+        bash_headers = bash_headers + 1
         header_lnum = i
-        break
       end
     end
+    _G._test_bash_headers = bash_headers
     local winid = vim.fn.bufwinid(_G._test_bufnr)
     vim.api.nvim_win_call(winid, function()
       vim.wo.foldlevel = 1
@@ -214,6 +260,7 @@ T['handshake']['resume path calls thread/resume and replays turns'] = function()
       _G._test_bash_foldtext = vim.fn.foldtextresult(header_lnum)
     end)
   ]==])
+  eq(_G.child.lua_get('_G._test_bash_headers'), 4)
   eq(_G.child.lua_get('_G._test_bash_foldtext'):find('Bash:', 1, true) ~= nil, true)
 end
 

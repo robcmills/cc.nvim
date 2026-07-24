@@ -142,6 +142,82 @@ T['applied_folds']['tool result content is inside closed fold at default level']
   eq(_G.child.lua_get('_G._flv_content'), 3)
 end
 
+T['applied_folds']['history finalization closes results before output focus'] = function()
+  _G.child.lua([[
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    require('cc.config').setup({})
+
+    -- Install the output buffer into a window that is not focused. This is the
+    -- resume/reuse path where BufWinEnter cannot initialize window options.
+    local original_winid = vim.api.nvim_get_current_win()
+    vim.cmd('split')
+    local output_winid = vim.api.nvim_get_current_win()
+    vim.api.nvim_set_current_win(original_winid)
+    local output = Output.new(Session.new(), 'cc-test-inactive-history')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_win_set_buf(output_winid, bufnr)
+    output:set_window(output_winid)
+    vim.wo[output_winid].wrap = false
+
+    local prompt_lines = {}
+    for i = 1, 25 do prompt_lines[i] = 'history line ' .. i end
+    output:render_user_turn(table.concat(prompt_lines, '\n'))
+    output:begin_assistant_turn()
+    output:on_content_block_start({ type = 'tool_use', id = 't1', name = 'Bash' })
+    output:on_content_block_stop({
+      type = 'tool_use', id = 't1', name = 'Bash', input = { command = 'printf hi' },
+    }, { historical = true })
+    local result_lines = {}
+    for i = 1, 20 do result_lines[i] = 'result line ' .. i end
+    output:render_tool_result('t1', table.concat(result_lines, '\n'), false)
+    output:render_notice('resumed history')
+
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local output_lnum
+    for i, line in ipairs(lines) do
+      if line:match('Output:') then output_lnum = i; break end
+    end
+
+    -- Recreate the pre-finalization viewport: the long result is expanded and
+    -- the last line is bottom-anchored. Collapsing the result shrinks the
+    -- display above the cursor, so history finalization must run zb again.
+    vim.api.nvim_win_set_cursor(output_winid, { output_lnum, 0 })
+    vim.fn.win_execute(output_winid, 'silent! normal! zo')
+    local last_lnum = vim.api.nvim_buf_line_count(bufnr)
+    vim.api.nvim_win_set_cursor(output_winid, { last_lnum, 0 })
+    vim.fn.win_execute(output_winid, 'silent! normal! zb')
+
+    _G._focus_before_finalize = vim.api.nvim_get_current_win()
+    output:finalize_history_replay()
+    vim.g._history_fold_before_focus = -99
+    vim.g._history_view_before_focus = {}
+    vim.fn.win_execute(output_winid,
+      'let g:_history_fold_before_focus = foldclosed(' .. output_lnum .. ')'
+      .. ' | let g:_history_view_before_focus = {'
+      .. '"cursor": line("."), "botline": line("w$"),'
+      .. '"winline": winline(), "height": winheight(0)}')
+    _G._focus_after_finalize = vim.api.nvim_get_current_win()
+    _G._history_foldmethod_before_focus = vim.wo[output_winid].foldmethod
+
+    vim.api.nvim_set_current_win(output_winid)
+    _G._history_fold_after_focus = vim.fn.foldclosed(output_lnum)
+    _G._history_output_lnum = output_lnum
+    _G._history_last_lnum = last_lnum
+  ]])
+  eq(_G.child.lua_get('_G._focus_after_finalize'),
+    _G.child.lua_get('_G._focus_before_finalize'))
+  eq(_G.child.lua_get('_G._history_foldmethod_before_focus'), 'expr')
+  local output_lnum = _G.child.lua_get('_G._history_output_lnum')
+  eq(_G.child.lua_get('vim.g._history_fold_before_focus'), output_lnum)
+  eq(_G.child.lua_get('_G._history_fold_after_focus'), output_lnum)
+  local view = _G.child.lua_get('vim.g._history_view_before_focus')
+  local last_lnum = _G.child.lua_get('_G._history_last_lnum')
+  eq(view.cursor, last_lnum)
+  eq(view.botline, last_lnum)
+  eq(view.winline, view.height)
+end
+
 T['win_enter'] = MiniTest.new_set()
 
 -- Regression: re-entering the output window must not reset the user's
@@ -166,6 +242,26 @@ T['win_enter']['re-entering window preserves user foldlevel'] = function()
     vim.api.nvim_win_close(other, true)
   ]])
   eq(_G.child.lua_get('_G._foldlevel_after'), 99)
+end
+
+T['win_enter']['re-entering window preserves explicit foldenable choice'] = function()
+  helpers.render_fixture(_G.child, 'tool_read')
+  _G.child.lua([[
+    local bufnr = _G._test_bufnr
+    local winid
+    for _, w in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_buf(w) == bufnr then winid = w; break end
+    end
+    -- Equivalent to the user invoking zi.
+    vim.wo[winid].foldenable = false
+    vim.cmd('vsplit')
+    local other = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_buf(other, vim.api.nvim_create_buf(false, true))
+    vim.api.nvim_set_current_win(winid)
+    vim.api.nvim_exec_autocmds('WinEnter', { buffer = bufnr })
+    _G._foldenable_after = vim.wo[winid].foldenable
+  ]])
+  eq(_G.child.lua_get('_G._foldenable_after'), false)
 end
 
 -- Regression: navigating away from cc (replacing the cc buffer in a window

@@ -380,6 +380,7 @@ function Codex:_on_thread_ready(result, resumed)
     restore_rollout_commands(thread)
     self:_replay_turns(thread.turns or {})
     self.output:render_notice('resumed ' .. tostring(thread.id):sub(1, 8))
+    self.output:finalize_history_replay()
   end
   if self.on_session_id and thread.id then
     self.on_session_id(thread.id)
@@ -896,10 +897,126 @@ function Codex:_render_prose(text, kind)
   self.output:on_content_block_stop({ type = kind })
 end
 
---- Restore exec_command calls omitted from app-server's persisted ThreadItem
+--- Extract JSON exec_command arguments from a custom `exec` tool's JavaScript.
+--- The orchestrator serializes each nested call as
+--- `tools.exec_command(<JSON object>)`; scan balanced braces so commands may
+--- contain quotes, newlines, or braces of their own.
+---@param source any
+---@return table[]
+local function custom_exec_args(source)
+  if type(source) ~= 'string' or source == '' then return {} end
+  local found = {}
+  local from = 1
+  while from <= #source do
+    local _, _, object_start = source:find('tools%.exec_command%s*%(%s*()', from)
+    if not object_start or source:sub(object_start, object_start) ~= '{' then break end
+
+    local depth = 0
+    local quoted = false
+    local escaped = false
+    local object_end
+    for i = object_start, #source do
+      local ch = source:sub(i, i)
+      if quoted then
+        if escaped then
+          escaped = false
+        elseif ch == '\\' then
+          escaped = true
+        elseif ch == '"' then
+          quoted = false
+        end
+      elseif ch == '"' then
+        quoted = true
+      elseif ch == '{' then
+        depth = depth + 1
+      elseif ch == '}' then
+        depth = depth - 1
+        if depth == 0 then
+          object_end = i
+          break
+        end
+      end
+    end
+    if not object_end then break end
+
+    local ok, args = pcall(vim.json.decode, source:sub(object_start, object_end))
+    if ok and type(args) == 'table' and type(args.cmd) == 'string'
+        and args.cmd ~= '' then
+      table.insert(found, args)
+    end
+    from = object_end + 1
+  end
+  return found
+end
+
+---@param output any
+---@return string
+local function rollout_output_text(output)
+  if type(output) == 'string' then return output end
+  if type(output) ~= 'table' then return '' end
+  local parts = {}
+  for _, block in ipairs(output) do
+    if type(block) == 'string' then
+      table.insert(parts, block)
+    elseif type(block) == 'table' and type(block.text) == 'string' then
+      table.insert(parts, block.text)
+    end
+  end
+  return table.concat(parts)
+end
+
+---@param item table
+---@param text string
+---@param exit_code any
+local function set_rollout_command_result(item, text, exit_code)
+  if type(exit_code) ~= 'number' then
+    exit_code = type(exit_code) == 'string' and tonumber(exit_code) or nil
+  end
+  item.exitCode = exit_code
+  if exit_code and exit_code ~= 0 then item.status = 'failed' end
+  item.aggregatedOutput = text
+end
+
+--- Apply one outer tool result to the nested commands it executed. Plain-text
+--- output belongs to the last command; JSON-stringified exec result objects
+--- can be associated one-for-one with all nested commands.
+---@param items table[]
+---@param output any
+---@param structured boolean
+local function apply_rollout_command_output(items, output, structured)
+  if not items or #items == 0 then return end
+  local text = rollout_output_text(output)
+  local exit_code = tonumber(text:match('Process exited with code (%-?%d+)'))
+  local body = text:match('\nOutput:\n(.*)') or text
+
+  if structured then
+    local ok, decoded = pcall(vim.json.decode, body)
+    if ok and type(decoded) == 'table' then
+      if type(decoded.output) == 'string' then
+        set_rollout_command_result(items[#items], decoded.output, decoded.exit_code or exit_code)
+        return
+      elseif #decoded > 0 then
+        local applied = false
+        for i, result in ipairs(decoded) do
+          local item = items[i]
+          if item and type(result) == 'table' and type(result.output) == 'string' then
+            set_rollout_command_result(item, result.output, result.exit_code)
+            applied = true
+          end
+        end
+        if applied then return end
+      end
+    end
+  end
+
+  set_rollout_command_result(items[#items], body, exit_code)
+end
+
+--- Restore shell calls omitted from app-server's persisted ThreadItem
 --- conversion. This matters when resuming a thread created by another Codex
---- surface: the rollout retains response_item function calls, but 0.145's
---- thread/resume response drops them from turn.items.
+--- surface: the rollout retains both legacy `function_call/exec_command` and
+--- current `custom_tool_call/exec` records, but 0.145's thread/resume response
+--- drops them from turn.items.
 ---@param thread table
 restore_rollout_commands = function(thread)
   local path = thread.path
@@ -909,7 +1026,30 @@ restore_rollout_commands = function(thread)
 
   local commands_by_turn = {}
   local commands_by_call = {}
+  local structured_output_by_call = {}
   local agent_count_by_turn = {}
+
+  local function add_command(turn_id, call_id, args)
+    local by_call = commands_by_call[call_id]
+    if not by_call then
+      by_call = {}
+      commands_by_call[call_id] = by_call
+    end
+    local index = #by_call + 1
+    local restored = {
+      type = 'commandExecution',
+      id = 'rollout-' .. tostring(call_id) .. (index > 1 and ('-' .. index) or ''),
+      command = args.cmd,
+      cwd = args.workdir or thread.cwd or '',
+      commandActions = {},
+      status = 'completed',
+      aggregatedOutput = '',
+      _after_agent_count = agent_count_by_turn[turn_id] or 0,
+    }
+    commands_by_turn[turn_id] = commands_by_turn[turn_id] or {}
+    table.insert(commands_by_turn[turn_id], restored)
+    table.insert(by_call, restored)
+  end
 
   local ok, lines = pcall(vim.fn.readfile, path)
   if not ok then return end
@@ -925,31 +1065,25 @@ restore_rollout_commands = function(thread)
       elseif payload.type == 'function_call' and payload.name == 'exec_command'
           and turn_id and payload.call_id then
         local args_ok, args = pcall(vim.json.decode, payload.arguments or '{}')
-        local command = args_ok and type(args) == 'table' and args.cmd or nil
-        if type(command) == 'string' and command ~= '' then
-          local restored = {
-            type = 'commandExecution',
-            id = 'rollout-' .. tostring(payload.call_id),
-            command = command,
-            cwd = args.workdir or thread.cwd or '',
-            commandActions = {},
-            status = 'completed',
-            aggregatedOutput = '',
-            _after_agent_count = agent_count_by_turn[turn_id] or 0,
-          }
-          commands_by_turn[turn_id] = commands_by_turn[turn_id] or {}
-          table.insert(commands_by_turn[turn_id], restored)
-          commands_by_call[payload.call_id] = restored
+        if args_ok and type(args) == 'table' and type(args.cmd) == 'string'
+            and args.cmd ~= '' then
+          add_command(turn_id, payload.call_id, args)
         end
-      elseif payload.type == 'function_call_output' and payload.call_id then
-        local restored = commands_by_call[payload.call_id]
-        if restored then
-          local output = type(payload.output) == 'string' and payload.output or ''
-          local exit_code = tonumber(output:match('Process exited with code (%-?%d+)'))
-          restored.exitCode = exit_code
-          if exit_code and exit_code ~= 0 then restored.status = 'failed' end
-          restored.aggregatedOutput = output:match('\nOutput:\n(.*)') or output
+      elseif payload.type == 'custom_tool_call' and payload.name == 'exec'
+          and turn_id and payload.call_id then
+        local args_list = custom_exec_args(payload.input)
+        for _, args in ipairs(args_list) do
+          add_command(turn_id, payload.call_id, args)
         end
+        structured_output_by_call[payload.call_id] =
+          type(payload.input) == 'string'
+          and payload.input:find('text%s*%(%s*JSON%.stringify%s*%(') ~= nil
+      elseif (payload.type == 'function_call_output'
+          or payload.type == 'custom_tool_call_output') and payload.call_id then
+        apply_rollout_command_output(
+          commands_by_call[payload.call_id],
+          payload.output,
+          structured_output_by_call[payload.call_id] == true)
       end
     end
   end

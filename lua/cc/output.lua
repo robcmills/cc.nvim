@@ -105,6 +105,33 @@ local OUTPUT_WIN_OPTS = {
   'fillchars', 'winhighlight', 'number', 'relativenumber', 'signcolumn', 'wrap',
 }
 
+--- Install cc's fold engine once for a window showing this output. Keeping
+--- this separate from WinEnter lets inactive/reused windows initialize before
+--- history replay, while the guard preserves later user fold manipulation.
+---@param winid integer
+function Output:_ensure_fold_opts(winid)
+  if not vim.api.nvim_win_is_valid(winid)
+      or vim.api.nvim_win_get_buf(winid) ~= self.bufnr
+      or vim.w[winid].cc_output_fold_initialized then
+    return
+  end
+  local config = require('cc.config').options
+  local ok_cc, cc = pcall(require, 'cc')
+  local inst = ok_cc and cc and cc.find_instance and cc.find_instance(self.bufnr) or nil
+  local winopts = require('cc.winopts')
+  if inst and inst.user_winopts then
+    winopts.save_table(winid, 'output', OUTPUT_WIN_OPTS, inst.user_winopts)
+  else
+    winopts.save(winid, 'output', OUTPUT_WIN_OPTS)
+  end
+  vim.wo[winid].foldmethod = 'expr'
+  vim.wo[winid].foldexpr = "v:lua.require'cc.output'.foldexpr(v:lnum)"
+  vim.wo[winid].foldenable = true
+  vim.wo[winid].foldtext = "v:lua.require'cc.output'.foldtext()"
+  vim.wo[winid].foldlevel = (inst and inst.user_fold_level) or config.default_fold_level
+  vim.w[winid].cc_output_fold_initialized = true
+end
+
 --- Configure fold options and caret refresh on windows showing this buffer.
 function Output:_setup_window_opts_for_buffer()
   local bufnr = self.bufnr
@@ -149,10 +176,11 @@ function Output:_setup_window_opts_for_buffer()
       -- BufWinLeave, nvim_get_current_win() may point at the destination
       -- window (mirrors the prompt-side bug fixed via cc_prompt_winid).
       vim.b[bufnr].cc_output_winid = winid
-      vim.wo[winid].foldmethod = 'expr'
-      vim.wo[winid].foldexpr = "v:lua.require'cc.output'.foldexpr(v:lnum)"
-      vim.wo[winid].foldenable = true
-      vim.wo[winid].foldtext = "v:lua.require'cc.output'.foldtext()"
+      -- Fold options and foldlevel are user-adjustable. Initialize them only
+      -- when the buffer is first installed in this window; merely focusing the
+      -- output must not recompute folds, re-enable folding after `zi`, or undo
+      -- any explicit open/close choices.
+      self:_ensure_fold_opts(winid)
       local sl_cfg = config.statusline or {}
       vim.wo[winid].fillchars = sl_cfg.enabled and 'fold: ,stl:─,stlnc:─' or 'fold: '
       -- Scope fold styling to the output window via winhighlight so the
@@ -169,17 +197,6 @@ function Output:_setup_window_opts_for_buffer()
       vim.wo[winid].relativenumber = false
       vim.wo[winid].signcolumn = 'no'
       vim.wo[winid].wrap = config.wrap == nil or config.wrap.output ~= false
-      -- foldlevel is user-adjustable (via :CcFold / zM / zR). Only seed it the
-      -- first time this window shows the buffer so re-focusing doesn't undo
-      -- the user's choice. After nav-away (BufWinLeave clears the window-local
-      -- flag) and back, fall back to the instance-level user_fold_level so the
-      -- user's last setting survives a layout close/reopen cycle.
-      if not vim.w[winid].cc_output_fold_initialized then
-        local inst = ok_cc and cc and cc.find_instance and cc.find_instance(bufnr) or nil
-        local seed = (inst and inst.user_fold_level) or config.default_fold_level
-        vim.wo[winid].foldlevel = seed
-        vim.w[winid].cc_output_fold_initialized = true
-      end
       -- If the cursor is at the last line, re-anchor the view so topline
       -- is computed correctly now that the window is focused and folds
       -- are about to be evaluated. Without this, pre-render done from an
@@ -258,6 +275,7 @@ end
 --- Set the window displaying this output buffer (used to auto-scroll).
 function Output:set_window(winid)
   self.winid = winid
+  self:_ensure_fold_opts(winid)
 end
 
 --- Rename the output buffer (e.g. to reflect a session title). No-op on empty
@@ -1195,6 +1213,31 @@ function Output:set_fold_level(level)
     vim.wo[self.winid].foldlevel = level
     vim.schedule(function() M.refresh_carets(self.bufnr) end)
   end
+end
+
+--- Finish a one-time history replay while the prompt window may still have
+--- focus. Re-apply foldlevel now so newly-created expression folds begin in
+--- their configured default state, then redraw all windows before a later
+--- WinEnter can make that state change appear focus-driven.
+function Output:finalize_history_replay()
+  local bufnr = self.bufnr
+  if not (bufnr and bufnr > 0 and vim.api.nvim_buf_is_valid(bufnr)) then return end
+  M._flush_pending_fold_closes(bufnr)
+  for _, winid in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(winid) == bufnr then
+      self:_ensure_fold_opts(winid)
+      -- zX reapplies the window's existing foldlevel without the `zv` cursor
+      -- opening performed by zx. win_execute does not transfer user focus.
+      pcall(vim.fn.win_execute, winid, 'silent! normal! zX')
+    end
+  end
+  -- Closing historical result folds shrinks the display above the cursor.
+  -- The cursor can still be on the last buffer line while that line rises
+  -- several screen rows off the window bottom, so re-run the established
+  -- tail anchor after all fold manipulation is complete.
+  self:_follow_tail()
+  M.refresh_carets(bufnr)
+  pcall(vim.cmd, 'redraw!')
 end
 
 M.Output = Output

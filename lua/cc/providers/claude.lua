@@ -316,6 +316,7 @@ function M.prerender_resume(inst, session_id)
     inst.output:render_historical_record(records[i])
   end
   inst.output:render_notice('resumed ' .. session_id:sub(1, 8))
+  inst.output:finalize_history_replay()
   require('cc.statusline').refresh(inst)
 end
 
