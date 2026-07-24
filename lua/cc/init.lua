@@ -541,11 +541,16 @@ end
 --- Build, wire, and spawn the configured provider for an instance. Shared
 --- by open, new_session, and resume so lifecycle handling lives in one place.
 ---@param inst cc.Instance
----@param opts { resume_id: string?, permission_mode: string? }?
+---@param opts { resume_id: string?, permission_mode: string?, provider: string?, model: string?, effort: string? }?
 ---@return boolean ok
 local function attach_provider(inst, opts)
   opts = opts or {}
-  local P, perr = Providers.current()
+  local P, perr
+  if opts.provider then
+    P, perr = Providers.get(opts.provider)
+  else
+    P, perr = Providers.current()
+  end
   if not P then
     vim.notify('cc.nvim: ' .. tostring(perr), vim.log.levels.ERROR)
     return false
@@ -556,6 +561,8 @@ local function attach_provider(inst, opts)
     output = inst.output,
     resume_id = opts.resume_id,
     permission_mode = opts.permission_mode,
+    model = opts.model,
+    effort = opts.effort,
     on_session_id = function(id)
       inst.last_session_id = id
       require('cc.statusline').refresh(inst)
@@ -601,13 +608,45 @@ function M.is_open()
 end
 
 --- Public: open a new cc.nvim session.
----@param opts { permission_mode: string? }?
+---@param opts { permission_mode: string?, model: string?, effort: string? }?
 function M.open(opts)
   opts = opts or {}
+  if opts.effort and not require('cc.effort').is_valid(opts.effort) then
+    vim.notify(
+      'cc.nvim: invalid effort "' .. tostring(opts.effort) .. '". Use one of: '
+      .. table.concat(require('cc.effort').levels(), ', '),
+      vim.log.levels.WARN)
+    return
+  end
+
+  local model = opts.model
+  local inferred_provider
+  if model then
+    local resolved, provider, status, suggestions = require('cc.model').resolve(model)
+    if status == 'ambiguous' then
+      vim.notify(
+        'cc.nvim: ambiguous model "' .. tostring(model) .. '". Matches: '
+        .. table.concat(suggestions, ', '),
+        vim.log.levels.WARN)
+      return
+    end
+    model = resolved
+    inferred_provider = provider
+    if (status == 'shorthand' or status == 'fuzzy') and model ~= opts.model then
+      vim.notify('cc.nvim: model ' .. opts.model .. ' → ' .. model, vim.log.levels.INFO)
+    end
+  end
 
   local inst = create_instance()
   require('cc.splash').render(inst.output.bufnr)
-  attach_provider(inst, { permission_mode = opts.permission_mode })
+  attach_provider(inst, {
+    permission_mode = opts.permission_mode,
+    provider = inferred_provider
+      or Providers.infer_from_model(model)
+      or Providers.current_name(),
+    model = model,
+    effort = opts.effort,
+  })
 end
 
 --- Public: open in plan mode (Claude-only).
@@ -919,20 +958,26 @@ function M._try_handle_client_command(inst, text)
     M._handle_effort(inst, args or '')
     return true
   end
+  if cmd == 'model' then
+    M._handle_model(inst, args or '')
+    return true
+  end
   return false
 end
 
---- Set or report the reasoning effort level. In-memory and session-scoped
---- (not persisted to disk); applied to the next spawned claude process via
---- CLAUDE_CODE_EFFORT_LEVEL.
+--- Set or report the reasoning effort level. Live instances update their
+--- provider-scoped setting; without an instance, :CcEffort changes the
+--- configured provider's in-memory default for the next session.
 ---@param inst cc.Instance?
 ---@param args string raw arguments after `/effort` or `:CcEffort`
 function M._handle_effort(inst, args)
   local Effort = require('cc.effort')
   local arg = (args or ''):match('^%s*(.-)%s*$')
   if arg == '' then
+    local display, setting, resolved = Effort.get_display(inst)
+    local value = resolved and (setting .. ' → ' .. display) or setting
     vim.notify(
-      'cc.nvim effort: ' .. Effort.get() ..
+      'cc.nvim effort: ' .. value ..
       '  (levels: ' .. table.concat(Effort.levels(), ', ') .. ')',
       vim.log.levels.INFO)
     return
@@ -944,23 +989,106 @@ function M._handle_effort(inst, args)
       vim.log.levels.WARN)
     return
   end
+
+  if inst and inst.provider and inst.process and inst.process:is_alive() then
+    if not inst.provider.set_effort then
+      vim.notify('cc.nvim: runtime effort switching is not supported by this provider',
+        vim.log.levels.WARN)
+      return
+    end
+    inst.provider:set_effort(arg, function(ok, err)
+      if ok then
+        vim.notify('cc.nvim: effort → ' .. arg .. ' (next turn)', vim.log.levels.INFO)
+      else
+        vim.notify('cc.nvim: failed to set effort: ' .. tostring(err or 'unknown error'),
+          vim.log.levels.ERROR)
+      end
+      require('cc.statusline').refresh(inst)
+    end)
+    return
+  end
+
+  local provider_name = Providers.current_name()
+  local providers = Config.options.providers or {}
+  providers[provider_name] = providers[provider_name] or {}
+  providers[provider_name].effort = arg
+  Config.options.providers = providers
   Effort.set(arg)
-  local scope_note = ' (applies to next claude spawn — :CcClear or restart to take effect)'
-  if inst and inst.provider and inst.provider.name == 'codex' then
-    scope_note = ' (applies from the next codex turn)'
-  elseif Providers.current_name() == 'codex' then
-    scope_note = ' (applies from the next codex turn)'
+  vim.notify(
+    'cc.nvim: effort set to ' .. arg .. ' (applies to next :CcNew)',
+    vim.log.levels.INFO)
+end
+
+--- Set or report the model used by the active session.
+---@param inst cc.Instance?
+---@param args string raw arguments after `/model`
+function M._handle_model(inst, args)
+  local model = (args or ''):match('^%s*(.-)%s*$')
+  if not inst or not inst.provider or not inst.process or not inst.process:is_alive() then
+    vim.notify('cc.nvim: model switching requires an active session', vim.log.levels.WARN)
+    return
   end
-  vim.notify('cc.nvim: effort set to ' .. arg .. scope_note, vim.log.levels.INFO)
-  if inst then
+  if model == '' then
+    local selected = inst.provider.opts and inst.provider.opts.model
+    local actual = inst.session and inst.session.model
+    local value = actual or selected or 'unknown'
+    if selected and actual and selected ~= actual then
+      value = actual .. ' (selected: ' .. selected .. ')'
+    end
+    vim.notify('cc.nvim model: ' .. value, vim.log.levels.INFO)
+    return
+  end
+  if model:find('%s') then
+    vim.notify('cc.nvim: model must be a single model name or alias', vim.log.levels.WARN)
+    return
+  end
+  local requested_model = model
+  local resolved, resolved_provider, status, suggestions = require('cc.model').resolve(model)
+  if status == 'ambiguous' then
+    vim.notify(
+      'cc.nvim: ambiguous model "' .. model .. '". Matches: '
+      .. table.concat(suggestions, ', '),
+      vim.log.levels.WARN)
+    return
+  end
+  model = resolved
+  local inferred_provider = resolved_provider or Providers.infer_from_model(model)
+  if inferred_provider and inferred_provider ~= inst.provider.name then
+    vim.notify(
+      'cc.nvim: ' .. model .. ' is a ' .. inferred_provider
+      .. ' model; start a new session with :CcNew ' .. model,
+      vim.log.levels.WARN)
+    return
+  end
+  if not inst.provider.set_model then
+    vim.notify('cc.nvim: runtime model switching is not supported by this provider',
+      vim.log.levels.WARN)
+    return
+  end
+  inst.provider:set_model(model, function(ok, err)
+    if ok then
+      local resolution = model ~= requested_model and (' (from ' .. requested_model .. ')') or ''
+      vim.notify(
+        'cc.nvim: model → ' .. model .. resolution .. ' (next turn)',
+        vim.log.levels.INFO)
+    else
+      vim.notify('cc.nvim: failed to set model: ' .. tostring(err or 'unknown error'),
+        vim.log.levels.ERROR)
+    end
     require('cc.statusline').refresh(inst)
-  end
+  end)
 end
 
 --- Public: set or report the reasoning effort level (same as `/effort`).
 ---@param level string?
 function M.effort(level)
   M._handle_effort(get_current_instance(), level or '')
+end
+
+--- Public: set or report the active model (same as `/model`).
+---@param model string?
+function M.model(model)
+  M._handle_model(get_current_instance(), model or '')
 end
 
 --- Permission modes accepted by `claude --permission-mode` and the

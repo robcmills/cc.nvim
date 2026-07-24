@@ -260,6 +260,10 @@ T['M.open fires get_settings control_request when no explicit mode is set'] = fu
         _G._test_get_settings_calls = _G._test_get_settings_calls + 1
         return 'fake-request-id'
       end
+      p.send_control_set_effort = function(_, _, cb)
+        cb(true, { subtype = 'success' })
+        return 'fake-effort-request-id'
+      end
       return p
     end
 
@@ -270,7 +274,7 @@ T['M.open fires get_settings control_request when no explicit mode is set'] = fu
   eq(_G.child.lua_get('_G._test_get_settings_calls'), 1)
 end
 
-T['M.open skips get_settings when an explicit mode is set'] = function()
+T['M.open still gets model and effort settings when an explicit mode is set'] = function()
   _G.child.lua([==[
     require('cc.config').setup({})
     require('cc.config').options.providers.claude.permission_mode = nil
@@ -284,6 +288,10 @@ T['M.open skips get_settings when an explicit mode is set'] = function()
         _G._test_get_settings_calls = _G._test_get_settings_calls + 1
         return 'fake-request-id'
       end
+      p.send_control_set_effort = function(_, _, cb)
+        cb(true, { subtype = 'success' })
+        return 'fake-effort-request-id'
+      end
       return p
     end
 
@@ -291,7 +299,7 @@ T['M.open skips get_settings when an explicit mode is set'] = function()
     Process.new = _G._test_orig_process_new
     if not ok then error(err) end
   ]==])
-  eq(_G.child.lua_get('_G._test_get_settings_calls'), 0)
+  eq(_G.child.lua_get('_G._test_get_settings_calls'), 1)
 end
 
 T['get_settings control_response seeds session.permission_mode from effective.permissions.defaultMode'] = function()

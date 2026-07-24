@@ -15,6 +15,8 @@
 --   :close()               terminate the subprocess
 --   :send(text)            submit a user prompt
 --   :interrupt()           request turn interruption; truthy when sent
+--   :set_model(model, cb?)  select the model for subsequent turns
+--   :set_effort(level, cb?) select reasoning effort for subsequent turns
 --   :set_permission_mode(mode)  Claude-only (gate on capabilities)
 --   :rename(name, cb?)     optional: provider-native session rename
 --   :auto_rename_spec(prompt, cfg)  optional: one-shot title command
@@ -37,6 +39,38 @@ local MODULES = {
   claude = 'cc.providers.claude',
   codex = 'cc.providers.codex',
 }
+
+local CLAUDE_ALIASES = {
+  fable = true,
+  haiku = true,
+  opus = true,
+  sonnet = true,
+}
+
+--- Infer a provider from a model name. Returns nil for unknown/ambiguous
+--- names so callers can preserve the configured provider as the fallback.
+---@param model any
+---@return 'claude'|'codex'|nil
+function M.infer_from_model(model)
+  if type(model) ~= 'string' then return nil end
+  local normalized = model:match('^%s*(.-)%s*$'):lower()
+  if normalized == '' then return nil end
+  local alias = normalized:gsub('%[.-%]$', '')
+
+  if CLAUDE_ALIASES[alias]
+      or normalized:match('^claude%-')
+      or normalized:match('^anthropic/claude%-') then
+    return 'claude'
+  end
+  if normalized:match('^gpt%-')
+      or normalized:match('^o%d')
+      or normalized == 'codex'
+      or normalized:match('^codex%-')
+      or normalized:match('^openai/') then
+    return 'codex'
+  end
+  return nil
+end
 
 --- Name of the configured provider ('claude' when unset).
 ---@return string

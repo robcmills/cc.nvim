@@ -141,9 +141,10 @@ cc.nvim's current `router.lua`, `output.lua`, `interactive.lua`, and
 | AskUserQuestion — single select | Handled | vim.ui.select |
 | AskUserQuestion — multi select | Handled | Iterative vim.ui.select |
 | AskUserQuestion — free text | Handled | "Other (type)" → vim.ui.input |
-| interrupt | Not handled | Could map to :CcStop |
-| set_permission_mode | Not handled | Runtime permission mode change |
-| set_model | Not handled | Runtime model switch |
+| interrupt | Handled | `:CcStop` sends an interrupt control request |
+| set_permission_mode | Handled | `:CcPermissionMode` sends a live control request |
+| set_model | Handled | `/model` sends a live control request |
+| apply_flag_settings (effort) | Handled | `/effort` updates the live flag-settings layer |
 
 ## 6. Hook Event Types
 

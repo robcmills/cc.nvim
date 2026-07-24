@@ -32,6 +32,28 @@ T['registry']['rejects unknown provider names'] = function()
   eq(_G.child.lua_get([[_G._test_err:find('unknown provider') ~= nil]]), true)
 end
 
+T['registry']['infers provider from recognized model families'] = function()
+  local got = _G.child.lua_get([[(function()
+    local infer = require('cc.providers').infer_from_model
+    return {
+      gpt = infer('gpt-5.6-sol'),
+      o_model = infer('o4-mini'),
+      openai = infer('openai/custom-model'),
+      claude = infer('claude-opus-4-7'),
+      alias = infer('sonnet'),
+      alias_1m = infer('opus[1m]'),
+      unknown = infer('company-model'),
+    }
+  end)()]])
+  eq(got.gpt, 'codex')
+  eq(got.o_model, 'codex')
+  eq(got.openai, 'codex')
+  eq(got.claude, 'claude')
+  eq(got.alias, 'claude')
+  eq(got.alias_1m, 'claude')
+  eq(got.unknown, nil)
+end
+
 T['registry']['capability flags differ by provider'] = function()
   _G.child.lua([[require('cc.config').setup({})]])
   eq(_G.child.lua_get([[require('cc.providers.claude').capabilities.permission_modes]]), true)
@@ -83,6 +105,36 @@ T['options']['codex configured effort uses the shared effort mapping'] = functio
   ]==])
   eq(_G.child.lua_get('_G._test_max_effort'), 'xhigh')
   eq(_G.child.lua_get('_G._test_auto_effort'), vim.NIL)
+end
+
+T['options']['per-session overrides replace provider defaults without mutating config'] = function()
+  local got = _G.child.lua_get([[(function()
+    require('cc.config').setup({
+      providers = { claude = { model = 'configured-model', effort = 'medium' } },
+    })
+    local Session = require('cc.session')
+    local Output = require('cc.output')
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-provider-overrides')
+    output:ensure_buffer()
+    local provider = require('cc.providers.claude').attach({
+      session = session,
+      output = output,
+      model = 'session-model',
+      effort = 'xhigh',
+    })
+    local configured = require('cc.providers.claude').options()
+    return {
+      model = provider.opts.model,
+      effort = provider.opts.effort,
+      configured_model = configured.model,
+      configured_effort = configured.effort,
+    }
+  end)()]])
+  eq(got.model, 'session-model')
+  eq(got.effort, 'xhigh')
+  eq(got.configured_model, 'configured-model')
+  eq(got.configured_effort, 'medium')
 end
 
 T['options']['legacy top-level Claude keys are ignored'] = function()
@@ -227,6 +279,41 @@ T['claude']['set_permission_mode sends a control_request'] = function()
   local sent = _G.child.lua_get('_G._test_sent')
   eq(sent[1].request.subtype, 'set_permission_mode')
   eq(sent[1].request.mode, 'plan')
+end
+
+T['claude']['set_model commits after acknowledgement and refreshes settings'] = function()
+  setup_claude_provider(_G.child)
+  _G.child.lua([==[
+    _G._test_provider.session.model = 'old-model'
+    _G._test_provider.session.context_window = 200000
+    _G._test_provider:set_model('sonnet', function(ok) _G._test_ok = ok end)
+    local rid = _G._test_sent[1].request_id
+    _G._test_provider.router:dispatch({
+      type = 'control_response',
+      response = { subtype = 'success', request_id = rid },
+    })
+  ]==])
+  local sent = _G.child.lua_get('_G._test_sent')
+  eq(sent[1].request.subtype, 'set_model')
+  eq(sent[1].request.model, 'sonnet')
+  eq(sent[2].request.subtype, 'get_settings')
+  eq(_G.child.lua_get('_G._test_provider.opts.model'), 'sonnet')
+  eq(_G.child.lua_get('_G._test_provider.session.model'), 'sonnet')
+  eq(_G.child.lua_get('_G._test_provider.session.context_window'), vim.NIL)
+  eq(_G.child.lua_get('_G._test_ok'), true)
+end
+
+T['claude']['set_effort sends flag settings and auto clears the override'] = function()
+  setup_claude_provider(_G.child)
+  _G.child.lua([==[
+    _G._test_provider:set_effort('high')
+    _G._test_provider:set_effort('auto')
+  ]==])
+  local sent = _G.child.lua_get('_G._test_sent')
+  eq(sent[1].request.subtype, 'apply_flag_settings')
+  eq(sent[1].request.settings.effort, 'high')
+  eq(sent[2].request.subtype, 'apply_flag_settings')
+  eq(sent[2].request.settings.effort, vim.NIL)
 end
 
 T['claude']['is_alive reflects the process'] = function()

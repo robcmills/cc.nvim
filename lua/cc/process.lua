@@ -20,7 +20,7 @@ local M = {}
 ---@field on_exit fun(code: integer, signal: integer)?
 ---@field alive boolean
 ---@field _tee_fd userdata? file descriptor for NDJSON dump
----@field _pending_controls table<string, string> request_id -> subtype
+---@field _pending_controls table<string, { subtype: string, callback: function? }> request id -> metadata
 local Process = {}
 Process.__index = Process
 
@@ -86,7 +86,10 @@ function Process:spawn()
     args = args,
     stdio = { self.stdin, self.stdout, self.stderr },
     cwd = self.opts.cwd or vim.fn.getcwd(),
-    env = require('cc.effort').spawn_env(self.opts.effort),
+    -- A process-level effort pin cannot be changed by the live
+    -- apply_flag_settings control request. Explicitly remove it and let the
+    -- provider seed effort over stdin after spawn.
+    env = require('cc.effort').runtime_env(),
   }, function(code, signal)
     vim.schedule(function()
       self.alive = false
@@ -169,6 +172,25 @@ function Process:interrupt()
   end
 end
 
+---@param subtype string
+---@param request table
+---@param callback fun(ok: boolean, response: table?)?
+---@return string?
+function Process:_send_control(subtype, request, callback)
+  if not self.alive or not self.stdin then return nil end
+  local request_id = gen_uuid()
+  self._pending_controls[request_id] = {
+    subtype = subtype,
+    callback = callback,
+  }
+  self:write({
+    type = 'control_request',
+    request_id = request_id,
+    request = request,
+  })
+  return request_id
+end
+
 --- Send a stream-json control_request to interrupt the current turn without
 --- killing the CLI process. The CLI aborts the in-flight API stream and any
 --- running tool, then returns a control_response with the same request_id.
@@ -176,15 +198,7 @@ end
 --- the process is not alive.
 ---@return string?
 function Process:send_control_interrupt()
-  if not self.alive or not self.stdin then return nil end
-  local request_id = gen_uuid()
-  self._pending_controls[request_id] = 'interrupt'
-  self:write({
-    type = 'control_request',
-    request_id = request_id,
-    request = { subtype = 'interrupt' },
-  })
-  return request_id
+  return self:_send_control('interrupt', { subtype = 'interrupt' })
 end
 
 --- Send a stream-json control_request to change the live session's
@@ -195,15 +209,33 @@ end
 ---@param mode string one of: acceptEdits, auto, bypassPermissions, default, dontAsk, plan
 ---@return string?
 function Process:send_control_set_permission_mode(mode)
-  if not self.alive or not self.stdin then return nil end
-  local request_id = gen_uuid()
-  self._pending_controls[request_id] = 'set_permission_mode'
-  self:write({
-    type = 'control_request',
-    request_id = request_id,
-    request = { subtype = 'set_permission_mode', mode = mode },
-  })
-  return request_id
+  return self:_send_control(
+    'set_permission_mode',
+    { subtype = 'set_permission_mode', mode = mode })
+end
+
+--- Change the model used for subsequent turns.
+---@param model string
+---@param callback fun(ok: boolean, response: table?)?
+---@return string?
+function Process:send_control_set_model(model, callback)
+  return self:_send_control(
+    'set_model',
+    { subtype = 'set_model', model = model },
+    callback)
+end
+
+--- Change the live effort setting. `auto` clears the flag-settings override,
+--- allowing the CLI's normal settings/model resolution to choose the value.
+---@param effort string
+---@param callback fun(ok: boolean, response: table?)?
+---@return string?
+function Process:send_control_set_effort(effort, callback)
+  local value = effort == 'auto' and vim.NIL or effort
+  return self:_send_control(
+    'set_effort',
+    { subtype = 'apply_flag_settings', settings = { effort = value } },
+    callback)
 end
 
 --- Send a stream-json control_request to read the CLI's effective settings
@@ -213,26 +245,24 @@ end
 --- request_id, or nil if the process is not alive.
 ---@return string?
 function Process:send_control_get_settings()
-  if not self.alive or not self.stdin then return nil end
-  local request_id = gen_uuid()
-  self._pending_controls[request_id] = 'get_settings'
-  self:write({
-    type = 'control_request',
-    request_id = request_id,
-    request = { subtype = 'get_settings' },
-  })
-  return request_id
+  return self:_send_control('get_settings', { subtype = 'get_settings' })
 end
 
---- Consume a pending control_request by id. Returns the subtype if one was
---- pending (and removes it), otherwise nil. Used by the router when a
---- control_response arrives.
+--- Consume a pending control_request record by id.
+---@param request_id string
+---@return { subtype: string, callback: function? }?
+function Process:consume_pending_control_entry(request_id)
+  local entry = self._pending_controls[request_id]
+  if entry then self._pending_controls[request_id] = nil end
+  return entry
+end
+
+--- Backwards-compatible subtype-only consumer used by tests/integrations.
 ---@param request_id string
 ---@return string?
 function Process:consume_pending_control(request_id)
-  local subtype = self._pending_controls[request_id]
-  if subtype then self._pending_controls[request_id] = nil end
-  return subtype
+  local entry = self:consume_pending_control_entry(request_id)
+  return entry and entry.subtype or nil
 end
 
 --- Terminate the process.

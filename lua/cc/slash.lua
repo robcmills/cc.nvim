@@ -23,6 +23,7 @@ local M = {}
 local CLIENT_COMMANDS = {
   { name = 'rename', description = 'Rename the current conversation', source = 'client' },
   { name = 'effort', description = 'Set reasoning effort: low|medium|high|xhigh|max|auto', source = 'client' },
+  { name = 'model', description = 'Set the model for subsequent conversation turns', source = 'client' },
 }
 
 --- Parse YAML-frontmatter `description` from a markdown file.

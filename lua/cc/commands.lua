@@ -5,8 +5,38 @@ local M = {}
 function M.create()
   local cc = require('cc')
 
-  vim.api.nvim_create_user_command('CcNew', function() cc.open() end,
-    { desc = 'Open cc.nvim' })
+  vim.api.nvim_create_user_command('CcNew', function(opts)
+    if #opts.fargs > 2 then
+      vim.notify('cc.nvim: :CcNew [model] [effort]', vim.log.levels.WARN)
+      return
+    end
+    local model, effort = opts.fargs[1], opts.fargs[2]
+    if effort and not require('cc.effort').is_valid(effort) then
+      vim.notify(
+        'cc.nvim: invalid effort "' .. effort .. '". Use one of: '
+        .. table.concat(require('cc.effort').levels(), ', '),
+        vim.log.levels.WARN)
+      return
+    end
+    cc.open({ model = model, effort = effort })
+  end, {
+    nargs = '*',
+    complete = function(arg_lead, cmd_line, cursor_pos)
+      local before = cmd_line:sub(1, cursor_pos)
+      local args = before:match('^%s*CcNew%s+(.*)$') or ''
+      local _, rest = args:match('^(%S+)%s+(.*)$')
+      if rest == nil then
+        return require('cc.model').complete(arg_lead)
+      end
+      if rest:find('%s') then return {} end
+      local out = {}
+      for _, level in ipairs(require('cc.effort').levels()) do
+        if level:sub(1, #arg_lead) == arg_lead then table.insert(out, level) end
+      end
+      return out
+    end,
+    desc = 'Open cc.nvim with optional model and reasoning effort',
+  })
 
   vim.api.nvim_create_user_command('CcClose', function() cc.close() end,
     { desc = 'Close cc.nvim' })
@@ -71,6 +101,18 @@ function M.create()
       return out
     end,
     desc = 'Set reasoning effort level (low|medium|high|xhigh|max|auto)',
+  })
+
+  vim.api.nvim_create_user_command('CcModel', function(opts)
+    cc.model(opts.args)
+  end, {
+    nargs = '?',
+    complete = function(arg_lead)
+      local inst = cc._get_instance()
+      local provider = inst and inst.provider and inst.provider.name
+      return require('cc.model').complete(arg_lead, provider)
+    end,
+    desc = 'Set the model for subsequent conversation turns',
   })
 
   vim.api.nvim_create_user_command('CcPermissionMode', function(opts)

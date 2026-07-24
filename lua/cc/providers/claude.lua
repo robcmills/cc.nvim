@@ -74,6 +74,8 @@ end
 ---@field output cc.Output
 ---@field resume_id string? session/thread id to resume
 ---@field permission_mode string? explicit permission mode (Claude-only)
+---@field model string? per-session model override
+---@field effort string? per-session effort override
 ---@field on_session_id fun(id: string)?
 ---@field on_exit fun(code: integer, signal: integer)?
 
@@ -82,6 +84,8 @@ end
 ---@return cc.ClaudeProvider
 function M.attach(ctx)
   local opts = M.options()
+  if ctx.model ~= nil then opts.model = ctx.model end
+  if ctx.effort ~= nil then opts.effort = ctx.effort end
   local self = setmetatable({
     name = M.name,
     capabilities = M.capabilities,
@@ -115,7 +119,6 @@ function M.attach(ctx)
     session_id = ctx.resume_id,
     permission_mode = effective_mode,
     model = opts.model,
-    effort = opts.effort,
     extra_args = opts.extra_args,
     on_message = function(msg) self.router:dispatch(msg) end,
     on_stderr = function(data)
@@ -152,10 +155,21 @@ end
 
 function Claude:spawn()
   self.process:spawn()
-  -- No explicit mode from opts/Config on a fresh session — ask the CLI for
-  -- its effective settings so the statusline can show the resolved
-  -- defaultMode before the first prompt triggers an init message.
-  if not self.resume_id and self.session and not self.session.permission_mode then
+  -- Seed explicit effort through the live settings layer. A process-level
+  -- environment/CLI pin outranks apply_flag_settings and would prevent later
+  -- /effort changes from taking effect.
+  if self.opts.effort and self.opts.effort ~= 'auto' then
+    self.process:send_control_set_effort(self.opts.effort, function(ok, resp)
+      if ok then
+      else
+        local err = resp and resp.error or 'unsupported by this Claude version'
+        vim.notify('cc.nvim: failed to initialize effort: ' .. tostring(err),
+          vim.log.levels.WARN)
+      end
+      self.process:send_control_get_settings()
+    end)
+  else
+    -- Ask for model/effort/permission resolution before the first prompt.
     self.process:send_control_get_settings()
   end
 end
@@ -183,6 +197,41 @@ end
 ---@return string?
 function Claude:interrupt()
   return self.process:send_control_interrupt()
+end
+
+---@param model string
+---@param cb fun(ok: boolean, err: string?)?
+---@return string?
+function Claude:set_model(model, cb)
+  local request_id = self.process:send_control_set_model(model, function(ok, resp)
+    if ok then
+      self.opts.model = model
+      if self.session then
+        self.session.model = model
+        self.session.context_window = nil
+      end
+      self.process:send_control_get_settings()
+    end
+    if cb then cb(ok, ok and nil or (resp and resp.error)) end
+  end)
+  if not request_id and cb then cb(false, 'process not alive') end
+  return request_id
+end
+
+---@param effort string
+---@param cb fun(ok: boolean, err: string?)?
+---@return string?
+function Claude:set_effort(effort, cb)
+  local request_id = self.process:send_control_set_effort(effort, function(ok, resp)
+    if ok then
+      self.opts.effort = effort
+      if self.session then self.session.resolved_effort = nil end
+      self.process:send_control_get_settings()
+    end
+    if cb then cb(ok, ok and nil or (resp and resp.error)) end
+  end)
+  if not request_id and cb then cb(false, 'process not alive') end
+  return request_id
 end
 
 ---@param mode string

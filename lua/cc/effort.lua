@@ -1,8 +1,6 @@
--- Reasoning effort level: an in-memory, session-scoped preference applied to
--- spawned claude processes via the CLAUDE_CODE_EFFORT_LEVEL env var (read by
--- the claude CLI's effort resolver, see claude-code/src/utils/effort.ts).
--- Deliberately not persisted to disk — it resets to the default on each
--- Neovim restart.
+-- Reasoning effort validation and display helpers. Live session choices live
+-- on provider.opts.effort; the module-level fallback is retained for
+-- :CcEffort used outside a cc.nvim instance.
 --
 -- Six levels match the upstream /effort menu: low | medium | high | xhigh |
 -- max | auto. 'auto' means "let the model decide" — we omit the env var, so
@@ -132,19 +130,13 @@ function M.label(level)
   return LABELS[level] or level
 end
 
---- Build the env array for uv.spawn. A valid provider override wins over the
---- session-scoped setting. If the effective level is 'auto' we leave the env
---- var unset so the CLI/SDK falls back to the model default.
----@param configured string? provider-level override
+--- Build the environment for a persistent Claude process. Effort must not be
+--- pinned here: CLAUDE_CODE_EFFORT_LEVEL outranks live flag settings and would
+--- make runtime /effort changes ineffective.
 ---@return string[]
-function M.spawn_env(configured)
+function M.runtime_env()
   local env = vim.fn.environ()
-  local cur = M.is_valid(configured) and configured or M.get()
-  if cur and cur ~= 'auto' then
-    env.CLAUDE_CODE_EFFORT_LEVEL = cur
-  else
-    env.CLAUDE_CODE_EFFORT_LEVEL = nil
-  end
+  env.CLAUDE_CODE_EFFORT_LEVEL = nil
   local arr = {}
   for k, v in pairs(env) do
     table.insert(arr, k .. '=' .. v)

@@ -16,7 +16,7 @@ local T = MiniTest.new_set({
 -- ---------------------------------------------------------------------------
 T['provider_config'] = MiniTest.new_set()
 
-T['provider_config']['Claude effort overrides the session-scoped setting'] = function()
+T['provider_config']['Claude effort is provider-scoped without an environment pin'] = function()
   local out = _G.child.lua_get([[(function()
     require('cc.config').setup({
       providers = { claude = { effort = 'high' } },
@@ -25,7 +25,8 @@ T['provider_config']['Claude effort overrides the session-scoped setting'] = fun
     Effort.set('low')
     local provider = require('cc.providers.claude')
     local effective = Effort.get_effective(nil)
-    local env = Effort.spawn_env(provider.options().effort)
+    vim.env.CLAUDE_CODE_EFFORT_LEVEL = 'external-pin'
+    local env = Effort.runtime_env()
     local value
     for _, entry in ipairs(env) do
       value = entry:match('^CLAUDE_CODE_EFFORT_LEVEL=(.*)$') or value
@@ -34,21 +35,20 @@ T['provider_config']['Claude effort overrides the session-scoped setting'] = fun
     return { effective = effective, env = value }
   end)()]])
   eq(out.effective, 'high')
-  eq(out.env, 'high')
+  eq(out.env, nil)
 end
 
-T['provider_config']['Claude auto effort omits the environment override'] = function()
+T['provider_config']['runtime environment preserves unrelated variables'] = function()
   local present = _G.child.lua_get([[(function()
     local Effort = require('cc.effort')
-    Effort.set('low')
-    local env = Effort.spawn_env('auto')
-    Effort._reset()
+    vim.env.CC_NVIM_EFFORT_TEST = 'present'
+    local env = Effort.runtime_env()
     for _, entry in ipairs(env) do
-      if entry:match('^CLAUDE_CODE_EFFORT_LEVEL=') then return true end
+      if entry == 'CC_NVIM_EFFORT_TEST=present' then return true end
     end
     return false
   end)()]])
-  eq(present, false)
+  eq(present, true)
 end
 
 -- ---------------------------------------------------------------------------
@@ -141,6 +141,44 @@ T['router']['captures applied.effort even when permission_mode was already set']
   eq(_G.child.lua_get('_G._test_effort'), 'xhigh')
   -- permission_mode untouched (init's value wins).
   eq(_G.child.lua_get('_G._test_mode'), 'plan')
+end
+
+T['router']['get_settings stores applied model and clears stale context window'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    local Process = require('cc.process')
+    local Router = require('cc.router')
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+
+    local session = Session.new()
+    session.model = 'old-model'
+    session.context_window = 200000
+    local output = Output.new(session, 'cc-test-output-model-settings')
+    output:ensure_buffer()
+    local process = Process.new({ cmd = 'unused', on_message = function() end })
+    process.alive = true
+    process.stdin = {}
+    process.write = function() end
+    local router = Router.new({ session = session, output = output, process = process })
+
+    local request_id = process:send_control_get_settings()
+    router:dispatch({
+      type = 'control_response',
+      response = {
+        subtype = 'success',
+        request_id = request_id,
+        response = {
+          applied = { model = 'new-model', effort = 'high' },
+          effective = {},
+        },
+      },
+    })
+    _G._test_model = session.model
+    _G._test_context = session.context_window
+  ]==])
+  eq(_G.child.lua_get('_G._test_model'), 'new-model')
+  eq(_G.child.lua_get('_G._test_context'), vim.NIL)
 end
 
 -- ---------------------------------------------------------------------------

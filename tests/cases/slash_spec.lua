@@ -75,4 +75,11 @@ T['session.on_init stores skills'] = function()
   eq(_G.child.lua_get('_G._s.slash_commands'), { 'plan' })
 end
 
+T['client model and effort commands are discoverable'] = function()
+  _G.child.lua([[_G._cmds = {}; _G._skills = {}]])
+  local got = find(_G.child, { 'model', 'effort' })
+  eq(got.model.source, 'client')
+  eq(got.effort.source, 'client')
+end
+
 return T

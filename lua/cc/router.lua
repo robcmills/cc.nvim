@@ -190,7 +190,14 @@ end
 function Router:_handle_control_response(msg)
   local resp = msg.response
   if not resp or not resp.request_id then return end
-  local subtype = self.process and self.process:consume_pending_control(resp.request_id)
+  local pending
+  if self.process and self.process.consume_pending_control_entry then
+    pending = self.process:consume_pending_control_entry(resp.request_id)
+  elseif self.process then
+    local subtype = self.process:consume_pending_control(resp.request_id)
+    if subtype then pending = { subtype = subtype } end
+  end
+  local subtype = pending and pending.subtype
   if subtype == 'interrupt' then
     if self.session then
       self.session.interrupt_pending = false
@@ -216,6 +223,12 @@ function Router:_handle_control_response(msg)
     -- this to show what 'auto' resolves to. Captured independently of the
     -- permission_mode seeding below, which may bail early on an init race.
     local applied = inner.applied or {}
+    if type(applied.model) == 'string' and applied.model ~= '' then
+      if self.session.model and self.session.model ~= applied.model then
+        self.session.context_window = nil
+      end
+      self.session.model = applied.model
+    end
     if type(applied.effort) == 'string' and applied.effort ~= '' then
       self.session.resolved_effort = applied.effort
     end
@@ -232,6 +245,14 @@ function Router:_handle_control_response(msg)
     end
     if self.instance then
       require('cc.statusline').refresh(self.instance)
+    end
+  end
+  if pending and pending.callback then
+    local ok = resp.subtype == 'success'
+    local called, err = pcall(pending.callback, ok, resp)
+    if not called then
+      vim.notify('cc.nvim: control response callback failed: ' .. tostring(err),
+        vim.log.levels.ERROR)
     end
   end
 end

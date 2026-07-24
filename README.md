@@ -133,17 +133,31 @@ require('cc').setup()
 
 ```vim
 :CcNew
+:CcNew opus high
 ```
 
 This opens a horizontal split: output buffer on top, editable markdown prompt
 on the bottom. Type your message, then press `<CR>` in normal mode (or run
-`:CcSend`) to submit. The response streams into the output buffer.
+`:CcSend`) to submit. The response streams into the output buffer. Optional
+`:CcNew [model] [effort]` arguments override the configured provider defaults
+for that session only. Recognized model families also select the provider:
+`gpt-*`, `o3*`, `o4*`, `codex-*`, and `openai/*` use Codex; `claude-*`,
+`opus`, `sonnet`, `haiku`, and `fable` use Claude. Unknown model names use the
+configured provider.
+
+Model arguments support shorthand and conservative fuzzy matching. For
+example, `sol`, `soll`, and `gpt56sol` resolve to the configured
+`gpt-*-sol` model (currently `gpt-5.6-sol`). Configured models take precedence
+over built-in names, so stable shorthand follows future model upgrades.
+Ambiguous input is rejected with matching choices instead of being guessed.
+`:CcNew` and `:CcModel` command-line completion also fuzzy-match canonical
+model names.
 
 ## Commands
 
 | Command | Description |
 |---|---|
-| `:CcNew` | Open cc.nvim (spawn process, create buffers) |
+| `:CcNew [model] [effort]` | Open cc.nvim, optionally overriding the model and reasoning effort for this session |
 | `:CcClose` | Close cc.nvim (kill process, close windows) |
 | `:CcToggle` | Toggle visibility |
 | `:CcClear` | Start a fresh session in the current windows |
@@ -157,6 +171,8 @@ on the bottom. Type your message, then press `<CR>` in normal mode (or run
 | `:CcContinue` | Resume most recent session for current cwd |
 | `:CcHistory` / `:CcHistory!` | Pick a session (! = all projects) |
 | `:CcRename [name]` | Rename the current session (no arg = show current title) |
+| `:CcEffort [level]` | Set reasoning effort on the active session; without a session, set the in-memory default for the next `:CcNew` |
+| `:CcModel [model]` | Set the active session's model for subsequent turns; no argument reports the current model |
 | `:CcPeek` | Tail a running Bash tool call in a floating window (see [Peeking at running Bash](#peeking-at-running-bash)) |
 | `:CcPeekInstall` / `:CcPeekUninstall` | Install / remove the `PreToolUse` hook that wires up `:CcPeek` |
 | `:CcDumpNdjson [path]` | Tee raw NDJSON from the subprocess to a file (no arg = stop) |
@@ -446,6 +462,23 @@ Sources (merged, project overrides user overrides session):
 Works with nvim-cmp (registered as source `cc_slash`) or via buffer-local
 `omnifunc` (`<C-x><C-o>`) for users without nvim-cmp.
 
+### Runtime model and effort
+
+Use `/model <model>`, `:CcModel <model>`, `/effort <level>`, or
+`:CcEffort <level>` to change the active session between turns. The slash
+commands are handled by cc.nvim and are not sent to the agent. With no
+argument, these commands report the current selection.
+
+Runtime model changes stay within the active provider. If a Claude session is
+given a recognized Codex model, or vice versa, cc.nvim rejects the change and
+suggests starting a new session with `:CcNew <model>`.
+
+Effort accepts `low`, `medium`, `high`, `xhigh`, `max`, or `auto`. Claude
+applies model and effort changes over its live control channel; Codex includes
+the selected values on the next `turn/start` request. Codex maps `max` to
+`xhigh`, and `auto` omits the per-turn override. Runtime choices are scoped to
+one cc.nvim instance and are not written back to your setup.
+
 ## Statusline
 
 The output window gets its own statusline (requires `laststatus=2`, which
@@ -534,14 +567,14 @@ search, plan updates, interruption (`<C-c>` sends `turn/interrupt`),
 approvals (command and file-change approval prompts reuse the permission
 float; `a` → accept, `A` → accept for session, `d`/`q` → decline), token
 usage in the statusline and per-turn cost line, `:CcResume`/`:CcHistory`/
-`:CcContinue` (via `thread/list` + `thread/resume`), and `/rename` (via
-`thread/name/set`). `/effort` maps to Codex reasoning effort on the next
-turn (`max` maps to `xhigh`).
+`:CcContinue` (via `thread/list` + `thread/resume`), `/rename` (via
+`thread/name/set`), and runtime `/model` and `/effort` changes. Model and
+effort selections are included on the next turn; `max` maps to `xhigh`.
 
 Deliberately Claude-only: permission modes and Shift+Tab cycling (configure
 `providers.codex.approval_policy` / `sandbox` instead), `:CcPlan` plan mode,
-`:CcPeek` and its PreToolUse hook, slash-command completion, auto-rename,
-and USD cost (Codex does not report cost; the statusline hides it).
+`:CcPeek` and its PreToolUse hook, provider-advertised slash commands and
+skills, auto-rename, and USD cost (Codex does not report cost; the statusline hides it).
 Commands gated on these explain why instead of failing silently.
 
 Codex approval and sandbox behavior comes from your `~/.codex/config.toml`

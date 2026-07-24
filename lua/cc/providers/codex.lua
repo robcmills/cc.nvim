@@ -73,6 +73,8 @@ Codex.__index = Codex
 ---@return cc.CodexProvider
 function M.attach(ctx)
   local opts = M.options()
+  if ctx.model ~= nil then opts.model = ctx.model end
+  if ctx.effort ~= nil then opts.effort = ctx.effort end
   opts.cwd = vim.fn.getcwd()
   local self = setmetatable({
     name = M.name,
@@ -436,9 +438,34 @@ end
 --- else the /effort level (mapped; 'auto' → nil so codex uses its default).
 ---@return string?
 function Codex:_effort()
-  if self.opts.effort then return EFFORT_MAP[self.opts.effort] end
-  local level = require('cc.effort').get()
-  return EFFORT_MAP[level]
+  return EFFORT_MAP[self.opts.effort]
+end
+
+---@param model string
+---@param cb fun(ok: boolean, err: string?)?
+---@return boolean
+function Codex:set_model(model, cb)
+  self.opts.model = model
+  if self.session then
+    self.session.model = model
+    self.session.context_window = nil
+  end
+  self:_refresh()
+  if cb then cb(true) end
+  return true
+end
+
+---@param effort string
+---@param cb fun(ok: boolean, err: string?)?
+---@return boolean
+function Codex:set_effort(effort, cb)
+  self.opts.effort = effort
+  if self.session then
+    self.session.resolved_effort = EFFORT_MAP[effort]
+  end
+  self:_refresh()
+  if cb then cb(true) end
+  return true
 end
 
 --- Request interruption of the active turn. Truthy when the request was
