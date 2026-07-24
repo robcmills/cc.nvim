@@ -367,6 +367,12 @@ function M.summarize_tool_input(tool_name, input)
   if not input or type(input) ~= 'table' then
     return ''
   end
+  -- Providers may explicitly suppress a summary when their protocol does not
+  -- supply one. Keep this separate from `description`, since an absent
+  -- description normally falls back to a useful tool-specific summary.
+  if input._display_summary == false then
+    return ''
+  end
   if tool_name == 'Bash' then
     if input.description and input.description ~= '' then
       return tostring(input.description)

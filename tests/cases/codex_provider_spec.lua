@@ -143,6 +143,26 @@ T['handshake']['resume path calls thread/resume and replays turns'] = function()
     _G._test_provider.resume_id = 'thread-9'
     _G._test_provider:_start_protocol()
     _G._feed({ id = _G._test_sent[1].id, result = {} })
+    local rollout_path = vim.fn.tempname()
+    local function rollout(payload)
+      payload.internal_chat_message_metadata_passthrough = { turn_id = 'turn-0' }
+      return vim.json.encode({ type = 'response_item', payload = payload })
+    end
+    vim.fn.writefile({
+      rollout({
+        type = 'message', role = 'assistant',
+        content = { { type = 'output_text', text = 'stored reply' } },
+      }),
+      rollout({
+        type = 'function_call', name = 'exec_command', call_id = 'call-c0',
+        arguments = vim.json.encode({ cmd = 'ls', workdir = '/tmp' }),
+      }),
+      rollout({
+        type = 'function_call_output', call_id = 'call-c0',
+        output = 'Chunk ID: x\nProcess exited with code 0\nOutput:\nfile.txt\n',
+      }),
+    }, rollout_path)
+    _G._test_rollout_path = rollout_path
     local req
     for _, m in ipairs(_G._test_sent) do
       if m.method == 'thread/resume' then req = m end
@@ -151,14 +171,13 @@ T['handshake']['resume path calls thread/resume and replays turns'] = function()
     _G._feed({ id = req.id, result = {
       thread = {
         id = 'thread-9',
+        path = rollout_path,
         turns = { {
           id = 'turn-0', status = 'completed',
           items = {
             { type = 'userMessage', id = 'u0',
               content = { { type = 'text', text = 'stored prompt' } } },
             { type = 'agentMessage', id = 'a0', text = 'stored reply' },
-            { type = 'commandExecution', id = 'c0', command = 'ls',
-              status = 'completed', exitCode = 0, aggregatedOutput = 'file.txt\n' },
           },
         } },
       },
@@ -166,6 +185,7 @@ T['handshake']['resume path calls thread/resume and replays turns'] = function()
       sandbox = { type = 'workspaceWrite' },
     } })
   ]==])
+  _G.child.lua([[vim.fn.delete(_G._test_rollout_path)]])
   eq(_G.child.lua_get('_G._test_resume_req.params.threadId'), 'thread-9')
   eq(_G.child.lua_get('_G._test_resume_req.params.approvalPolicy'), 'on-request')
   eq(_G.child.lua_get('_G._test_resume_req.params.sandbox'), 'danger-full-access')
@@ -173,9 +193,28 @@ T['handshake']['resume path calls thread/resume and replays turns'] = function()
   eq(text:find('User:', 1, true) ~= nil, true)
   eq(text:find('stored prompt', 1, true) ~= nil, true)
   eq(text:find('stored reply', 1, true) ~= nil, true)
-  eq(text:find('Bash: ls', 1, true) ~= nil, true)
+  eq(text:find('Bash: ls', 1, true), nil)
+  eq(text:find('Bash:', 1, true) ~= nil, true)
+  eq(text:find('\n    ls', 1, true) ~= nil, true)
   eq(text:find('file.txt', 1, true) ~= nil, true)
   eq(text:find('resumed thread%-9') ~= nil, true)
+  _G.child.lua([==[
+    local lines = vim.api.nvim_buf_get_lines(_G._test_bufnr, 0, -1, false)
+    local header_lnum
+    for i, line in ipairs(lines) do
+      if line:match('Bash:$') then
+        header_lnum = i
+        break
+      end
+    end
+    local winid = vim.fn.bufwinid(_G._test_bufnr)
+    vim.api.nvim_win_call(winid, function()
+      vim.wo.foldlevel = 1
+      vim.cmd('redraw')
+      _G._test_bash_foldtext = vim.fn.foldtextresult(header_lnum)
+    end)
+  ]==])
+  eq(_G.child.lua_get('_G._test_bash_foldtext'):find('Bash:', 1, true) ~= nil, true)
 end
 
 T['turn'] = MiniTest.new_set()
@@ -305,7 +344,9 @@ T['items']['commandExecution renders like a Bash tool'] = function()
         aggregatedOutput = 'hi\n' } } })
   ]==])
   local text = buffer_text(_G.child)
-  eq(text:find('Bash: echo hi', 1, true) ~= nil, true)
+  eq(text:find('Bash: echo hi', 1, true), nil)
+  eq(text:find('Bash:', 1, true) ~= nil, true)
+  eq(text:find('\n    echo hi', 1, true) ~= nil, true)
   eq(text:find('Output:', 1, true) ~= nil, true)
   eq(text:find('      hi', 1, true) ~= nil, true)
 end

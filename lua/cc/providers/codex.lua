@@ -356,6 +356,8 @@ end
 -- Session lifecycle
 -- ---------------------------------------------------------------------------
 
+local restore_rollout_commands
+
 ---@param result table thread/start or thread/resume response
 ---@param resumed boolean
 function Codex:_on_thread_ready(result, resumed)
@@ -375,6 +377,7 @@ function Codex:_on_thread_ready(result, resumed)
     pcall(function() require('cc')._apply_session_buf_names(self.instance, thread.name) end)
   end
   if resumed and self.output then
+    restore_rollout_commands(thread)
     self:_replay_turns(thread.turns or {})
     self.output:render_notice('resumed ' .. tostring(thread.id):sub(1, 8))
   end
@@ -685,7 +688,10 @@ end
 local function tool_for_item(item)
   local t = item.type
   if t == 'commandExecution' then
-    local input = { command = item.command }
+    -- Unlike Claude, codex command items do not include a human-written
+    -- description. Suppress the shared renderer's command-as-summary fallback
+    -- so the full command appears only in the expanded Bash body.
+    local input = { command = item.command, _display_summary = false }
     if item.cwd and item.cwd ~= '' and item.cwd ~= vim.fn.getcwd() then
       input.cwd = item.cwd
     end
@@ -889,6 +895,112 @@ function Codex:_render_prose(text, kind)
   self.output:on_content_block_stop({ type = kind })
 end
 
+--- Restore exec_command calls omitted from app-server's persisted ThreadItem
+--- conversion. This matters when resuming a thread created by another Codex
+--- surface: the rollout retains response_item function calls, but 0.145's
+--- thread/resume response drops them from turn.items.
+---@param thread table
+restore_rollout_commands = function(thread)
+  local path = thread.path
+  if type(path) ~= 'string' or path == '' or vim.fn.filereadable(path) ~= 1 then
+    return
+  end
+
+  local commands_by_turn = {}
+  local commands_by_call = {}
+  local agent_count_by_turn = {}
+
+  local ok, lines = pcall(vim.fn.readfile, path)
+  if not ok then return end
+  for _, line in ipairs(lines) do
+    local decoded_ok, record = pcall(vim.json.decode, line)
+    local payload = decoded_ok and type(record) == 'table'
+      and record.type == 'response_item' and record.payload or nil
+    if type(payload) == 'table' then
+      local metadata = payload.internal_chat_message_metadata_passthrough
+      local turn_id = type(metadata) == 'table' and metadata.turn_id or nil
+      if payload.type == 'message' and payload.role == 'assistant' and turn_id then
+        agent_count_by_turn[turn_id] = (agent_count_by_turn[turn_id] or 0) + 1
+      elseif payload.type == 'function_call' and payload.name == 'exec_command'
+          and turn_id and payload.call_id then
+        local args_ok, args = pcall(vim.json.decode, payload.arguments or '{}')
+        local command = args_ok and type(args) == 'table' and args.cmd or nil
+        if type(command) == 'string' and command ~= '' then
+          local restored = {
+            type = 'commandExecution',
+            id = 'rollout-' .. tostring(payload.call_id),
+            command = command,
+            cwd = args.workdir or thread.cwd or '',
+            commandActions = {},
+            status = 'completed',
+            aggregatedOutput = '',
+            _after_agent_count = agent_count_by_turn[turn_id] or 0,
+          }
+          commands_by_turn[turn_id] = commands_by_turn[turn_id] or {}
+          table.insert(commands_by_turn[turn_id], restored)
+          commands_by_call[payload.call_id] = restored
+        end
+      elseif payload.type == 'function_call_output' and payload.call_id then
+        local restored = commands_by_call[payload.call_id]
+        if restored then
+          local output = type(payload.output) == 'string' and payload.output or ''
+          local exit_code = tonumber(output:match('Process exited with code (%-?%d+)'))
+          restored.exitCode = exit_code
+          if exit_code and exit_code ~= 0 then restored.status = 'failed' end
+          restored.aggregatedOutput = output:match('\nOutput:\n(.*)') or output
+        end
+      end
+    end
+  end
+
+  for _, turn in ipairs(thread.turns or {}) do
+    local restored = commands_by_turn[turn.id]
+    if restored and #restored > 0 then
+      local existing = {}
+      for _, item in ipairs(turn.items or {}) do
+        if item.type == 'commandExecution' and type(item.command) == 'string' then
+          existing[item.command] = (existing[item.command] or 0) + 1
+        end
+      end
+      local missing = {}
+      for _, item in ipairs(restored) do
+        local count = existing[item.command] or 0
+        if count > 0 then
+          existing[item.command] = count - 1
+        else
+          table.insert(missing, item)
+        end
+      end
+
+      if #missing > 0 then
+        local merged = {}
+        local next_missing = 1
+        local seen_agents = 0
+        local function insert_due()
+          while next_missing <= #missing
+              and missing[next_missing]._after_agent_count <= seen_agents do
+            missing[next_missing]._after_agent_count = nil
+            table.insert(merged, missing[next_missing])
+            next_missing = next_missing + 1
+          end
+        end
+        for _, item in ipairs(turn.items or {}) do
+          if item.type ~= 'userMessage' then insert_due() end
+          table.insert(merged, item)
+          if item.type == 'agentMessage' then seen_agents = seen_agents + 1 end
+        end
+        insert_due()
+        while next_missing <= #missing do
+          missing[next_missing]._after_agent_count = nil
+          table.insert(merged, missing[next_missing])
+          next_missing = next_missing + 1
+        end
+        turn.items = merged
+      end
+    end
+  end
+end
+
 --- Render a tool header + input. Codex items carry their full input up
 --- front (no streamed input JSON), so start and input render together.
 ---@param item_id string
@@ -1025,7 +1137,7 @@ end
 ---@param params table
 ---@param legacy boolean
 function Codex:_approve_command(id, params, legacy)
-  local input = { command = params.command }
+  local input = { command = params.command, _display_summary = false }
   if params.cwd then input.cwd = params.cwd end
   if params.reason then input.reason = params.reason end
   if self.output then
