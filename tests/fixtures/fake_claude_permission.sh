@@ -2,9 +2,10 @@
 # Bidirectional fake claude for permission e2e tests.
 #
 # Emits: system/init, then a can_use_tool control_request (Bash, with
-# permission_suggestions). Captures the first NDJSON line from stdin —
-# expected to be the SDK's control_response — into $CC_TEST_RESPONSE_FILE.
-# Then emits a `result` so cc renders "Session ended" and exits cleanly.
+# permission_suggestions). Acknowledges any settings control requests sent
+# during provider startup, then captures the permission control_response into
+# $CC_TEST_RESPONSE_FILE. Finally emits a `result` so cc renders "Session
+# ended" and exits cleanly.
 #
 # Env (all optional, defaults shown):
 #   CC_TEST_REQUEST_ID   — request_id for the can_use_tool request (default: test-perm-req-1)
@@ -34,9 +35,30 @@ else
     "$REQUEST_ID" "$TOOL_NAME" "$TOOL_NAME"
 fi
 
-# Block on stdin for the SDK's control_response. `head -n 1` reads exactly one
-# line and writes it to the response file; the remainder of stdin is ignored.
-head -n 1 > "$RESPONSE_FILE"
+# Runtime model/effort support sends settings control requests during startup.
+# Emulate the CLI's acknowledgements so the provider can finish initializing,
+# and keep reading until the permission response arrives.
+: > "$RESPONSE_FILE"
+while IFS= read -r line; do
+  if [[ "$line" == *'"type":"control_response"'* ]]; then
+    printf '%s\n' "$line" > "$RESPONSE_FILE"
+    break
+  fi
+
+  request_id=$(printf '%s\n' "$line" |
+    sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+  if [[ -z "$request_id" ]]; then
+    continue
+  fi
+
+  if [[ "$line" == *'"subtype":"get_settings"'* ]]; then
+    printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":{"applied":{"model":"fake","effort":"medium"},"effective":{"permissions":{"defaultMode":"default"}}}}}\n' \
+      "$request_id"
+  else
+    printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":{}}}\n' \
+      "$request_id"
+  fi
+done
 
 # Wrap up with a `result` so cc shows "Session ended".
 echo '{"type":"result","subtype":"success","result":"done","duration_ms":1,"duration_api_ms":1,"is_error":false,"num_turns":0,"session_id":"fake-perm-session","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0}}'
