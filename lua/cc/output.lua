@@ -999,7 +999,8 @@ local turn_cost_format_errored = false
 
 --- Render a result line (cost, usage) at the end of a turn.
 ---@param result table
-function Output:render_result(result)
+---@param append_to_tail boolean? bypass the agent-turn anchor
+function Output:render_result(result, append_to_tail)
   self.last_turn_role = nil
   local cfg = require('cc.config').options
   if cfg.show_turn_cost == false then return end
@@ -1024,7 +1025,7 @@ function Output:render_result(result)
   local line = '  ── ' .. text .. ' ──'
   local bufnr = self:ensure_buffer()
   local line_count = vim.api.nvim_buf_line_count(bufnr)
-  local anchor = self.agent_end_lnum
+  local anchor = not append_to_tail and self.agent_end_lnum or nil
   if anchor and anchor < line_count then
     -- Tail moved past the end of the agent turn (e.g. user submitted again
     -- while the result was in flight). Insert at the agent turn's tail so
@@ -1038,6 +1039,18 @@ function Output:render_result(result)
 end
 
 M._default_turn_cost_format = require('cc.output.cost').default_format
+
+--- Render an interrupted-turn notice followed by its sanitized timing stamp.
+--- Providers must pass timing metadata only: cost and token usage are
+--- intentionally unreliable for interrupted turns.
+---@param timing { turn_ended_at: integer, turn_elapsed_ms: integer? }
+function Output:render_interrupted(timing)
+  self:render_notice('Interrupted')
+  self:render_result({
+    turn_ended_at = timing.turn_ended_at,
+    turn_elapsed_ms = timing.turn_elapsed_ms or 0,
+  }, true)
+end
 
 ---@param text string
 function Output:render_notice(text)

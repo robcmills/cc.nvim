@@ -502,6 +502,9 @@ The `state` table exposes `is_thinking`, `spinner_frame`, `interrupt_pending`,
 `:CcStop` (or `<C-c>`) sends a stream-json `control_request` with
 `subtype: interrupt` on stdin. The process stays alive for the next turn;
 "Interrupted" only renders once the CLI acknowledges via `control_response`.
+For either provider, the end-of-turn stamp includes the timestamp and elapsed
+time, but omits cost and token counts because interrupted-turn usage is not
+reliable.
 
 ## Session history
 

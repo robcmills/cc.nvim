@@ -222,16 +222,33 @@ function Session:end_message()
   self.is_streaming = false
 end
 
----@param msg table result message
-function Session:on_result(msg)
+--- Finish the active turn and return provider-neutral timing metadata for its
+--- end-of-turn stamp.
+---@param elapsed_ms integer? authoritative provider-reported duration
+---@return { turn_ended_at: integer, turn_elapsed_ms: integer? }
+function Session:finish_turn(elapsed_ms)
   self.interrupt_pending = false
   self.turn_active = false
-  -- Wall-clock time the turn ended (os.time, not the monotonic uv.now used
-  -- for elapsed) so the cost line can carry an ISO 8601 timestamp.
-  msg.turn_ended_at = os.time()
-  if self.turn_started_at then
-    msg.turn_elapsed_ms = now_ms() - self.turn_started_at
-    self.turn_started_at = nil
+  self.is_streaming = false
+
+  local result = { turn_ended_at = os.time() }
+  if type(elapsed_ms) == 'number' then
+    result.turn_elapsed_ms = elapsed_ms
+  elseif self.turn_started_at then
+    result.turn_elapsed_ms = now_ms() - self.turn_started_at
+  end
+  self.turn_started_at = nil
+  return result
+end
+
+---@param msg table result message
+---@param already_finished boolean? true when an interrupt acknowledgement
+--- already ended and stamped this turn; the trailing result is state-only
+function Session:on_result(msg, already_finished)
+  if not already_finished then
+    local timing = self:finish_turn()
+    msg.turn_ended_at = timing.turn_ended_at
+    msg.turn_elapsed_ms = timing.turn_elapsed_ms
   end
   if msg.total_cost_usd then
     self.cost_usd = msg.total_cost_usd
@@ -270,7 +287,6 @@ function Session:on_result(msg)
       self.context_window = mu.contextWindow
     end
   end
-  self.is_streaming = false
 end
 
 return M

@@ -8,6 +8,7 @@ local M = {}
 ---@field process cc.Process?
 ---@field instance cc.Instance?
 ---@field on_session_id fun(session_id: string)?
+---@field interrupted_result_pending boolean true after an acknowledged interrupt until Claude's optional trailing result
 local Router = {}
 Router.__index = Router
 
@@ -19,6 +20,7 @@ function M.new(opts)
     process = opts.process,
     instance = opts.instance,
     on_session_id = opts.on_session_id,
+    interrupted_result_pending = false,
   }, Router)
 end
 
@@ -117,6 +119,8 @@ function Router:_handle_stream_event(msg)
   if not event then return end
   local et = event.type
   if et == 'message_start' then
+    -- A new turn proves the interrupted turn had no trailing result.
+    self.interrupted_result_pending = false
     self.session:begin_message(event.message)
     self.output:begin_assistant_turn()
   elseif et == 'content_block_start' then
@@ -168,12 +172,16 @@ function Router:_handle_user(msg)
 end
 
 function Router:_handle_result(msg)
-  self.session:on_result(msg)
+  local interrupted = self.interrupted_result_pending
+  self.interrupted_result_pending = false
+  self.session:on_result(msg, interrupted)
   -- A `result` is the terminal message of a turn; every tool should have
   -- completed by now. Any timer still running is orphaned (its tool_result
   -- never arrived), so stop it before the cost line lands.
   self.output:stop_all_tool_timers()
-  self.output:render_result(msg)
+  if not interrupted then
+    self.output:render_result(msg)
+  end
   if self.instance then
     require('cc')._flush_pending_rename(self.instance)
   end
@@ -205,10 +213,12 @@ function Router:_handle_control_response(msg)
       self.session.turn_active = false
     end
     if resp.subtype == 'success' then
-      -- A successful interrupt aborts the turn without a `result` message, so
-      -- any in-flight tool's timer would otherwise tick forever — stop them.
+      -- Claude versions differ on whether they emit a trailing `result`.
+      -- Stamp the acknowledged interrupt now, then absorb any such result as
+      -- state-only so cumulative cost/usage is never shown for this turn.
       self.output:stop_all_tool_timers()
-      self.output:render_notice('Interrupted')
+      self.interrupted_result_pending = true
+      self.output:render_interrupted(self.session:finish_turn())
     else
       local err = resp.error or 'control_response error'
       self.output:render_notice('Interrupt failed: ' .. tostring(err))

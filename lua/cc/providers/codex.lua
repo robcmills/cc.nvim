@@ -614,22 +614,15 @@ function Codex:_on_turn_completed(params)
   local turn = params.turn or {}
   self:_close_prose()
   self.output:stop_all_tool_timers()
-  s.interrupt_pending = false
-  s.turn_active = false
-  s.is_streaming = false
 
-  local result = { turn_ended_at = os.time() }
-  if s.turn_started_at then
-    result.turn_elapsed_ms = uv.now() - s.turn_started_at
-    s.turn_started_at = nil
-  end
-  if type(turn.durationMs) == 'number' then
-    result.turn_elapsed_ms = turn.durationMs
-  end
+  local result = s:finish_turn(turn.durationMs)
   result.usage = self:_turn_usage_delta()
 
   if turn.status == 'interrupted' then
-    self.output:render_notice('Interrupted')
+    self.output:render_interrupted({
+      turn_ended_at = result.turn_ended_at,
+      turn_elapsed_ms = result.turn_elapsed_ms,
+    })
   elseif turn.status == 'failed' then
     local message = turn.error and turn.error.message or 'turn failed'
     self.output:render_notice('Error: ' .. tostring(message))

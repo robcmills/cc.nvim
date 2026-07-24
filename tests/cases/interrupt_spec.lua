@@ -81,22 +81,44 @@ T['send_control_interrupt returns nil when process not alive'] = function()
   eq(_G.child.lua_get('_G._test_request_id'), vim.NIL)
 end
 
-T['router handles successful control_response for interrupt'] = function()
+T['successful interrupt renders timing only and absorbs trailing result'] = function()
   setup_fake_process(_G.child)
   _G.child.lua([[
     _G._test_session.is_streaming = true
+    _G._test_session.turn_active = true
+    _G._test_session.turn_started_at = (vim.uv or vim.loop).now() - 5000
     _G._test_session.interrupt_pending = true
     local rid = _G._test_process:send_control_interrupt()
     _G._test_router:dispatch({
       type = 'control_response',
       response = { subtype = 'success', request_id = rid },
     })
+    _G._test_router:dispatch({
+      type = 'result',
+      total_cost_usd = 9.99,
+      usage = {
+        input_tokens = 7,
+        output_tokens = 8,
+        cache_read_input_tokens = 9,
+        cache_creation_input_tokens = 10,
+      },
+    })
   ]])
   local lines = helpers.get_buffer_lines(_G.child)
   local text = table.concat(lines, '\n')
-  if not text:find('Interrupted') then
-    error('expected "Interrupted" in output, got:\n' .. text)
-  end
+  local notice = text:find('── Interrupted ──', 1, true)
+  local stamp = text:find('── 20%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%dZ │ 5s ──')
+  assert(notice, 'expected "Interrupted" in output, got:\n' .. text)
+  assert(stamp, 'expected timestamp and duration in output, got:\n' .. text)
+  eq(notice < stamp, true)
+  eq(text:find('$', 1, true), nil)
+  eq(text:find('7 in', 1, true), nil)
+  eq(text:find('8 out', 1, true), nil)
+  eq(text:find('9 cache read', 1, true), nil)
+  eq(text:find('10 cache write', 1, true), nil)
+  -- The trailing result still updates cumulative session state.
+  eq(_G.child.lua_get('_G._test_session.cost_usd'), 9.99)
+  eq(_G.child.lua_get('_G._test_session.input_tokens'), 7)
   eq(_G.child.lua_get('_G._test_session.is_streaming'), false)
   eq(_G.child.lua_get('_G._test_session.interrupt_pending'), false)
 end

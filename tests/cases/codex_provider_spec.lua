@@ -243,16 +243,25 @@ T['turn']['item/completed without deltas renders full text'] = function()
   eq(buffer_text(_G.child):find('unstreamed reply', 1, true) ~= nil, true)
 end
 
-T['turn']['interrupted turn renders notice, no cost line'] = function()
+T['turn']['interrupted turn renders timing without usage'] = function()
   setup_codex(_G.child)
   handshake(_G.child)
   _G.child.lua([==[
+    local function usage(input, cached, output)
+      local b = { totalTokens = input + output, inputTokens = input,
+        cachedInputTokens = cached, outputTokens = output, reasoningOutputTokens = 0 }
+      return { total = b, last = b }
+    end
+    _G._feed({ method = 'thread/tokenUsage/updated', params = { threadId = 'thread-1',
+      turnId = 't0', tokenUsage = usage(1000, 400, 50) } })
     _G._feed({ method = 'turn/started', params = { threadId = 'thread-1',
       turn = { id = 'turn-1', items = {}, status = 'inProgress' } } })
+    _G._feed({ method = 'thread/tokenUsage/updated', params = { threadId = 'thread-1',
+      turnId = 'turn-1', tokenUsage = usage(1500, 900, 80) } })
     _G._test_sent_before = #_G._test_sent
     _G._test_interrupt_ret = _G._test_provider:interrupt()
     _G._feed({ method = 'turn/completed', params = { threadId = 'thread-1',
-      turn = { id = 'turn-1', items = {}, status = 'interrupted' } } })
+      turn = { id = 'turn-1', items = {}, status = 'interrupted', durationMs = 5000 } } })
   ]==])
   eq(_G.child.lua_get('_G._test_interrupt_ret'), true)
   local sent = _G.child.lua_get('_G._test_sent')
@@ -260,7 +269,13 @@ T['turn']['interrupted turn renders notice, no cost line'] = function()
   eq(sent[before + 1].method, 'turn/interrupt')
   eq(sent[before + 1].params.turnId, 'turn-1')
   local text = buffer_text(_G.child)
-  eq(text:find('── Interrupted ──', 1, true) ~= nil, true)
+  local notice = text:find('── Interrupted ──', 1, true)
+  local stamp = text:find('── 20%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%dZ │ 5s ──')
+  assert(notice, 'expected interrupted notice, got:\n' .. text)
+  assert(stamp, 'expected timestamp and duration, got:\n' .. text)
+  eq(notice < stamp, true)
+  eq(text:find('30 out', 1, true), nil)
+  eq(text:find('500 cache read', 1, true), nil)
   eq(_G.child.lua_get('_G._test_session.turn_active'), false)
 end
 
