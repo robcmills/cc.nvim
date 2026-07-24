@@ -367,22 +367,29 @@ T['items']['failed command renders an Error result'] = function()
   eq(text:find('exit 1', 1, true) ~= nil, true)
 end
 
-T['items']['fileChange renders the supplied diff'] = function()
+T['items']['fileChange renders paths only in the expanded body'] = function()
   setup_codex(_G.child)
   handshake(_G.child)
   _G.child.lua([==[
     _G._feed({ method = 'item/started', params = { threadId = 'thread-1', turnId = 'turn-1',
       startedAtMs = 0, item = { type = 'fileChange', id = 'f1', status = 'inProgress',
         changes = { { path = '/tmp/foo.lua', kind = { type = 'update' },
-          diff = '@@ -1 +1 @@\n-old line\n+new line' } } } } })
+          diff = '@@ -1 +1 @@\n-old line\n+new line' },
+          { path = '/tmp/bar.lua', kind = { type = 'add' },
+          diff = '@@ -0,0 +1 @@\n+added line' } } } } })
     _G._feed({ method = 'item/completed', params = { threadId = 'thread-1', turnId = 'turn-1',
       completedAtMs = 1, item = { type = 'fileChange', id = 'f1', status = 'completed',
         changes = { { path = '/tmp/foo.lua', kind = { type = 'update' },
-          diff = '@@ -1 +1 @@\n-old line\n+new line' } } } } })
+          diff = '@@ -1 +1 @@\n-old line\n+new line' },
+          { path = '/tmp/bar.lua', kind = { type = 'add' },
+          diff = '@@ -0,0 +1 @@\n+added line' } } } } })
   ]==])
   local text = buffer_text(_G.child)
   -- Displayed as Edit (TOOL_DISPLAY_NAMES maps FileChange → Edit).
-  eq(text:find('Edit: /tmp/foo.lua', 1, true) ~= nil, true)
+  eq(text:find('Edit:', 1, true) ~= nil, true)
+  eq(text:find('Edit: /tmp/foo.lua', 1, true), nil)
+  eq(text:find('/tmp/foo.lua (update)', 1, true) ~= nil, true)
+  eq(text:find('/tmp/bar.lua (add)', 1, true) ~= nil, true)
   eq(text:find('-old line', 1, true) ~= nil, true)
   eq(text:find('+new line', 1, true) ~= nil, true)
 end

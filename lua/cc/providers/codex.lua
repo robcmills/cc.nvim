@@ -697,7 +697,8 @@ local function tool_for_item(item)
     end
     return 'Bash', input
   elseif t == 'fileChange' then
-    return 'FileChange', { changes = item.changes }
+    -- Each changed path is already shown above its diff in the expanded body.
+    return 'FileChange', { changes = item.changes, _display_summary = false }
   elseif t == 'mcpToolCall' then
     local name = 'mcp__' .. tostring(item.server or '?') .. '__' .. tostring(item.tool or '?')
     return name, item.arguments or {}
