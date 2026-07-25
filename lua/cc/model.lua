@@ -10,7 +10,7 @@ local M = {}
 local BUILTINS = {
   { provider = 'claude', name = 'fable' },
   { provider = 'claude', name = 'haiku' },
-  { provider = 'claude', name = 'opus' },
+  { provider = 'claude', name = 'claude-opus-5' },
   { provider = 'claude', name = 'sonnet' },
   { provider = 'codex', name = 'gpt-5.6-sol' },
   { provider = 'codex', name = 'gpt-5.6-luna' },
@@ -60,6 +60,11 @@ function M.candidates()
   local function add(provider, name, priority)
     name = trim(name)
     if name == '' then return end
+    local normalized = compact(name)
+    if provider == 'claude'
+        and (normalized == 'opus' or normalized == 'opus5') then
+      name = 'claude-opus-5'
+    end
     local key = provider .. '\0' .. name:lower()
     local existing = by_key[key]
     if existing then
@@ -149,9 +154,11 @@ function M.resolve(input)
     local partial = {}
     for _, candidate in ipairs(candidates) do
       local name, suffix = candidate.name:lower(), tail(candidate.name)
+      local name_compact = compact(name)
       if name:sub(1, #query) == query
           or suffix:sub(1, #query) == query
-          or name:find(query, 1, true) then
+          or name:find(query, 1, true)
+          or name_compact:find(query_compact, 1, true) then
         table.insert(partial, candidate)
       end
     end
@@ -200,6 +207,8 @@ local function completion_score(query, candidate)
   if name:sub(1, #query) == query then return 20 + (#name - #query) end
   local pos = name:find(query, 1, true)
   if pos then return 30 + pos end
+  local compact_pos = compact(name):find(query_compact, 1, true)
+  if compact_pos then return 40 + compact_pos end
   local distance = math.min(
     levenshtein(query, suffix),
     levenshtein(query_compact, compact(name)))

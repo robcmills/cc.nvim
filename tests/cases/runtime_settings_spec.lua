@@ -66,6 +66,36 @@ T['CcNew']['fuzzy model completion returns the canonical model'] = function()
   eq(got[1], 'gpt-5.6-sol')
 end
 
+T['CcNew']['Opus completion returns the versioned model'] = function()
+  local all = _G.child.lua_get(
+    [[vim.fn.getcompletion('CcNew ', 'cmdline')]])
+  local compact = _G.child.lua_get(
+    [[vim.fn.getcompletion('CcNew opus5', 'cmdline')]])
+  eq(vim.tbl_contains(all, 'claude-opus-5'), true)
+  eq(vim.tbl_contains(all, 'opus'), false)
+  eq(compact[1], 'claude-opus-5')
+end
+
+T['CcNew']['Opus aliases are forwarded as the canonical Opus 5 model'] = function()
+  local got = _G.child.lua_get([[(function()
+    local cc = require('cc')
+    local original = cc.open
+    local opened = {}
+    cc.open = function(opts)
+      local model, provider = require('cc.model').resolve(opts.model)
+      table.insert(opened, { model = model, provider = provider })
+    end
+    vim.cmd('CcNew opus')
+    vim.cmd('CcNew opus5')
+    cc.open = original
+    return opened
+  end)()]])
+  eq(got, {
+    { model = 'claude-opus-5', provider = 'claude' },
+    { model = 'claude-opus-5', provider = 'claude' },
+  })
+end
+
 T['CcNew']['inferred provider overrides configured provider for the new instance'] = function()
   _G.child.lua([==[
     require('cc.config').setup({ provider = 'claude' })

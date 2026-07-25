@@ -133,7 +133,7 @@ require('cc').setup()
 
 ```vim
 :CcNew
-:CcNew opus high
+:CcNew opus5 high
 ```
 
 This opens a horizontal split: output buffer on top, editable markdown prompt
@@ -142,8 +142,9 @@ on the bottom. Type your message, then press `<CR>` in normal mode (or run
 `:CcNew [model] [effort]` arguments override the configured provider defaults
 for that session only. Recognized model families also select the provider:
 `gpt-*`, `o3*`, `o4*`, `codex-*`, and `openai/*` use Codex; `claude-*`,
-`opus`, `sonnet`, `haiku`, and `fable` use Claude. Unknown model names use the
-configured provider.
+`opus`, `opus5`, `sonnet`, `haiku`, and `fable` use Claude. `opus` and
+`opus5` both resolve to the versioned `claude-opus-5` model. Unknown model
+names use the configured provider.
 
 Model arguments support shorthand and conservative fuzzy matching. For
 example, `sol`, `soll`, and `gpt56sol` resolve to the configured

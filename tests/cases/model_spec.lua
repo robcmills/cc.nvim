@@ -38,6 +38,26 @@ T['resolve']['accepts compact names and small typos'] = function()
   eq(got.claude, { 'sonnet', 'claude', 'shorthand' })
 end
 
+T['resolve']['opus aliases select the versioned Opus 5 model'] = function()
+  local got = _G.child.lua_get([[(function()
+    local Model = require('cc.model')
+    local alias, alias_provider, alias_status = Model.resolve('opus')
+    local compact, compact_provider, compact_status = Model.resolve('opus5')
+    require('cc.config').setup({
+      providers = { claude = { model = 'opus' } },
+    })
+    local configured, configured_provider = Model.resolve('opus')
+    return {
+      alias = { alias, alias_provider, alias_status },
+      compact = { compact, compact_provider, compact_status },
+      configured = { configured, configured_provider },
+    }
+  end)()]])
+  eq(got.alias, { 'claude-opus-5', 'claude', 'shorthand' })
+  eq(got.compact, { 'claude-opus-5', 'claude', 'shorthand' })
+  eq(got.configured, { 'claude-opus-5', 'claude' })
+end
+
 T['resolve']['ambiguous prefixes are not guessed'] = function()
   local got = _G.child.lua_get([[(function()
     local model, provider, status, suggestions = require('cc.model').resolve('gpt')
@@ -83,6 +103,15 @@ T['complete']['fuzzy query returns the canonical model first'] = function()
   _G.child.lua([[require('cc.config').setup({})]])
   local got = _G.child.lua_get([[require('cc.model').complete('sol')]])
   eq(got[1], 'gpt-5.6-sol')
+end
+
+T['complete']['shows the versioned Opus 5 model'] = function()
+  _G.child.lua([[require('cc.config').setup({})]])
+  local all = _G.child.lua_get([[require('cc.model').complete('')]])
+  local compact = _G.child.lua_get([[require('cc.model').complete('opus5')]])
+  eq(vim.tbl_contains(all, 'claude-opus-5'), true)
+  eq(vim.tbl_contains(all, 'opus'), false)
+  eq(compact[1], 'claude-opus-5')
 end
 
 T['complete']['provider filter excludes the other provider'] = function()
