@@ -322,17 +322,27 @@ end
 T['model_context_window']['known 1M models'] = function()
   _G.child.lua([[
     local f = require('cc.statusline')._model_context_window
+    _G._opus5 = f('claude-opus-5')
+    _G._opus48 = f('claude-opus-4-8')
     _G._opus47 = f('claude-opus-4-7')
     _G._opus46 = f('claude-opus-4-6')
+    _G._sonnet5 = f('claude-sonnet-5')
     _G._sonnet46 = f('claude-sonnet-4-6')
+    _G._fable5 = f('claude-fable-5')
     -- Dated variants must resolve too — substring match against the canonical
     -- root, not the full id.
+    _G._opus5_dated = f('claude-opus-5-20260723')
     _G._opus47_dated = f('claude-opus-4-7-20260101')
     _G._mythos = f('claude-mythos-preview')
   ]])
+  eq(_G.child.lua_get('_G._opus5'), 1000000)
+  eq(_G.child.lua_get('_G._opus48'), 1000000)
   eq(_G.child.lua_get('_G._opus47'), 1000000)
   eq(_G.child.lua_get('_G._opus46'), 1000000)
+  eq(_G.child.lua_get('_G._sonnet5'), 1000000)
   eq(_G.child.lua_get('_G._sonnet46'), 1000000)
+  eq(_G.child.lua_get('_G._fable5'), 1000000)
+  eq(_G.child.lua_get('_G._opus5_dated'), 1000000)
   eq(_G.child.lua_get('_G._opus47_dated'), 1000000)
   eq(_G.child.lua_get('_G._mythos'), 1000000)
 end

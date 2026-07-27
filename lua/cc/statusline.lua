@@ -22,17 +22,21 @@ local fmt_tokens = Usage.fmt_compact
 
 -- Models with a 1M-token context window by default (no beta header required).
 -- Sourced from docs.anthropic.com/en/docs/about-claude/models/overview and
--- /build-with-claude/context-windows (verified May 2026). Patterns match the
+-- /build-with-claude/context-windows (verified July 2026). Patterns match the
 -- lowercased model id with Lua's `string.find`, so dated variants like
--- `claude-opus-4-7-20260101` resolve via substring match.
+-- `claude-opus-5-20260723` resolve via substring match.
 --
 -- Reminder when bumping: this is a *fallback* used before the CLI's
 -- `result.modelUsage[<model>].contextWindow` lands on the first turn. Once
 -- the CLI value arrives it takes over (see session:on_result).
 local KNOWN_1M_PATTERNS = {
+  'opus%-5',
+  'opus%-4%-8',
   'opus%-4%-7',
   'opus%-4%-6',
+  'sonnet%-5',
   'sonnet%-4%-6',
+  'fable%-5',
   'mythos',
 }
 
