@@ -250,6 +250,8 @@ require('cc').setup({
   providers = {
     claude = {
       auto_rename_model = 'haiku',
+      -- Bare names also resolve Bash login aliases (for example,
+      -- alias cc='claude --chrome').
       cmd = 'claude',
       effort = 'medium',
       extra_args = {},
@@ -624,7 +626,9 @@ encoding; the shared buffer rendering, folding, prompt, and statusline code
 never sees provider messages. The Codex provider speaks JSON-RPC to
 `codex app-server`; the rest of this section describes the Claude provider.
 
-cc.nvim spawns the `claude` CLI as a persistent bidirectional subprocess:
+cc.nvim spawns the configured Claude command as a persistent bidirectional
+subprocess. Bare command names resolve aliases from a Bash login profile, so
+`cmd = 'cc'` can use an alias such as `alias cc='claude --chrome'`:
 
 ```
 claude -p --input-format stream-json --output-format stream-json \

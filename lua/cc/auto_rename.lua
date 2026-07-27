@@ -8,6 +8,7 @@
 -- best-effort polish: silent on failure, never blocks submit.
 
 local Config = require('cc.config')
+local Command = require('cc.command')
 
 local M = {}
 
@@ -169,8 +170,9 @@ function M.start(inst, prompt_text)
     require('cc')._handle_rename(inst, name, { silent = true })
   end
 
-  handle = uv.spawn(spec.cmd, {
-    args = spec.args,
+  local executable, resolved_args = Command.resolve(spec.cmd, spec.args)
+  handle = uv.spawn(executable, {
+    args = resolved_args,
     stdio = { nil, stdout, stderr },
     cwd = vim.fn.getcwd(),
   }, function(code, _signal)

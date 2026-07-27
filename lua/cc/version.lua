@@ -5,6 +5,7 @@
 --                    (Claude-specific; never probed for other providers)
 
 local M = {}
+local Command = require('cc.command')
 
 ---@type table<string, { probed: boolean, value: string? }>
 local by_cmd = {}
@@ -18,12 +19,8 @@ local latest_callbacks = {} ---@type function[]
 ---@param on_done function?
 local function probe(cmd, on_done)
   local entry = by_cmd[cmd]
-  if vim.fn.executable(cmd) ~= 1 then
-    entry.probed = true
-    return
-  end
   vim.system(
-    { cmd, '--version' },
+    Command.argv(cmd, { '--version' }),
     { text = true },
     vim.schedule_wrap(function(res)
       entry.probed = true

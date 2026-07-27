@@ -3,6 +3,7 @@
 -- All pipe callbacks are wrapped in vim.schedule() for thread safety.
 
 local uv = vim.uv or vim.loop
+local Command = require('cc.command')
 local Parser = require('cc.parser')
 
 local M = {}
@@ -82,8 +83,9 @@ function Process:spawn()
     table.insert(args, a)
   end
 
-  local handle, pid = uv.spawn(self.opts.cmd, {
-    args = args,
+  local executable, resolved_args = Command.resolve(self.opts.cmd, args)
+  local handle, pid = uv.spawn(executable, {
+    args = resolved_args,
     stdio = { self.stdin, self.stdout, self.stderr },
     cwd = self.opts.cwd or vim.fn.getcwd(),
     -- A process-level effort pin cannot be changed by the live

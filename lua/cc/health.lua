@@ -1,6 +1,7 @@
 -- :checkhealth cc
 
 local M = {}
+local Command = require('cc.command')
 
 local function version_ge(v, min)
   local va, vb = v:match('(%d+)%.(%d+)')
@@ -18,15 +19,14 @@ local function check_claude(h)
     h.error('providers.claude.effort "' .. tostring(opts.effort)
       .. '" invalid (expected low | medium | high | xhigh | max | auto)')
   end
-  local exe = vim.fn.exepath(cmd)
-  if exe == '' then
-    h.error('`' .. cmd .. '` not found in PATH')
+  -- version check
+  local version_out = vim.fn.system(Command.argv(cmd, { '--version' }))
+  if vim.v.shell_error ~= 0 then
+    h.error('configured Claude command `' .. cmd .. '` failed:\n'
+      .. version_out:sub(1, 200))
     return
   end
-  h.ok('claude binary: ' .. exe)
-
-  -- version check
-  local version_out = vim.fn.system({ cmd, '--version' })
+  h.ok('claude command: ' .. cmd)
   local version = version_out:match('(%d+%.%d+%.%d+)')
   if version then
     if version_ge(version, '2.1') then
@@ -40,7 +40,7 @@ local function check_claude(h)
 
   -- Optional: auth status (best-effort — claude's output format isn't stable)
   h.info('Checking claude auth status...')
-  local auth = vim.fn.system({ cmd, 'auth', 'status' })
+  local auth = vim.fn.system(Command.argv(cmd, { 'auth', 'status' }))
   if vim.v.shell_error == 0 then
     h.ok('claude auth: ok')
   else
