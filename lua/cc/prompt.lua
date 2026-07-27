@@ -30,7 +30,30 @@ function Prompt:ensure_buffer()
   vim.bo[self.bufnr].bufhidden = 'hide'
   vim.bo[self.bufnr].buflisted = false
   vim.bo[self.bufnr].swapfile = false
+
+  -- nvim_create_buf() does not emit the read lifecycle events used by plugin
+  -- managers to lazy-load buffer integrations. Run BufReadPost before
+  -- FileType, matching the useful part of the lifecycle of an ordinary file.
+  -- This is important for nvim-treesitter: besides starting the highlighter,
+  -- its setup registers aliases such as `ts` -> `typescript` that markdown
+  -- fenced-code injections rely on.
+  pcall(vim.api.nvim_buf_call, self.bufnr, function()
+    vim.api.nvim_exec_autocmds('BufReadPost', {
+      buffer = self.bufnr,
+      modeline = false,
+    })
+  end)
+
   vim.bo[self.bufnr].filetype = 'markdown'
+
+  -- FileType callbacks run synchronously, making this late enough for
+  -- filetype-triggered markdown plugins to finish loading. Start the native
+  -- highlighter as a fallback for configurations that do not use
+  -- nvim-treesitter's highlight module. Missing parsers are fine: markdown
+  -- remains usable with its regular syntax highlighting.
+  if not vim.treesitter.highlighter.active[self.bufnr] then
+    pcall(vim.treesitter.start, self.bufnr, 'markdown')
+  end
 
   -- Omnifunc fallback for users without nvim-cmp.
   vim.bo[self.bufnr].omnifunc = "v:lua.require'cc.prompt'.omnifunc"

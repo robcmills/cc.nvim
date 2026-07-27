@@ -49,4 +49,52 @@ T['buflisted']['stays unlisted when buflisted is set externally'] = function()
   eq(prompt_buflisted(_G.child), false)
 end
 
+T['treesitter'] = MiniTest.new_set()
+
+T['treesitter']['emits the read lifecycle event used by lazy plugins'] = function()
+  _G.child.lua([=[
+    vim.api.nvim_create_autocmd('BufReadPost', {
+      pattern = 'cc-nvim-prompt',
+      once = true,
+      callback = function(args)
+        _G._test_prompt_bufread = args.buf
+      end,
+    })
+    require('cc').load_fixture('simple_text')
+  ]=])
+
+  local observed = _G.child.lua_get('_G._test_prompt_bufread')
+  local prompt = _G.child.lua_get([[require('cc')._get_instance().prompt.bufnr]])
+  eq(observed, prompt)
+end
+
+T['treesitter']['starts highlighting for fenced code injections'] = function()
+  _G.child.lua([=[
+    require('cc').load_fixture('simple_text')
+    local inst = require('cc')._get_instance()
+    local bufnr = inst.prompt.bufnr
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+      '```lua',
+      'local answer = true',
+      '```',
+    })
+
+    local highlighter = vim.treesitter.highlighter.active[bufnr]
+    _G._test_prompt_ts_active = highlighter ~= nil
+
+    local languages = {}
+    local ok, parser = pcall(vim.treesitter.get_parser, bufnr, 'markdown')
+    if ok and parser then
+      parser:parse(true)
+      parser:for_each_tree(function(_, language_tree)
+        languages[language_tree:lang()] = true
+      end)
+    end
+    _G._test_prompt_ts_languages = languages
+  ]=])
+
+  eq(_G.child.lua_get('_G._test_prompt_ts_active'), true)
+  eq(_G.child.lua_get('_G._test_prompt_ts_languages.lua'), true)
+end
+
 return T
