@@ -198,6 +198,48 @@ T['provider_worker']['waits for stdout EOF before applying title'] = function()
   eq(out.in_flight, false)
 end
 
+T['provider_worker']['ignores Bash login output before the provider starts'] = function()
+  local out = _G.child.lua_get([==[(function()
+    require('cc.config').setup({
+      auto_rename = { enabled = true, prompt = '${prompt}', placeholder = false },
+    })
+    local tmp = vim.fn.tempname()
+    vim.fn.mkdir(tmp, 'p')
+    local fake_bash = tmp .. '/bash'
+    vim.fn.writefile({
+      '#!/bin/bash',
+      'printf "Using Node v24.13.0\\n"',
+      'if [[ $1 == -lc ]]; then shift; set -- -c "$@"; fi',
+      'exec /bin/bash "$@"',
+    }, fake_bash)
+    vim.fn.setfperm(fake_bash, 'rwx------')
+
+    local old_shell = vim.env.SHELL
+    vim.env.SHELL = fake_bash
+    local inst
+    local provider = {
+      auto_rename_spec = function()
+        return {
+          cmd = 'printf',
+          args = { 'generated-title' },
+        }
+      end,
+      rename = function(_, name, cb)
+        inst.applied_name = name
+        if cb then cb(true) end
+        return true
+      end,
+    }
+    inst = { provider = provider, session = { turns = {} } }
+    require('cc.auto_rename').start(inst, 'ignored')
+    vim.wait(2000, function() return inst.auto_rename_in_flight == false end, 10)
+    vim.env.SHELL = old_shell
+    vim.fn.delete(tmp, 'rf')
+    return inst.applied_name
+  end)()]==])
+  eq(out, 'generated-title')
+end
+
 T['provider_worker']['reads and cleans provider output file'] = function()
   local out = _G.child.lua_get([[(function()
     require('cc.config').setup({

@@ -101,6 +101,11 @@ function M.start(inst, prompt_text)
   local uv = vim.uv or vim.loop
   local stdout = uv.new_pipe(false)
   local stderr = uv.new_pipe(false)
+  local requested_stdout_marker
+  if not spec.output_path then
+    requested_stdout_marker = '__CC_NVIM_AUTO_RENAME_COMMAND_START_'
+      .. tostring(uv.hrtime()) .. '__'
+  end
 
   local stdout_chunks = {}
   inst.auto_rename_in_flight = true
@@ -115,6 +120,7 @@ function M.start(inst, prompt_text)
   end
 
   local handle
+  local stdout_marker
   local exit_code
   local stdout_done = false
   local finished = false
@@ -137,6 +143,10 @@ function M.start(inst, prompt_text)
       raw = read_output_file(spec.output_path)
     else
       raw = table.concat(stdout_chunks)
+      if stdout_marker then
+        local marker_start = raw:find(stdout_marker, 1, true)
+        raw = marker_start and raw:sub(marker_start + #stdout_marker) or nil
+      end
     end
     cleanup()
     pcall(function() if not stdout:is_closing() then stdout:close() end end)
@@ -170,7 +180,9 @@ function M.start(inst, prompt_text)
     require('cc')._handle_rename(inst, name, { silent = true })
   end
 
-  local executable, resolved_args = Command.resolve(spec.cmd, spec.args)
+  local executable, resolved_args
+  executable, resolved_args, stdout_marker = Command.resolve(
+    spec.cmd, spec.args, { stdout_marker = requested_stdout_marker })
   handle = uv.spawn(executable, {
     args = resolved_args,
     stdio = { nil, stdout, stderr },

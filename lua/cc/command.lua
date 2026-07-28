@@ -8,6 +8,8 @@
 local M = {}
 
 local BASH_ALIAS_RUNNER = [=[
+stdout_marker=$1
+shift
 name=$1
 shift
 definition=$(alias "$name" 2>/dev/null)
@@ -15,9 +17,13 @@ if [[ -n $definition ]]; then
   replacement=${definition#*=}
   eval "replacement=$replacement"
   eval "set -- $replacement \"\$@\""
-  exec "$@"
+else
+  set -- "$name" "$@"
 fi
-exec "$name" "$@"
+if [[ -n $stdout_marker ]]; then
+  printf '%s\n' "$stdout_marker"
+fi
+exec "$@"
 ]=]
 
 local function configured_shell()
@@ -35,23 +41,28 @@ end
 --- do not incur shell startup or profile side effects.
 ---@param cmd string
 ---@param args string[]?
+---@param opts? { stdout_marker?: string } emit immediately before a Bash-resolved command starts
 ---@return string executable
 ---@return string[] args
-function M.resolve(cmd, args)
+---@return string? stdout_marker emitted by the alias runner, if any
+function M.resolve(cmd, args, opts)
   args = args or {}
+  opts = opts or {}
   local shell = configured_shell()
   if cmd:find('/', 1, true) or not is_bash(shell) then
-    return cmd, vim.deepcopy(args)
+    return cmd, vim.deepcopy(args), nil
   end
 
+  local stdout_marker = opts.stdout_marker or ''
   local resolved_args = {
     '-lc',
     BASH_ALIAS_RUNNER,
     'cc.nvim',
+    stdout_marker,
     cmd,
   }
   vim.list_extend(resolved_args, args)
-  return shell, resolved_args
+  return shell, resolved_args, stdout_marker ~= '' and stdout_marker or nil
 end
 
 --- Resolve to the argv-list form accepted by vim.system()/vim.fn.system().

@@ -23,9 +23,10 @@ T['resolve']['routes bare commands through a Bash login shell'] = function()
   eq(args[1], '-lc')
   eq(args[2], Command._bash_alias_runner)
   eq(args[3], 'cc.nvim')
-  eq(args[4], 'cc')
-  eq(args[5], '-p')
-  eq(args[6], 'hello world')
+  eq(args[4], '')
+  eq(args[5], 'cc')
+  eq(args[6], '-p')
+  eq(args[7], 'hello world')
 end
 
 T['bash alias runner'] = MiniTest.new_set()
@@ -44,13 +45,25 @@ T['bash alias runner']['prepends alias arguments and preserves caller arguments'
   local script = 'alias cc=' .. vim.fn.shellescape(fake .. ' --chrome') .. '\n'
     .. Command._bash_alias_runner
   local result = vim.system({
-    '/bin/bash', '-c', script, 'cc.nvim', 'cc', '-p', 'hello world',
+    '/bin/bash', '-c', script, 'cc.nvim', '', 'cc', '-p', 'hello world',
   }, { text = true }):wait()
 
   vim.fn.delete(tmp, 'rf')
   if result.code ~= 0 then error(vim.inspect(result)) end
   eq(result.code, 0)
   eq(result.stdout, '--chrome\n-p\nhello world\n')
+end
+
+T['bash alias runner']['emits an optional marker immediately before command output'] = function()
+  local Command = require('cc.command')
+  local script = 'printf "profile noise\\n"\n' .. Command._bash_alias_runner
+  local result = vim.system({
+    '/bin/bash', '-c', script, 'cc.nvim', '__command_start__',
+    'printf', 'generated-title',
+  }, { text = true }):wait()
+
+  if result.code ~= 0 then error(vim.inspect(result)) end
+  eq(result.stdout, 'profile noise\n__command_start__\ngenerated-title')
 end
 
 return T
