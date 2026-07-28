@@ -277,6 +277,12 @@ require('cc').setup({
     context_window = nil,
     enabled = true,
     format = nil,
+    model_icons = {
+      -- Nerd Font: Claude ✻ / Codex ; Unicode: Claude ⁕ / Codex ›
+      claude = nil, -- string override; '' hides the icon
+      codex = nil,
+      use_nerdfont = nil,
+    },
     spinner = {
       frames = nil,
       frames_nerdfont = {
@@ -493,14 +499,17 @@ cc.nvim sets automatically when attaching). The default format shows:
   a `:CcStop` is in flight and awaiting the CLI's acknowledgement.
 - Cumulative session tokens (input + output)
 - Permission mode
+- Current model, with a provider-aware icon
+- Reasoning effort
 - Current git branch and PR number (if any)
 - Session name / `⚡` remote-control indicator when applicable
 
 Provide `statusline.format = function(state) ... end` to build your own.
-The `state` table exposes `is_thinking`, `spinner_frame`, `interrupt_pending`,
-`total_tokens`, `input_tokens`, `output_tokens`, `cost_usd`, `mode`, `branch`,
-`pr`, `model`, `cli_version`, `session_name`, `session_id`, and
-`remote_control`. Return a string using standard Neovim statusline syntax.
+The `state` table exposes `provider`, `is_thinking`, `spinner_frame`,
+`interrupt_pending`, `total_tokens`, `input_tokens`, `output_tokens`,
+`cost_usd`, `mode`, `branch`, `pr`, `model`, `cli_version`, `session_name`,
+`session_id`, and `remote_control`. Return a string using standard Neovim
+statusline syntax.
 
 `:CcStop` (or `<C-c>`) sends a stream-json `control_request` with
 `subtype: interrupt` on stdin. The process stays alive for the next turn;
@@ -619,6 +628,10 @@ drives them):
 | `CcStl` | (fg `#9aa5b1`) — statusline base |
 | `CcStlTokens` | (fg `#a9e39a`) — token count segment |
 | `CcStlMode` | (fg `#e6c07b`) — permission-mode segment |
+| `CcStlModel` | (fg `#E4A853`) — unknown-provider model fallback |
+| `CcStlModelClaude` | (fg `#E4A853`) — Claude model segment |
+| `CcStlModelCodex` | (fg `#ffffff`) — Codex model segment |
+| `CcStlEffort` | (fg `#ece95a`) — reasoning-effort segment |
 | `CcStlBranch` | (fg `#c3a6ff`) — git branch / PR segment |
 
 Override any of them in your colorscheme or via `vim.api.nvim_set_hl`.

@@ -76,9 +76,14 @@ end
 local HL_LINE    = '%#CcStl#'
 local HL_TOKENS  = '%#CcStlTokens#'
 local HL_MODE    = '%#CcStlMode#'
+local HL_MODEL   = '%#CcStlModel#'
 local HL_EFFORT  = '%#CcStlEffort#'
 local HL_BRANCH  = '%#CcStlBranch#'
 local HL_SESSION = '%#CcStlSession#'
+local HL_MODEL_PROVIDER = {
+  claude = '%#CcStlModelClaude#',
+  codex = '%#CcStlModelCodex#',
+}
 local SEP = HL_LINE .. ' ── '
 
 ---@param state table
@@ -114,6 +119,12 @@ local function default_format(state)
   end
   if state.mode and state.mode ~= '' then
     table.insert(segments, HL_MODE .. state.mode)
+  end
+  if state.model and state.model ~= '' then
+    local icon = require('cc.icons').for_provider(state.provider)
+    local seg = HL_MODEL_PROVIDER[state.provider] or HL_MODEL
+    if icon ~= '' then seg = seg .. icon .. ' ' end
+    table.insert(segments, seg .. state.model)
   end
   if state.effort and state.effort ~= '' then
     local Effort = require('cc.effort')

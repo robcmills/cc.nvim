@@ -101,6 +101,58 @@ T['overrides']['empty user default falls back to built-in default'] = function()
 end
 
 -- ---------------------------------------------------------------------------
+-- Provider model icons
+-- ---------------------------------------------------------------------------
+T['provider icons'] = MiniTest.new_set()
+
+T['provider icons']['unicode fallbacks distinguish Claude and Codex'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      statusline = { model_icons = { use_nerdfont = false } },
+    })
+    local icons = require('cc.icons')
+    _G._claude = icons.for_provider('claude')
+    _G._codex = icons.for_provider('codex')
+  ]])
+  eq(_G.child.lua_get('_G._claude'), '⁕')
+  eq(_G.child.lua_get('_G._codex'), '›')
+end
+
+T['provider icons']['nerdfont stand-ins distinguish Claude and Codex'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      statusline = { model_icons = { use_nerdfont = true } },
+    })
+    local icons = require('cc.icons')
+    _G._claude = icons.for_provider('claude')
+    _G._codex = icons.for_provider('codex')
+  ]])
+  eq(_G.child.lua_get('_G._claude'), '✻')
+  eq(_G.child.lua_get('_G._codex'), '\xef\x84\xa0')
+end
+
+T['provider icons']['provider override wins and empty string hides icon'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      statusline = {
+        model_icons = {
+          claude = 'A',
+          codex = '',
+          use_nerdfont = false,
+        },
+      },
+    })
+    local icons = require('cc.icons')
+    _G._claude = icons.for_provider('claude')
+    _G._codex = icons.for_provider('codex')
+    _G._unknown = icons.for_provider('other')
+  ]])
+  eq(_G.child.lua_get('_G._claude'), 'A')
+  eq(_G.child.lua_get('_G._codex'), '')
+  eq(_G.child.lua_get('_G._unknown'), '')
+end
+
+-- ---------------------------------------------------------------------------
 -- Rendering integration: tool header uses the icon and colon separator.
 -- ---------------------------------------------------------------------------
 T['rendering'] = MiniTest.new_set()

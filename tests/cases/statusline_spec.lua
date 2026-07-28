@@ -31,6 +31,20 @@ T['config']['user override disables'] = function()
   eq(_G.child.lua_get('_G._enabled'), false)
 end
 
+T['config']['provider model highlights use provider colors'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({})
+    _G._claude_fg = vim.api.nvim_get_hl(
+      0, { name = 'CcStlModelClaude', link = false }
+    ).fg
+    _G._codex_fg = vim.api.nvim_get_hl(
+      0, { name = 'CcStlModelCodex', link = false }
+    ).fg
+  ]])
+  eq(_G.child.lua_get('_G._claude_fg'), 0xE4A853)
+  eq(_G.child.lua_get('_G._codex_fg'), 0xFFFFFF)
+end
+
 -- ---------------------------------------------------------------------------
 -- build_state
 -- ---------------------------------------------------------------------------
@@ -240,6 +254,58 @@ T['default_format']['omits mode suffix for codex approval and sandbox'] = functi
   local out = _G.child.lua_get('_G._out')
   eq(out:find('never/dangerFullAccess', 1, true) ~= nil, true)
   eq(out:find('never/dangerFullAccess mode', 1, true) == nil, true)
+end
+
+T['default_format']['shows provider icon and model between mode and effort'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      statusline = { model_icons = { use_nerdfont = false } },
+      tool_icons = { use_nerdfont = false },
+    })
+    _G._out = require('cc.statusline')._default_format({
+      provider = 'claude',
+      mode = 'plan',
+      model = 'claude-opus-4-7',
+      effort = 'high',
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  local mode_at = assert(out:find('plan', 1, true))
+  local model_at = assert(out:find('⁕ claude-opus-4-7', 1, true))
+  local effort_at = assert(out:find('◑ high', 1, true))
+  eq(mode_at < model_at and model_at < effort_at, true)
+  eq(out:find('%#CcStlModelClaude#', 1, true) ~= nil, true)
+end
+
+T['default_format']['shows Codex icon for Codex provider'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      statusline = { model_icons = { use_nerdfont = false } },
+    })
+    _G._out = require('cc.statusline')._default_format({
+      provider = 'codex',
+      model = 'gpt-5.6-sol',
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('› gpt-5.6-sol', 1, true) ~= nil, true)
+  eq(out:find('%#CcStlModelCodex#', 1, true) ~= nil, true)
+end
+
+T['default_format']['model icon can be disabled without hiding model'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      statusline = { model_icons = { claude = '' } },
+    })
+    _G._out = require('cc.statusline')._default_format({
+      provider = 'claude',
+      model = 'claude-sonnet-5',
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('claude-sonnet-5', 1, true) ~= nil, true)
+  eq(out:find('⁕', 1, true) == nil, true)
+  eq(out:find('✻', 1, true) == nil, true)
 end
 
 T['default_format']['shows pending_session_name when no persisted name'] = function()

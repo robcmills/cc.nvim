@@ -31,6 +31,9 @@ local defaults = {
   CcStl         = { fg = '#9aa5b1' },
   CcStlTokens   = { fg = '#a9e39a' }, -- light green
   CcStlMode     = { fg = '#e6c07b' }, -- yellow (warm/orange-ish)
+  CcStlModel       = { fg = '#E4A853' }, -- unknown-provider fallback
+  CcStlModelClaude = { fg = '#E4A853' },
+  CcStlModelCodex  = { fg = '#ffffff' },
   CcStlEffort   = { fg = '#ece95a' }, -- yellow (cool, clearly distinct from mode)
   CcStlBranch   = { fg = '#c3a6ff' }, -- light purple
   CcStlSession  = { fg = '#8ecae6' }, -- light blue

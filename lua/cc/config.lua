@@ -117,6 +117,11 @@ local defaults = {
       interval_ms = 500,
       use_nerdfont = nil,
     },
+    model_icons = {
+      -- Set claude/codex to a string (or '' to hide) to override the
+      -- provider-aware defaults.
+      use_nerdfont = nil,
+    },
     tokens_icon = 'τ',
   },
 
