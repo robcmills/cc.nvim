@@ -40,6 +40,8 @@ local MODULES = {
   codex = 'cc.providers.codex',
 }
 
+local NAMES = { 'claude', 'codex' }
+
 local CLAUDE_ALIASES = {
   fable = true,
   haiku = true,
@@ -97,6 +99,57 @@ end
 ---@return table? provider, string? err
 function M.current()
   return M.get(M.current_name())
+end
+
+--- List history from every provider, or only `opts.provider` when supplied.
+--- Provider callbacks may be synchronous (Claude) or asynchronous (Codex);
+--- the aggregate callback fires once all requested providers have replied.
+--- Every returned entry is tagged with the provider needed to resume it.
+---@param opts { all: boolean?, cwd: string?, limit: integer?, provider: string? }?
+---@param cb fun(entries: cc.HistoryEntry[])
+function M.list_history(opts, cb)
+  opts = opts or {}
+  local names = opts.provider and { opts.provider } or NAMES
+  local entries = {}
+  local remaining = #names
+
+  local function finish_provider()
+    remaining = remaining - 1
+    if remaining > 0 then return end
+    table.sort(entries, function(a, b)
+      local a_mtime = tonumber(a.mtime) or 0
+      local b_mtime = tonumber(b.mtime) or 0
+      if a_mtime ~= b_mtime then return a_mtime > b_mtime end
+      return tostring(a.provider) < tostring(b.provider)
+    end)
+    cb(entries)
+  end
+
+  for _, name in ipairs(names) do
+    local P, err = M.get(name)
+    if not P then
+      vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.ERROR)
+      finish_provider()
+    else
+      local called = false
+      local ok, list_err = pcall(P.list_history, opts, function(provider_entries)
+        if called then return end
+        called = true
+        for _, entry in ipairs(provider_entries or {}) do
+          local tagged = vim.tbl_extend('force', {}, entry)
+          tagged.provider = name
+          table.insert(entries, tagged)
+        end
+        finish_provider()
+      end)
+      if not ok and not called then
+        called = true
+        vim.notify('cc.nvim: failed to list ' .. name .. ' sessions: '
+          .. tostring(list_err), vim.log.levels.ERROR)
+        finish_provider()
+      end
+    end
+  end
 end
 
 return M

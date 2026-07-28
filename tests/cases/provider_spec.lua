@@ -62,6 +62,117 @@ T['registry']['capability flags differ by provider'] = function()
   eq(_G.child.lua_get([[require('cc.providers.codex').capabilities.auto_rename]]), true)
 end
 
+T['history'] = MiniTest.new_set()
+
+T['history']['aggregates, tags, and sorts sessions from both providers'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({ provider = 'codex' })
+    local Providers = require('cc.providers')
+    local claude = require('cc.providers.claude')
+    local codex = require('cc.providers.codex')
+    local original_claude = claude.list_history
+    local original_codex = codex.list_history
+
+    claude.list_history = function(_, cb)
+      cb({ { session_id = 'claude-1', title = 'Claude session', mtime = 10 } })
+    end
+    codex.list_history = function(_, cb)
+      cb({ { session_id = 'codex-1', title = 'Codex session', mtime = 20 } })
+    end
+    Providers.list_history({ all = false }, function(entries)
+      _G._test_history_entries = entries
+    end)
+
+    claude.list_history = original_claude
+    codex.list_history = original_codex
+  ]==])
+  local entries = _G.child.lua_get('_G._test_history_entries')
+  eq(#entries, 2)
+  eq(entries[1].session_id, 'codex-1')
+  eq(entries[1].provider, 'codex')
+  eq(entries[2].session_id, 'claude-1')
+  eq(entries[2].provider, 'claude')
+end
+
+T['history']['provider filter only queries the requested provider'] = function()
+  _G.child.lua([==[
+    local Providers = require('cc.providers')
+    local claude = require('cc.providers.claude')
+    local codex = require('cc.providers.codex')
+    local original_claude = claude.list_history
+    local original_codex = codex.list_history
+    local calls = { claude = 0, codex = 0 }
+
+    claude.list_history = function(_, cb)
+      calls.claude = calls.claude + 1
+      cb({ { session_id = 'claude-1', title = 'Claude session', mtime = 10 } })
+    end
+    codex.list_history = function(_, cb)
+      calls.codex = calls.codex + 1
+      cb({})
+    end
+    Providers.list_history({ provider = 'claude' }, function(entries)
+      _G._test_history_entries = entries
+    end)
+    _G._test_history_calls = calls
+
+    claude.list_history = original_claude
+    codex.list_history = original_codex
+  ]==])
+  eq(_G.child.lua_get('_G._test_history_calls'), { claude = 1, codex = 0 })
+  local entries = _G.child.lua_get('_G._test_history_entries')
+  eq(#entries, 1)
+  eq(entries[1].provider, 'claude')
+end
+
+T['history']['CcResume treats provider names as picker filters and other args as ids'] = function()
+  _G.child.lua([==[
+    if vim.fn.exists(':CcResume') ~= 2 then require('cc.commands').create() end
+    local cc = require('cc')
+    local original_history = cc.history
+    local original_resume = cc.resume
+    local calls = {}
+    cc.history = function(all, provider)
+      table.insert(calls, { kind = 'history', all = all, provider = provider })
+    end
+    cc.resume = function(id)
+      table.insert(calls, { kind = 'resume', id = id })
+    end
+
+    vim.cmd('CcResume claude')
+    vim.cmd('CcResume codex')
+    vim.cmd('CcResume session-123')
+    vim.cmd('CcResume')
+    _G._test_resume_calls = calls
+
+    cc.history = original_history
+    cc.resume = original_resume
+  ]==])
+  local calls = _G.child.lua_get('_G._test_resume_calls')
+  eq(calls[1], { kind = 'history', all = false, provider = 'claude' })
+  eq(calls[2], { kind = 'history', all = false, provider = 'codex' })
+  eq(calls[3], { kind = 'resume', id = 'session-123' })
+  eq(calls[4], { kind = 'history', all = false })
+end
+
+T['history']['picker rows include a fixed-width provider column'] = function()
+  local rows = _G.child.lua_get([[(function()
+    local history = require('cc.history')
+    return {
+      history.format_entry({
+        provider = 'claude', mtime = os.time(), title = 'Claude session',
+      }, false, true),
+      history.format_entry({
+        provider = 'codex', mtime = os.time(), title = 'Codex session',
+      }, false, true),
+    }
+  end)()]])
+  eq(rows[1]:match('^(%S+)'), 'claude')
+  eq(rows[2]:match('^(%S+)'), 'codex')
+  eq(rows[1]:find('Claude session', 1, true) ~= nil, true)
+  eq(rows[2]:find('Codex session', 1, true) ~= nil, true)
+end
+
 T['options'] = MiniTest.new_set()
 
 T['options']['claude options resolve only from providers.claude'] = function()

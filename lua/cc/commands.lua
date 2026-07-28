@@ -69,12 +69,24 @@ function M.create()
     { desc = 'Show the most recent plan file (or pick from ~/.claude/plans)' })
 
   vim.api.nvim_create_user_command('CcResume', function(opts)
-    if opts.args and opts.args ~= '' then
+    if opts.args == 'claude' or opts.args == 'codex' then
+      cc.history(false, opts.args)
+    elseif opts.args and opts.args ~= '' then
       cc.resume(opts.args)
     else
       cc.history(false)
     end
-  end, { nargs = '?', desc = 'Resume a cc.nvim session (prompt if no id)' })
+  end, {
+    nargs = '?',
+    complete = function(arg_lead)
+      local out = {}
+      for _, provider in ipairs({ 'claude', 'codex' }) do
+        if provider:sub(1, #arg_lead) == arg_lead then table.insert(out, provider) end
+      end
+      return out
+    end,
+    desc = 'Resume a cc.nvim session (picker accepts optional provider filter)',
+  })
 
   vim.api.nvim_create_user_command('CcContinue', function() cc.continue_last() end,
     { desc = 'Resume most recent cc.nvim session for current cwd' })

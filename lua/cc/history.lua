@@ -187,6 +187,7 @@ end
 ---@field ai_title string? AI-generated title, if any
 ---@field first_prompt string? first user-string message
 ---@field cwd string?
+---@field provider 'claude'|'codex'? provider needed to resume this session
 
 --- List sessions for the given cwd (defaults to vim.fn.getcwd()).
 ---@param cwd string?
@@ -336,9 +337,14 @@ end
 --- Format a history entry for a picker line.
 ---@param entry cc.HistoryEntry
 ---@param show_cwd boolean
+---@param show_provider boolean?
 ---@return string
-function M.format_entry(entry, show_cwd)
+function M.format_entry(entry, show_cwd, show_provider)
   local age = M._relative_time(entry.mtime)
+  local provider_col = ''
+  if show_provider then
+    provider_col = string.format('%-7s  ', entry.provider or '?')
+  end
   local cwd_abbrev = ''
   if show_cwd and entry.cwd then
     cwd_abbrev = vim.fn.fnamemodify(entry.cwd, ':~')
@@ -349,7 +355,7 @@ function M.format_entry(entry, show_cwd)
   end
   local title = entry.title or ''
   if #title > 80 then title = title:sub(1, 79) .. '…' end
-  return string.format('%-10s %s%s', age, cwd_abbrev, title)
+  return string.format('%s%-10s %s%s', provider_col, age, cwd_abbrev, title)
 end
 
 ---@param mtime integer unix epoch seconds

@@ -168,9 +168,9 @@ model names.
 | `:CcPlan` | Open in plan mode (`--permission-mode plan`) |
 | `:CcPermissionMode [mode]` | Set permission mode (no arg = picker; tab-completes the six modes). Sent live to an active session via `set_permission_mode` control_request, else stored for the next `:Cc` / `:CcNew`. |
 | `:CcPlanShow` | Open the most recent plan file |
-| `:CcResume [id]` | Resume a session (picker if no id) |
-| `:CcContinue` | Resume most recent session for current cwd |
-| `:CcHistory` / `:CcHistory!` | Pick a session (! = all projects) |
+| `:CcResume [id\|claude\|codex]` | Resume by ID, or open the all-provider picker (optionally filtered by provider) |
+| `:CcContinue` | Resume the most recent session for the current cwd across providers |
+| `:CcHistory` / `:CcHistory!` | Pick a session across providers (! = all projects) |
 | `:CcRename [name]` | Rename the current session (no arg = show current title) |
 | `:CcEffort [level]` | Set reasoning effort on the active session; without a session, set the in-memory default for the next `:CcNew` |
 | `:CcModel [model]` | Set the active session's model for subsequent turns; no argument reports the current model |
@@ -511,12 +511,15 @@ reliable.
 
 ## Session history
 
-Every conversation is stored by Claude Code at
-`~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`.
+Claude Code stores conversations at
+`~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`; Codex exposes its
+threads through `codex app-server`. History pickers merge both sources and
+show a provider column.
 
 - `:CcContinue` picks up the most recent session for your current directory
-- `:CcHistory` opens a picker of all sessions in the current cwd
-- `:CcHistory!` opens a picker across every project
+- `:CcResume` and `:CcHistory` open a picker of all sessions in the current cwd
+- `:CcResume claude` / `:CcResume codex` filter the picker by provider
+- `:CcHistory!` opens a picker across every project and provider
 - `:CcResume <id>` jumps to a specific session
 
 When resuming, the prior transcript is re-rendered into the output buffer
@@ -585,10 +588,12 @@ Commands gated on these explain why instead of failing silently.
 
 Codex approval and sandbox behavior comes from your `~/.codex/config.toml`
 unless overridden per-session with `providers.codex.approval_policy` and
-`providers.codex.sandbox`. Provider selection is global: every new or
-resumed session uses the configured provider. Verified against codex-cli
-0.144.x; run `:checkhealth cc` to validate the binary, app-server support,
-and auth.
+`providers.codex.sandbox`. New sessions use the configured provider unless
+their model identifies another provider; history selections resume with the
+provider that owns the selected session. A direct `:CcResume <id>` uses the
+configured provider because an ID alone carries no provider metadata.
+Verified against codex-cli 0.144.x; run `:checkhealth cc` to validate the
+binary, app-server support, and auth.
 
 ## Highlights
 

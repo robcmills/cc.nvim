@@ -778,16 +778,19 @@ function M.load_fixture(name_or_path)
   require('cc.statusline').refresh(inst)
 end
 
---- Public: resume a specific session by id (Claude session id or Codex
---- thread id, depending on the configured provider).
+--- Public: resume a specific session by id. `provider_name` is supplied by
+--- the cross-provider picker; direct callers without it keep using the
+--- configured provider for backwards compatibility.
 ---@param session_id string
-function M.resume(session_id)
+---@param provider_name 'claude'|'codex'?
+function M.resume(session_id, provider_name)
   if not session_id or session_id == '' then
     vim.notify('cc.nvim: resume requires a session id', vim.log.levels.WARN)
     return
   end
 
   local P, perr = Providers.current()
+  if provider_name then P, perr = Providers.get(provider_name) end
   if not P then
     vim.notify('cc.nvim: ' .. tostring(perr), vim.log.levels.ERROR)
     return
@@ -801,43 +804,41 @@ function M.resume(session_id)
     P.prerender_resume(inst, session_id)
   end
   inst.last_session_id = session_id
-  attach_provider(inst, { resume_id = session_id })
+  attach_provider(inst, { resume_id = session_id, provider = P.name })
 end
 
 --- Public: resume most recent session for the current cwd.
 function M.continue_last()
-  local P, perr = Providers.current()
-  if not P then
-    vim.notify('cc.nvim: ' .. tostring(perr), vim.log.levels.ERROR)
-    return
-  end
-  P.list_history({ all = false }, function(entries)
+  Providers.list_history({ all = false }, function(entries)
     if #entries == 0 then
       vim.notify('cc.nvim: no prior sessions for this cwd', vim.log.levels.INFO)
       return
     end
-    M.resume(entries[1].session_id)
+    M.resume(entries[1].session_id, entries[1].provider)
   end)
 end
 
 --- Public: pick a session to resume.
 ---@param all_projects boolean? if true, include sessions from other cwds
-function M.history(all_projects)
-  local P, perr = Providers.current()
-  if not P then
-    vim.notify('cc.nvim: ' .. tostring(perr), vim.log.levels.ERROR)
-    return
-  end
-  P.list_history({ all = all_projects or false }, function(entries)
+---@param provider_name 'claude'|'codex'? limit the picker to one provider
+function M.history(all_projects, provider_name)
+  Providers.list_history({
+    all = all_projects or false,
+    provider = provider_name,
+  }, function(entries)
     if #entries == 0 then
-      vim.notify('cc.nvim: no sessions found', vim.log.levels.INFO)
+      local suffix = provider_name and (' for provider ' .. provider_name) or ''
+      vim.notify('cc.nvim: no sessions found' .. suffix, vim.log.levels.INFO)
       return
     end
     require('cc.picker').select(entries, {
-      prompt = all_projects and 'Resume session (all projects)' or 'Resume session',
-      format_item = function(e) return P.format_history_entry(e, all_projects or false) end,
+      prompt = (all_projects and 'Resume session (all projects)' or 'Resume session')
+        .. (provider_name and (' — ' .. provider_name) or ''),
+      format_item = function(e)
+        return require('cc.history').format_entry(e, all_projects or false, true)
+      end,
     }, function(choice)
-      if choice then M.resume(choice.session_id) end
+      if choice then M.resume(choice.session_id, choice.provider) end
     end)
   end)
 end
