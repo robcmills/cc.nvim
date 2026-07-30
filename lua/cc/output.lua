@@ -51,6 +51,12 @@ M._buf_state = {}
 ---@field session cc.Session
 ---@field streaming_block_type string?
 ---@field streaming_tool_id string? currently-streaming tool_use id
+---@field _pending_delta_chunks string[]
+---@field _pending_delta_kind string?
+---@field _delta_timer userdata?
+---@field _stream_revision integer
+---@field _markdown_revision integer
+---@field _last_markdown_update_ns number?
 local Output = {}
 Output.__index = Output
 
@@ -68,6 +74,12 @@ function M.new(session, buf_name)
     last_turn_role = nil, ---@type 'user'|'agent'|nil tracks consecutive turns
     agent_header_lnum = nil, ---@type integer? header line of current agent fold
     agent_end_lnum = nil, ---@type integer? last line of the most recent agent turn (anchor for the result/cost line)
+    _pending_delta_chunks = {},
+    _pending_delta_kind = nil,
+    _delta_timer = nil,
+    _stream_revision = 0,
+    _markdown_revision = 0,
+    _last_markdown_update_ns = nil,
   }, Output)
 end
 
@@ -260,6 +272,16 @@ function Output:_setup_autocmds()
     buffer = bufnr,
     callback = function()
       M.refresh_carets(bufnr)
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufWipeout', {
+    group = group,
+    buffer = bufnr,
+    once = true,
+    callback = function()
+      self:_cancel_delta_timer()
+      self._pending_delta_chunks = {}
+      self._pending_delta_kind = nil
     end,
   })
 end
@@ -547,11 +569,14 @@ function M._flush_pending_fold_closes(bufnr)
   end
 end
 
---- Append text to the last line (streaming deltas). New lines spawned by
---- embedded \n inherit fold level from the current last line.
+--- Append text to the last line. New lines spawned by embedded \n inherit
+--- fold level from the current last line.
 ---@param text string
-function Output:_append_to_last_line(text)
-  local was_following = self:_is_following_tail()
+---@param opts? { anchor_tail: boolean }
+function Output:_append_to_last_line(text, opts)
+  opts = opts or {}
+  local anchor_tail = opts.anchor_tail ~= false
+  local was_following = anchor_tail and self:_is_following_tail()
   local bufnr = self:ensure_buffer()
   local state = M._buf_state[bufnr]
   vim.bo[bufnr].modifiable = true
@@ -576,9 +601,103 @@ function Output:_append_to_last_line(text)
     vim.api.nvim_buf_set_lines(bufnr, last_row, last_row + 1, false, new_lines)
   end
   vim.bo[bufnr].modifiable = false
-  if was_following then
+  if anchor_tail and was_following then
     self:_follow_tail()
   end
+end
+
+--- Return the screen-row height of the output buffer's last line. Unlike a
+--- display-width estimate, nvim_win_text_height accounts for real window
+--- width, wrapping options, folds, and decorations.
+---@return integer?
+function Output:_tail_text_height()
+  if not self.winid or not vim.api.nvim_win_is_valid(self.winid) then return nil end
+  if vim.api.nvim_win_get_buf(self.winid) ~= self.bufnr then return nil end
+  local row = vim.api.nvim_buf_line_count(self.bufnr) - 1
+  local ok, height = pcall(vim.api.nvim_win_text_height, self.winid, {
+    start_row = row,
+    end_row = row,
+  })
+  if not ok or type(height) ~= 'table' then return nil end
+  return height.all
+end
+
+function Output:_cancel_delta_timer()
+  local timer = self._delta_timer
+  self._delta_timer = nil
+  if not timer then return end
+  pcall(function() timer:stop() end)
+  pcall(function()
+    if not timer:is_closing() then timer:close() end
+  end)
+end
+
+function Output:_schedule_delta_flush()
+  if self._delta_timer then return end
+  local cfg = require('cc.config').options.streaming
+  local interval = cfg and cfg.render_interval_ms or 33
+  local timer
+  timer = vim.defer_fn(function()
+    if self._delta_timer ~= timer then return end
+    self._delta_timer = nil
+    self:flush_pending_delta()
+  end, interval)
+  self._delta_timer = timer
+end
+
+--- Update the live Markdown region no faster than streaming.markdown_hz.
+--- A negative rate suppresses live updates; force=true always catches the
+--- parser up at the content-block boundary.
+---@param force boolean?
+function Output:_maybe_update_streaming_markdown(force)
+  if not self.streaming_prose_start_lnum then return end
+  if self._markdown_revision == self._stream_revision then return end
+
+  local cfg = require('cc.config').options.streaming
+  local hz = cfg and cfg.markdown_hz or 5
+  if not force and hz < 0 then return end
+
+  local now = (vim.uv or vim.loop).hrtime()
+  if not force and self._last_markdown_update_ns then
+    local interval_ns = 1e9 / hz
+    if now - self._last_markdown_update_ns < interval_ns then return end
+  end
+
+  local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
+  require('cc.md_highlight').update_streaming(self.bufnr, end_lnum)
+  self._markdown_revision = self._stream_revision
+  self._last_markdown_update_ns = now
+end
+
+--- Flush all coalesced text/thinking deltas in one buffer mutation. Tail
+--- anchoring is reserved for batches that add lines or change the wrapped
+--- screen-row height of the current tail.
+---@return boolean flushed
+function Output:flush_pending_delta()
+  self:_cancel_delta_timer()
+  local chunks = self._pending_delta_chunks
+  if not chunks or #chunks == 0 then return false end
+
+  self._pending_delta_chunks = {}
+  self._pending_delta_kind = nil
+  local text = table.concat(chunks)
+  local was_following = self:_is_following_tail()
+  local has_newline = text:find('\n', 1, true) ~= nil
+  local before_height = not has_newline and was_following and self:_tail_text_height() or nil
+
+  self:_append_to_last_line(text, { anchor_tail = false })
+  self._stream_revision = self._stream_revision + 1
+  self:_maybe_update_streaming_markdown(false)
+
+  local wrap_changed = false
+  if not has_newline and was_following and before_height ~= nil then
+    local after_height = self:_tail_text_height()
+    wrap_changed = after_height ~= nil and after_height ~= before_height
+  end
+  if was_following and (has_newline or wrap_changed) then
+    self:_follow_tail()
+  end
+  return true
 end
 
 --- Returns true if the user is "following the tail" — i.e. the output
@@ -650,6 +769,7 @@ end
 --- Render a user turn header + content.
 ---@param text string
 function Output:render_user_turn(text)
+  self:flush_pending_delta()
   local config = require('cc.config').options
   local highlight_user = config.markdown_highlight and config.markdown_highlight.user
   local is_continuation = (self.last_turn_role == 'user')
@@ -695,6 +815,7 @@ end
 --- Start an assistant turn (header only; content streams in).
 ---@return integer header_lnum
 function Output:begin_assistant_turn()
+  self:flush_pending_delta()
   local is_continuation = (self.last_turn_role == 'agent')
   self.last_turn_role = 'agent'
   self.streaming_block_type = nil
@@ -721,6 +842,7 @@ end
 --- the cost line still renders at the end of this agent turn rather than
 --- inside the next fold.
 function Output:end_assistant_turn()
+  self:flush_pending_delta()
   local bufnr = self:ensure_buffer()
   self.agent_end_lnum = vim.api.nvim_buf_line_count(bufnr)
 end
@@ -728,12 +850,16 @@ end
 --- Content block started (text, thinking, or tool_use).
 ---@param block table
 function Output:on_content_block_start(block)
+  self:flush_pending_delta()
   local config = require('cc.config').options
   local highlight_agent = config.markdown_highlight and config.markdown_highlight.agent
   if block.type == 'text' then
     local lnum = self:_append({ '  ' }, { 1 }, false)
     self.streaming_block_type = 'text'
     self.streaming_prose_start_lnum = lnum
+    self._stream_revision = 0
+    self._markdown_revision = 0
+    self._last_markdown_update_ns = nil
     if highlight_agent then
       require('cc.md_highlight').begin_streaming(self.bufnr, lnum)
     end
@@ -742,6 +868,9 @@ function Output:on_content_block_start(block)
       local lnum = self:_append({ '  ∴ Thinking... ' }, { 1 }, false)
       self.streaming_block_type = 'thinking'
       self.streaming_prose_start_lnum = lnum
+      self._stream_revision = 0
+      self._markdown_revision = 0
+      self._last_markdown_update_ns = nil
       if highlight_agent then
         require('cc.md_highlight').begin_streaming(self.bufnr, lnum)
       end
@@ -771,21 +900,19 @@ end
 ---@param kind string 'text' | 'thinking'
 ---@param chunk string
 function Output:on_delta(kind, chunk)
-  local streaming
+  local streaming = false
   if kind == 'text' and self.streaming_block_type == 'text' then
-    self:_append_to_last_line(chunk)
     streaming = true
   elseif kind == 'thinking' and self.streaming_block_type == 'thinking' then
-    self:_append_to_last_line(chunk)
     streaming = true
   end
   if not streaming then return end
-  -- Extend the in-flight markdown region so the new bytes get parsed and
-  -- highlighted as they stream. Skipped when md_highlight isn't tracking
-  -- (begin_streaming wasn't called because config.markdown_highlight.agent
-  -- is off, or the parser failed to attach).
-  local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
-  require('cc.md_highlight').update_streaming(self.bufnr, end_lnum)
+  if self._pending_delta_kind and self._pending_delta_kind ~= kind then
+    self:flush_pending_delta()
+  end
+  self._pending_delta_kind = kind
+  table.insert(self._pending_delta_chunks, chunk)
+  self:_schedule_delta_flush()
 end
 
 --- Called when a content block completes. Renders tool input summary.
@@ -794,12 +921,12 @@ end
 ---  replaying a transcript on session resume.
 function Output:on_content_block_stop(block, opts)
   opts = opts or {}
+  self:flush_pending_delta()
   if block and (block.type == 'text' or block.type == 'thinking')
       and self.streaming_prose_start_lnum then
-    -- Streaming path: deltas already extended the in-flight region as content
-    -- arrived, so just stop tracking it. If begin_streaming was never called
-    -- (config.markdown_highlight.agent disabled, or parser unattached),
-    -- end_streaming is a no-op.
+    -- Always catch Markdown up at the block boundary. With a negative
+    -- streaming.markdown_hz this is the block's only highlight pass.
+    self:_maybe_update_streaming_markdown(true)
     require('cc.md_highlight').end_streaming(self.bufnr)
     self.streaming_prose_start_lnum = nil
   end
@@ -933,6 +1060,7 @@ end
 ---@param content string|table
 ---@param is_error boolean?
 function Output:render_tool_result(tool_use_id, content, is_error)
+  self:flush_pending_delta()
   local state = M._buf_state[self.bufnr]
   local meta = state.tool_blocks[tool_use_id]
   if not meta then
@@ -1019,6 +1147,7 @@ local turn_cost_format_errored = false
 ---@param result table
 ---@param append_to_tail boolean? bypass the agent-turn anchor
 function Output:render_result(result, append_to_tail)
+  self:flush_pending_delta()
   self.last_turn_role = nil
   local cfg = require('cc.config').options
   if cfg.show_turn_cost == false then return end
@@ -1072,6 +1201,7 @@ end
 
 ---@param text string
 function Output:render_notice(text)
+  self:flush_pending_delta()
   self.last_turn_role = nil
   self:_append({ '  ── ' .. text .. ' ──' }, { 0 }, false)
 end
@@ -1079,6 +1209,7 @@ end
 ---@param tool_name string
 ---@param input table?
 function Output:render_permission_request(tool_name, input)
+  self:flush_pending_delta()
   local summary = require('cc.output.tool_body').summarize_tool_input(tool_name, input)
   local text = '  ⚠ Permission: ' .. tool_name
   if summary ~= '' then
@@ -1090,6 +1221,7 @@ end
 ---@param behavior string
 ---@param tool_name string
 function Output:render_permission_outcome(behavior, tool_name)
+  self:flush_pending_delta()
   local icon = behavior == 'allow' and '✓' or '✗'
   local verb = behavior == 'allow' and 'Allowed' or 'Denied'
   local bufnr = self:ensure_buffer()
@@ -1157,6 +1289,7 @@ end
 ---@param phase string 'started' | 'response'
 ---@param elapsed_s number?
 function Output:render_hook(hook_name, phase, elapsed_s)
+  self:flush_pending_delta()
   local icon = '⚙'
   local suffix = ''
   if elapsed_s then
@@ -1170,6 +1303,7 @@ end
 ---@param phase string 'started' | 'progress' | 'done'
 ---@param description string
 function Output:render_task(phase, description)
+  self:flush_pending_delta()
   local text = string.format('    ⤷ Task %s: %s', phase, description or '')
   self:_append({ text }, { 2 }, false)
 end
@@ -1180,6 +1314,7 @@ end
 ---@param steps table[] each { step: string, status: 'pending'|'inProgress'|'completed' }?
 ---@param explanation string?
 function Output:render_plan(steps, explanation)
+  self:flush_pending_delta()
   if (not steps or #steps == 0) and (not explanation or explanation == '') then
     return
   end

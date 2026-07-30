@@ -273,6 +273,17 @@ require('cc').setup({
   show_turn_cost = true,
   splash = true,
 
+  streaming = {
+    -- Coalesce text/thinking deltas into one output-buffer update per frame.
+    -- Valid range: 10–1000ms.
+    render_interval_ms = 33,
+
+    -- Maximum live Markdown refresh rate. Valid positive range: 0.5–60Hz.
+    -- Any negative value disables live refreshes and highlights once when
+    -- the current text/thinking block completes.
+    markdown_hz = 5,
+  },
+
   statusline = {
     context_window = nil,
     enabled = true,
@@ -313,6 +324,11 @@ require('cc').setup({
   },
 })
 ```
+
+Invalid streaming values are ignored with a warning and fall back to the
+defaults shown above. Delta rendering and Markdown highlighting are throttled
+independently: text remains responsive at the render interval even when
+Markdown is configured to refresh less often or only at block completion.
 
 ## Progressive disclosure
 

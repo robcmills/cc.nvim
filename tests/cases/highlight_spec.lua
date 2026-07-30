@@ -450,9 +450,9 @@ T['highlight_groups']['md_highlight skips user content when disabled'] = functio
   end
 end
 
--- Streaming markdown: while a text block is mid-stream (deltas have arrived
--- but content_block_stop hasn't fired), inline markup like `**bold**` must
--- already be parsed and captured. Regression: prior implementation passed
+-- Streaming markdown: after a coalesced render batch flushes, but before
+-- content_block_stop, inline markup like `**bold**` must already be parsed
+-- and captured. Regression: prior implementation passed
 -- parser:included_regions() (a reference to the parser's internal table)
 -- back into set_included_regions after mutating one entry. Because the new
 -- and stored regions were the same table, _iter_regions saw no diff and
@@ -474,6 +474,7 @@ T['highlight_groups']['md_highlight streams inline markup mid-delta'] = function
     output:on_content_block_start({ type = 'text' })
     -- Deliver bold mid-stream; do NOT call content_block_stop yet.
     output:on_delta('text', 'hello **bold** there')
+    output:flush_pending_delta()
 
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     local lnum, bold_col

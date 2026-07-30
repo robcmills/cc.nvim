@@ -100,6 +100,14 @@ local defaults = {
   -- Set to false to suppress the new-session splash.
   splash = true,
 
+  -- Streaming output is coalesced to one buffer update per interval. Markdown
+  -- highlighting is throttled independently because reparsing a growing prose
+  -- block is substantially more expensive than appending its text.
+  streaming = {
+    render_interval_ms = 33, -- 10–1000ms; default is ~30 FPS
+    markdown_hz = 5, -- 0.5–60Hz; negative = highlight only at block completion
+  },
+
   statusline = {
     -- nil derives from the model ([1m] → 1,000,000; otherwise 200,000).
     context_window = nil,
@@ -145,6 +153,58 @@ local defaults = {
 
 M.options = vim.deepcopy(defaults)
 
+local function finite_number(value)
+  return type(value) == 'number'
+    and value == value
+    and value ~= math.huge
+    and value ~= -math.huge
+end
+
+local function warn_invalid(path, value, fallback, expected)
+  vim.notify(
+    string.format(
+      'cc.nvim: invalid %s=%s; expected %s. Using default %s.',
+      path, vim.inspect(value), expected, tostring(fallback)
+    ),
+    vim.log.levels.WARN
+  )
+end
+
+local function validate_streaming_options()
+  local streaming = M.options.streaming
+  if type(streaming) ~= 'table' then
+    warn_invalid('streaming', streaming, vim.inspect(defaults.streaming), 'a table')
+    M.options.streaming = vim.deepcopy(defaults.streaming)
+    return
+  end
+
+  local render_ms = streaming.render_interval_ms
+  if not finite_number(render_ms) or render_ms < 10 or render_ms > 1000 then
+    warn_invalid(
+      'streaming.render_interval_ms',
+      render_ms,
+      defaults.streaming.render_interval_ms,
+      'a finite number from 10 to 1000'
+    )
+    streaming.render_interval_ms = defaults.streaming.render_interval_ms
+  else
+    streaming.render_interval_ms = math.floor(render_ms + 0.5)
+  end
+
+  local markdown_hz = streaming.markdown_hz
+  local valid_markdown_hz = finite_number(markdown_hz)
+    and (markdown_hz < 0 or (markdown_hz >= 0.5 and markdown_hz <= 60))
+  if not valid_markdown_hz then
+    warn_invalid(
+      'streaming.markdown_hz',
+      markdown_hz,
+      defaults.streaming.markdown_hz,
+      'a negative number, or a finite number from 0.5 to 60'
+    )
+    streaming.markdown_hz = defaults.streaming.markdown_hz
+  end
+end
+
 local REMOVED_CLAUDE_KEYS = {
   'claude_cmd',
   'extra_args',
@@ -155,6 +215,7 @@ local REMOVED_CLAUDE_KEYS = {
 ---@param opts table?
 function M.setup(opts)
   M.options = vim.tbl_deep_extend('force', vim.deepcopy(defaults), opts or {})
+  validate_streaming_options()
   -- These former top-level Claude settings are intentionally unsupported.
   -- Drop them even if an old setup table still supplies them so no caller
   -- can accidentally observe or revive the compatibility path.
