@@ -458,6 +458,56 @@ T['items']['mcpToolCall renders with mcp naming and result text'] = function()
   eq(text:find('found 3 issues', 1, true) ~= nil, true)
 end
 
+T['items']['webSearch fills summary, action parameters, and results on completion'] = function()
+  setup_codex(_G.child)
+  handshake(_G.child)
+  _G.child.lua([==[
+    _G._feed({ method = 'item/started', params = { threadId = 'thread-1', turnId = 'turn-1',
+      startedAtMs = 0, item = {
+        type = 'webSearch', id = 'w1', query = '', action = vim.NIL, results = vim.NIL,
+      } } })
+    _G._test_websearch_started = table.concat(
+      vim.api.nvim_buf_get_lines(_G._test_bufnr, 0, -1, false), '\n')
+    _G._feed({ method = 'item/completed', params = { threadId = 'thread-1', turnId = 'turn-1',
+      completedAtMs = 1, item = {
+        type = 'webSearch', id = 'w1', query = 'codex app-server protocol',
+        action = {
+          type = 'search',
+          query = 'codex app-server protocol',
+          queries = {
+            'codex app-server protocol',
+            'codex webSearch ThreadItem',
+          },
+        },
+        results = {
+          {
+            type = 'text_result',
+            ref_id = 'turn0search0',
+            url = 'https://example.com/app-server',
+            title = 'Codex App Server',
+            snippet = 'Build rich clients with Codex.',
+          },
+        },
+      } } })
+  ]==])
+
+  local started = _G.child.lua_get('_G._test_websearch_started')
+  eq(started:find('WebSearch: codex', 1, true), nil)
+
+  local text = buffer_text(_G.child)
+  eq(text:find('WebSearch: codex app-server protocol', 1, true) ~= nil, true)
+  eq(text:find('\n    action:', 1, true) ~= nil, true)
+  eq(text:find('\n      type: search', 1, true) ~= nil, true)
+  eq(text:find('\n      queries:', 1, true) ~= nil, true)
+  eq(text:find('\n        - codex webSearch ThreadItem', 1, true) ~= nil, true)
+  eq(text:find('\n      query:', 1, true), nil)
+  eq(text:find('\n    Output:', 1, true) ~= nil, true)
+  eq(text:find('\n        title: Codex App Server', 1, true) ~= nil, true)
+  eq(text:find('\n        url: https://example.com/app-server', 1, true) ~= nil, true)
+  eq(_G.child.lua_get('_G._test_session.tool_calls.w1.input.query'),
+    'codex app-server protocol')
+end
+
 T['items']['reasoning deltas render as thinking when enabled'] = function()
   setup_codex(_G.child)
   handshake(_G.child)

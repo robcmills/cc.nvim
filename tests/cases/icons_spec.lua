@@ -226,7 +226,7 @@ T['rendering']['default icon used for unknown tool'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found
   for _, line in ipairs(lines) do
-    if line:match('^  ◆ FancyCustomTool: ') then found = line; break end
+    if line:match('^  ◆ FancyCustomTool:') then found = line; break end
   end
   eq(type(found), 'string')
 end

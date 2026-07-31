@@ -315,6 +315,76 @@ T['yaml_body']['default_tool_body emits yaml snippet for generic tools'] = funct
   eq(_G.child.lua_get('_G._t_yaml_matches'), true)
 end
 
+T['yaml_body']['summary parameters are omitted generically, including nested paths'] = function()
+  _G.child.lua([[
+    local tool_body = require('cc.output.tool_body')
+
+    local web = tool_body.default_tool_body('WebSearch', {
+      query = 'codex app-server protocol',
+      action = {
+        type = 'search',
+        query = 'codex app-server protocol',
+        queries = { 'codex app-server protocol', 'codex WebSearch ThreadItem' },
+      },
+    })
+    _G._t_web_lines = web.lines or web
+
+    local custom = tool_body.default_tool_body('CustomTool', {
+      description = 'inspect the workspace',
+      path = '/tmp/project',
+      limit = 10,
+    })
+    _G._t_custom_lines = custom.lines or custom
+
+    local read = tool_body.default_tool_body('Read', {
+      file_path = '/tmp/file.lua',
+      offset = 20,
+      limit = 5,
+      encoding = 'utf-8',
+    })
+    _G._t_read_lines = read.lines or read
+
+    local bash_summary_is_command = tool_body.default_tool_body('Bash', {
+      command = 'pwd',
+    })
+    _G._t_bash_command_lines = bash_summary_is_command.lines or bash_summary_is_command
+
+    local bash_summary_is_description = tool_body.default_tool_body('Bash', {
+      command = 'pwd',
+      description = 'show working directory',
+    })
+    _G._t_bash_description_lines =
+      bash_summary_is_description.lines or bash_summary_is_description
+  ]])
+
+  eq(_G.child.lua_get('_G._t_web_lines'), {
+    'action:',
+    '  queries:',
+    '    - codex app-server protocol',
+    '    - codex WebSearch ThreadItem',
+    '  type: search',
+  })
+  eq(_G.child.lua_get('_G._t_custom_lines'), {
+    'limit: 10',
+    'path: /tmp/project',
+  })
+  eq(_G.child.lua_get('_G._t_read_lines'), { 'encoding: utf-8' })
+  eq(_G.child.lua_get('_G._t_bash_command_lines'), {})
+  eq(_G.child.lua_get('_G._t_bash_description_lines'), { 'pwd' })
+end
+
+T['yaml_body']['unknown tools keep parameters when no summary field is known'] = function()
+  _G.child.lua([[
+    local tool_body = require('cc.output.tool_body')
+    local input = { foo = 'bar', count = 2 }
+    local body = tool_body.default_tool_body('CustomTool', input)
+    _G._t_summary = tool_body.summarize_tool_input('CustomTool', input)
+    _G._t_lines = body.lines or body
+  ]])
+  eq(_G.child.lua_get('_G._t_summary'), '')
+  eq(_G.child.lua_get('_G._t_lines'), { 'count: 2', 'foo: bar' })
+end
+
 T['yaml_body']['javascript_tool keeps yaml + js snippet ordering'] = function()
   _G.child.lua([[
     local output = require('cc.output')

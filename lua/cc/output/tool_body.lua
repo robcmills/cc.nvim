@@ -235,6 +235,133 @@ local function extract_browser_batch_js_fragments(body_lines, actions)
 end
 M.extract_browser_batch_js_fragments = extract_browser_batch_js_fragments
 
+---@class cc.ToolInputSummary
+---@field text string
+---@field omit_paths table[] parameter paths reproduced by the summary
+
+---@param text any
+---@param omit_paths table[]?
+---@return cc.ToolInputSummary
+local function summary(text, omit_paths)
+  return { text = tostring(text or ''), omit_paths = omit_paths or {} }
+end
+
+--- Build a summary together with the parameter paths it makes redundant.
+--- Body rendering consumes omit_paths generically; tool-specific knowledge
+--- stays here beside the code that actually constructs each summary.
+---@param tool_name string
+---@param input table?
+---@return cc.ToolInputSummary
+local function tool_input_summary(tool_name, input)
+  if not input or type(input) ~= 'table' then
+    return summary('')
+  end
+  -- Providers may explicitly suppress a summary when their protocol does not
+  -- supply one. Keep this separate from `description`, since an absent
+  -- description normally falls back to a useful tool-specific summary.
+  if input._display_summary == false then
+    return summary('')
+  end
+  if tool_name == 'Bash' then
+    if input.description and input.description ~= '' then
+      return summary(input.description, { { 'description' } })
+    end
+    local cmd = tostring(input.command or ''):gsub('\n', ' ')
+    if #cmd > 80 then cmd = cmd:sub(1, 77) .. '...' end
+    return summary(cmd, { { 'command' } })
+  elseif tool_name == 'Read' then
+    local path = input.file_path or ''
+    local omit = { { 'file_path' } }
+    if input.offset or input.limit then
+      path = path .. ':' .. tostring(input.offset or 1) .. '-' ..
+        tostring((input.offset or 1) + (input.limit or 0))
+      table.insert(omit, { 'offset' })
+      table.insert(omit, { 'limit' })
+    end
+    return summary(path, omit)
+  elseif tool_name == 'Edit' or tool_name == 'Write' or tool_name == 'NotebookEdit' then
+    return summary(input.file_path or '', { { 'file_path' } })
+  elseif tool_name == 'FileChange' then
+    local paths = {}
+    for _, ch in ipairs(input.changes or {}) do
+      if ch.path then table.insert(paths, tostring(ch.path)) end
+    end
+    -- The summary contains only paths; changes also carries kinds and diffs,
+    -- so omitting the whole parameter would discard non-redundant detail.
+    return summary(table.concat(paths, ', '))
+  elseif tool_name == 'Glob' then
+    return summary(input.pattern or '', { { 'pattern' } })
+  elseif tool_name == 'Grep' then
+    return summary('"' .. (input.pattern or '') .. '"', { { 'pattern' } })
+  elseif tool_name == 'WebFetch' then
+    return summary(input.url or '', { { 'url' } })
+  elseif tool_name == 'WebSearch' then
+    local omit = { { 'query' } }
+    if type(input.action) == 'table' and input.action.query == input.query then
+      table.insert(omit, { 'action', 'query' })
+    end
+    return summary(input.query or '', omit)
+  elseif tool_name == 'TodoWrite' then
+    -- "#N" does not reproduce the todo details, so keep the parameter body.
+    return summary((input.todos and ('#' .. #input.todos)) or '')
+  elseif tool_name == 'Agent' then
+    return summary(input.description or '', { { 'description' } })
+  elseif tool_name == 'Skill' then
+    return summary(input.skill or '', { { 'skill' } })
+  elseif tool_name == 'ToolSearch' then
+    local q = tostring(input.query or '')
+    if #q > 80 then q = q:sub(1, 77) .. '...' end
+    -- ToolSearch summaries appear only while the parameter body is folded.
+    return summary(q)
+  end
+  -- MCP tools render their input as a YAML-ish body below the header.
+  if tool_name:sub(1, 5) == 'mcp__' then
+    return summary('')
+  end
+  if type(input.description) == 'string' and input.description ~= '' then
+    return summary(input.description, { { 'description' } })
+  end
+  -- Without a known summary field, leave the header bare and preserve the
+  -- complete parameter body instead of duplicating it as a JSON preview.
+  return summary('')
+end
+M.tool_input_summary = tool_input_summary
+
+--- Copy a tool input while removing parameter paths reproduced in its
+--- summary. Paths may address nested fields (for example action.query).
+---@param input table
+---@param omit_paths table[]
+---@return table
+local function omit_summary_params(input, omit_paths)
+  local omit_tree = {}
+  for _, path in ipairs(omit_paths or {}) do
+    local node = omit_tree
+    for i, key in ipairs(path) do
+      if i == #path then
+        node[key] = true
+      else
+        if type(node[key]) ~= 'table' then node[key] = {} end
+        node = node[key]
+      end
+    end
+  end
+
+  local function copy(value, node)
+    if type(value) ~= 'table' then return value end
+    local out = {}
+    for k, v in pairs(value) do
+      local rule = node and node[k] or nil
+      if rule ~= true then
+        out[k] = copy(v, type(rule) == 'table' and rule or nil)
+      end
+    end
+    return out
+  end
+
+  return copy(input, omit_tree)
+end
+M.omit_summary_params = omit_summary_params
+
 --- Default body formatter. Returns either `string[]` (lines only) or
 --- `{ lines, snippets }` where `snippets[i] = { lang, fragment = {text, row_map} }`
 --- and `row_map`'s body_idx is 0-indexed into `lines`.
@@ -242,8 +369,10 @@ M.extract_browser_batch_js_fragments = extract_browser_batch_js_fragments
 ---@param input table
 ---@return string[]|{ lines: string[], snippets: table[] }?
 function M.default_tool_body(tool_name, input)
-  if tool_name == 'Bash' and input.command then
-    return vim.split(tostring(input.command), '\n', { plain = true })
+  local summary_info = tool_input_summary(tool_name, input)
+  local filtered = omit_summary_params(input, summary_info.omit_paths)
+  if tool_name == 'Bash' and filtered.command then
+    return vim.split(tostring(filtered.command), '\n', { plain = true })
   elseif tool_name == 'Edit' then
     local d = require('cc.diff').render_edit_with_fragments(input.old_string, input.new_string)
     local snippets = {}
@@ -311,21 +440,6 @@ function M.default_tool_body(tool_name, input)
     end
     return { lines = lines, snippets = snippets }
   end
-  -- `description` and other fields already shown in the fold summary header.
-  local read_skip = { file_path = true, offset = true, limit = true }
-  local filtered = {}
-  for k, v in pairs(input) do
-    local skip = k == 'description'
-      or (tool_name == 'Read' and read_skip[k])
-      or (tool_name == 'Glob' and k == 'pattern')
-      or (tool_name == 'Grep' and k == 'pattern')
-      or (tool_name == 'WebFetch' and k == 'url')
-      or (tool_name == 'WebSearch' and k == 'query')
-      or (tool_name == 'Skill' and k == 'skill')
-    if not skip then
-      filtered[k] = v
-    end
-  end
   local lines = render_yaml_ish(filtered, '')
   local snippets = {}
   -- Top-level YAML highlight for the whole body. Placed first so any
@@ -364,70 +478,7 @@ end
 ---@param input table?
 ---@return string
 function M.summarize_tool_input(tool_name, input)
-  if not input or type(input) ~= 'table' then
-    return ''
-  end
-  -- Providers may explicitly suppress a summary when their protocol does not
-  -- supply one. Keep this separate from `description`, since an absent
-  -- description normally falls back to a useful tool-specific summary.
-  if input._display_summary == false then
-    return ''
-  end
-  if tool_name == 'Bash' then
-    if input.description and input.description ~= '' then
-      return tostring(input.description)
-    end
-    local cmd = tostring(input.command or ''):gsub('\n', ' ')
-    if #cmd > 80 then cmd = cmd:sub(1, 77) .. '...' end
-    return cmd
-  elseif tool_name == 'Read' then
-    local path = input.file_path or ''
-    if input.offset or input.limit then
-      path = path .. ':' .. tostring(input.offset or 1) .. '-' ..
-        tostring((input.offset or 1) + (input.limit or 0))
-    end
-    return path
-  elseif tool_name == 'Edit' or tool_name == 'Write' or tool_name == 'NotebookEdit' then
-    return input.file_path or ''
-  elseif tool_name == 'FileChange' then
-    local paths = {}
-    for _, ch in ipairs(input.changes or {}) do
-      if ch.path then table.insert(paths, tostring(ch.path)) end
-    end
-    return table.concat(paths, ', ')
-  elseif tool_name == 'Glob' then
-    return input.pattern or ''
-  elseif tool_name == 'Grep' then
-    return '"' .. (input.pattern or '') .. '"'
-  elseif tool_name == 'WebFetch' then
-    return input.url or ''
-  elseif tool_name == 'WebSearch' then
-    return input.query or ''
-  elseif tool_name == 'TodoWrite' then
-    return (input.todos and ('#' .. #input.todos)) or ''
-  elseif tool_name == 'Agent' then
-    return input.description or ''
-  elseif tool_name == 'Skill' then
-    return input.skill or ''
-  elseif tool_name == 'ToolSearch' then
-    local q = tostring(input.query or '')
-    if #q > 80 then q = q:sub(1, 77) .. '...' end
-    return q
-  end
-  -- MCP tools (mcp__*) render their input as a YAML-ish body below the
-  -- header; a JSON-encoded suffix would just duplicate that.
-  if tool_name:sub(1, 5) == 'mcp__' then
-    return ''
-  end
-  if type(input.description) == 'string' and input.description ~= '' then
-    return input.description
-  end
-  local ok, s = pcall(vim.json.encode, input)
-  if ok and s then
-    if #s > 80 then s = s:sub(1, 77) .. '...' end
-    return s
-  end
-  return ''
+  return tool_input_summary(tool_name, input).text
 end
 
 return M

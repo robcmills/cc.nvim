@@ -706,7 +706,11 @@ local function tool_for_item(item)
   elseif t == 'dynamicToolCall' then
     return tostring(item.tool or 'tool'), item.arguments or {}
   elseif t == 'webSearch' then
-    return 'WebSearch', { query = item.query }
+    local input = { query = item.query }
+    -- JSON null may survive decoded test/protocol tables as vim.NIL; only a
+    -- real action object is a renderable parameter.
+    if type(item.action) == 'table' then input.action = item.action end
+    return 'WebSearch', input
   elseif t == 'collabAgentToolCall' then
     return 'Agent', { prompt = item.prompt, model = item.model }
   elseif t == 'imageGeneration' then
@@ -751,6 +755,12 @@ local function tool_result_for_item(item)
       return ok and s or '', failed
     end
     return tostring(r or ''), failed
+  elseif t == 'webSearch' and type(item.results) == 'table' then
+    if next(item.results) == nil then
+      return '[]', failed
+    end
+    local lines = require('cc.output.tool_body').render_yaml_ish(item.results, '')
+    return table.concat(lines, '\n'), failed
   end
   return '', failed
 end
@@ -853,11 +863,17 @@ function Codex:_on_item_completed(item)
       or t == 'imageView' or t == 'hookPrompt' then
     return
   else
-    local name = tool_for_item(item)
+    local name, input = tool_for_item(item)
     if not name then return end
     if not self.items[item.id] then
       -- Completed without a start (e.g. instant items): render both halves.
       self:_on_item_started(item)
+    elseif t == 'webSearch' then
+      -- WebSearch starts with an empty query/action. Its completed item is
+      -- authoritative and carries the summary, action parameters, and results.
+      self.session:finalize_tool_call(item.id, input)
+      self.output:update_tool_input(item.id, input)
+      self.items[item.id].input = input
     end
     local text, is_error = tool_result_for_item(item)
     if text ~= '' or is_error then

@@ -995,10 +995,13 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary)
 end
 
 --- Render tool input block at fold level 2 (below the tool header).
+--- When insert_lnum is provided, insert there instead of appending. This is
+--- used by providers whose start event omits input that arrives on completion.
 ---@param tool_name string
 ---@param input table?
+---@param insert_lnum integer?
 ---@return integer? last_lnum 1-indexed last line written, or nil if nothing rendered
-function Output:_render_tool_input(tool_name, input)
+function Output:_render_tool_input(tool_name, input, insert_lnum)
   if not input then return nil end
   local config = require('cc.config').options
   local body_lines, snippets
@@ -1029,7 +1032,13 @@ function Output:_render_tool_input(tool_name, input)
     table.insert(lines, pre_indented and l or ('    ' .. l))
     table.insert(levels, 2)
   end
-  local first_lnum = self:_append(lines, levels, false)
+  local first_lnum
+  if insert_lnum then
+    self:_insert_lines(insert_lnum, lines, levels, false)
+    first_lnum = insert_lnum
+  else
+    first_lnum = self:_append(lines, levels, false)
+  end
 
   if snippets and #snippets > 0 then
     local tshl = require('cc.tshl')
@@ -1049,6 +1058,29 @@ function Output:_render_tool_input(tool_name, input)
   end
 
   return first_lnum + #lines - 1
+end
+
+--- Update the summary/input for a tool whose start event carried no body.
+--- The completed input is inserted beneath the existing live header, keeping
+--- its timer and fold identity intact.
+---@param tool_use_id string
+---@param input table?
+function Output:update_tool_input(tool_use_id, input)
+  self:flush_pending_delta()
+  local state = M._buf_state[self.bufnr]
+  local meta = state and state.tool_blocks[tool_use_id]
+  if not meta then return end
+
+  meta.input = input
+  local summary = require('cc.output.tool_body').summarize_tool_input(meta.tool_name, input)
+  self:_update_tool_header_summary(meta.header_lnum, meta.tool_name, summary)
+
+  -- This API intentionally fills an input body that was empty at start. Do
+  -- not duplicate or rewrite an input body a provider already rendered.
+  if meta.input_rendered and meta.input_end_lnum == meta.header_lnum then
+    local last_lnum = self:_render_tool_input(meta.tool_name, input, meta.header_lnum + 1)
+    meta.input_end_lnum = last_lnum or meta.header_lnum
+  end
 end
 
 --- Render a tool_result block (from a user-type NDJSON message).
