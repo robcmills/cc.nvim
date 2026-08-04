@@ -1299,7 +1299,7 @@ function Codex:_approve_command(id, params, legacy)
       self.output:render_permission_outcome(behavior, 'Bash')
     end
     self:respond(id, { decision = map_decision(behavior, variant, legacy) })
-  end)
+  end, { provider = 'codex', instance = self.instance })
 end
 
 ---@param id any
@@ -1324,7 +1324,7 @@ function Codex:_approve_file_change(id, params, legacy)
       self.output:render_permission_outcome(behavior, 'FileChange')
     end
     self:respond(id, { decision = map_decision(behavior, variant, legacy) })
-  end)
+  end, { provider = 'codex', instance = self.instance })
 end
 
 --- EXPERIMENTAL codex request_user_input: walk the questions sequentially

@@ -88,6 +88,51 @@ end
 M._build_title = build_title
 M._body_lines = body_lines
 
+---@param tool_name string
+---@param input table?
+---@param context { provider: string?, instance: cc.Instance? }?
+---@return cc.PermissionPromptEvent
+local function build_event(tool_name, input, context)
+  context = context or {}
+  local instance = context.instance
+  local output = instance and instance.output
+  local prompt = instance and instance.prompt
+  local output_bufnr = output and output.bufnr or nil
+  local output_bufname
+  if output_bufnr and vim.api.nvim_buf_is_valid(output_bufnr) then
+    local name = vim.api.nvim_buf_get_name(output_bufnr)
+    if name ~= '' then output_bufname = vim.fn.fnamemodify(name, ':t') end
+  end
+
+  return {
+    provider = context.provider or 'unknown',
+    session_id = instance
+      and (instance.last_session_id or (instance.session and instance.session.id))
+      or nil,
+    session_name = instance
+      and (instance.session_name or instance.pending_session_name)
+      or nil,
+    prompt_bufnr = prompt and prompt.bufnr or nil,
+    output_bufnr = output_bufnr,
+    output_bufname = output_bufname,
+    tool_name = tool_name,
+    input = input,
+  }
+end
+
+---@param tool_name string
+---@param input table?
+---@param context { provider: string?, instance: cc.Instance? }?
+local function notify_callback(tool_name, input, context)
+  local callback = require('cc.config').options.on_permission_prompt
+  if type(callback) ~= 'function' then return end
+  local ok, err = pcall(callback, build_event(tool_name, input, context))
+  if not ok then
+    vim.notify('cc.nvim: on_permission_prompt callback failed: ' .. tostring(err),
+      vim.log.levels.ERROR)
+  end
+end
+
 --- Open the float and resolve once via `on_choice`.
 ---
 --- `variant` distinguishes the four user choices so callers can build
@@ -99,7 +144,8 @@ M._body_lines = body_lines
 ---@param tool_name string
 ---@param input table?
 ---@param on_choice fun(behavior: 'allow'|'deny', variant: 'allow_once'|'allow_always'|'deny'|'cancel')
-function M.ask(tool_name, input, on_choice)
+---@param context? { provider: string?, instance: cc.Instance? }
+function M.ask(tool_name, input, on_choice, context)
   local lines = body_lines(tool_name, input)
   local title = build_title(tool_name, input)
   local footer = ' [a]llow  [A]lways  [d]eny  [q]/<Esc> cancel '
@@ -174,6 +220,8 @@ function M.ask(tool_name, input, on_choice)
     once = true,
     callback = function() resolve('deny', 'cancel') end,
   })
+
+  notify_callback(tool_name, input, context)
 
   return { bufnr = bufnr, winid = winid }
 end

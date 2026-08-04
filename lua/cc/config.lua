@@ -1,5 +1,15 @@
 local M = {}
 
+---@class cc.PermissionPromptEvent
+---@field provider 'claude'|'codex'|string
+---@field session_id string?
+---@field session_name string?
+---@field prompt_bufnr integer?
+---@field output_bufnr integer?
+---@field output_bufname string? basename shown by buffer-list integrations
+---@field tool_name string
+---@field input table?
+
 ---@class cc.Config
 local defaults = {
   -- Auto-rename: on the first prompt of a new session, ask the active
@@ -61,6 +71,12 @@ local defaults = {
   },
 
   max_tool_result_lines = 50,
+
+  -- Called once when a tool permission prompt opens. Intended for
+  -- integrations such as desktop notifications; callback errors are
+  -- reported without interrupting the permission flow.
+  -- function(event: cc.PermissionPromptEvent)
+  on_permission_prompt = nil,
 
   prompt_height = 10,
 

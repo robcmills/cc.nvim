@@ -9,16 +9,90 @@ local T = MiniTest.new_set({
   hooks = helpers.shared_child_hooks(),
 })
 
+local float_state
+
 local function open(child, lua_args)
   child.lua(([==[
     _G._test_choice = nil
+    require('cc.config').setup({})
     require('cc.permission_prompt').ask(%s, function(behavior, variant)
       _G._test_choice = { behavior = behavior, variant = variant }
     end)
   ]==]):format(lua_args))
 end
 
-local function float_state(child)
+T['configured callback receives session and tool context once'] = function()
+  _G.child.lua([==[
+    local output_bufnr = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_name(output_bufnr, 'cc-notification-session')
+    local prompt_bufnr = vim.api.nvim_create_buf(false, true)
+    local count = 0
+    require('cc.config').setup({
+      on_permission_prompt = function(event)
+        count = count + 1
+        _G._test_event = event
+        _G._test_callback_count = count
+      end,
+    })
+    require('cc.permission_prompt').ask(
+      'Bash',
+      { command = 'make test' },
+      function() end,
+      {
+        provider = 'codex',
+        instance = {
+          session = { id = 'session-from-state' },
+          last_session_id = 'session-123',
+          session_name = 'notification-session',
+          output = { bufnr = output_bufnr },
+          prompt = { bufnr = prompt_bufnr },
+        },
+      }
+    )
+  ]==])
+
+  local event = _G.child.lua_get('_G._test_event')
+  eq(_G.child.lua_get('_G._test_callback_count'), 1)
+  eq(event.provider, 'codex')
+  eq(event.session_id, 'session-123')
+  eq(event.session_name, 'notification-session')
+  eq(event.output_bufname, 'cc-notification-session')
+  eq(event.tool_name, 'Bash')
+  eq(event.input.command, 'make test')
+  eq(type(event.output_bufnr), 'number')
+  eq(type(event.prompt_bufnr), 'number')
+end
+
+T['callback errors do not prevent the permission prompt from opening'] = function()
+  _G.child.lua([==[
+    _G._test_notified_error = nil
+    local original_notify = vim.notify
+    vim.notify = function(msg, level)
+      if msg:find('on_permission_prompt callback failed', 1, true) then
+        _G._test_notified_error = { msg = msg, level = level }
+      else
+        original_notify(msg, level)
+      end
+    end
+    require('cc.config').setup({
+      on_permission_prompt = function() error('notification exploded') end,
+    })
+    _G._test_ask_ok = pcall(function()
+      require('cc.permission_prompt').ask(
+        'Bash', { command = 'true' }, function() end,
+        { provider = 'claude' })
+    end)
+    vim.notify = original_notify
+  ]==])
+
+  eq(_G.child.lua_get('_G._test_ask_ok'), true)
+  local notified = _G.child.lua_get('_G._test_notified_error')
+  eq(notified.msg:find('notification exploded', 1, true) ~= nil, true)
+  eq(notified.level, vim.log.levels.ERROR)
+  eq(float_state(_G.child) ~= vim.NIL, true)
+end
+
+float_state = function(child)
   return child.lua_get([[
     (function()
       local wins = vim.api.nvim_list_wins()

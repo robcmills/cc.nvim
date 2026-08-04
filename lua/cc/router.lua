@@ -323,7 +323,7 @@ function Router:_handle_permission_request(request_id, req)
       self.instance.remote_control_active = false
       require('cc.statusline').refresh(self.instance)
     end
-  end)
+  end, { provider = 'claude', instance = self.instance })
 end
 
 --- Build the `response` body for a can_use_tool control_response.

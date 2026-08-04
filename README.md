@@ -242,6 +242,8 @@ require('cc').setup({
   },
 
   max_tool_result_lines = 50,
+  -- Called when a Claude or Codex tool permission prompt opens.
+  on_permission_prompt = nil, -- function(event)
   prompt_height = 10,
   prompt_max_height = 30,
   prompt_placeholder = 'Write prompt here. Press <Enter> in normal mode to submit.',
@@ -394,6 +396,13 @@ title row shows the tool name plus a short description/summary
 an appropriate `filetype` so syntax highlighting kicks in (`bash` for
 Bash, `diff` for Edit/MultiEdit/Write, plain for everything else); the
 footer lists the available keys.
+
+Set `on_permission_prompt` to receive an event when this window opens,
+for example to send a desktop notification. The event contains `provider`,
+`session_id`, `session_name`, `prompt_bufnr`, `output_bufnr`,
+`output_bufname` (the basename shown by buffer-list integrations),
+`tool_name`, and `input`. Callback errors are reported without blocking the
+permission prompt.
 
 | Key | Action |
 |---|---|
