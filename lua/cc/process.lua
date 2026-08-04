@@ -22,6 +22,8 @@ local M = {}
 ---@field alive boolean
 ---@field _tee_fd userdata? file descriptor for NDJSON dump
 ---@field _pending_controls table<string, { subtype: string, callback: function? }> request id -> metadata
+---@field _stdout_marker string? delimiter emitted after Bash login-shell startup
+---@field _stdout_prefix string? bytes buffered while waiting for the delimiter
 local Process = {}
 Process.__index = Process
 
@@ -83,7 +85,15 @@ function Process:spawn()
     table.insert(args, a)
   end
 
-  local executable, resolved_args = Command.resolve(self.opts.cmd, args)
+  -- A Bash login shell may print profile output before the configured alias
+  -- starts Claude. Delimit the actual command's stdout so that startup noise
+  -- is never mistaken for an NDJSON protocol message.
+  local requested_stdout_marker = '__CC_NVIM_STREAM_START_'
+    .. tostring(uv.hrtime()) .. '__'
+  local executable, resolved_args, stdout_marker = Command.resolve(
+    self.opts.cmd, args, { stdout_marker = requested_stdout_marker })
+  self._stdout_marker = stdout_marker
+  self._stdout_prefix = stdout_marker and '' or nil
   local handle, pid = uv.spawn(executable, {
     args = resolved_args,
     stdio = { self.stdin, self.stdout, self.stderr },
@@ -119,10 +129,10 @@ function Process:spawn()
       return
     end
     if data then
-      -- Tee raw bytes to dump file if active
-      if self._tee_fd then
-        uv.fs_write(self._tee_fd, data)
-      end
+      data = self:_strip_stdout_prefix(data)
+      if not data or data == '' then return end
+      -- Tee protocol bytes to the dump file if active.
+      if self._tee_fd then uv.fs_write(self._tee_fd, data) end
       local messages = self.parser:feed(data)
       if #messages > 0 then
         vim.schedule(function()
@@ -148,6 +158,25 @@ function Process:spawn()
   end)
 
   return true
+end
+
+--- Discard Bash login-shell output preceding the marker emitted immediately
+--- before exec'ing Claude. The marker can be split across libuv read chunks.
+---@param data string
+---@return string? protocol_data
+function Process:_strip_stdout_prefix(data)
+  local marker = self._stdout_marker
+  if not marker then return data end
+
+  self._stdout_prefix = (self._stdout_prefix or '') .. data
+  local _, marker_end = self._stdout_prefix:find(marker, 1, true)
+  if not marker_end then return nil end
+
+  local protocol_data = self._stdout_prefix:sub(marker_end + 1)
+  protocol_data = protocol_data:gsub('^\r?\n', '', 1)
+  self._stdout_marker = nil
+  self._stdout_prefix = nil
+  return protocol_data
 end
 
 --- Write an NDJSON message to stdin.

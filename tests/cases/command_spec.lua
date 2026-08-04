@@ -66,4 +66,26 @@ T['bash alias runner']['emits an optional marker immediately before command outp
   eq(result.stdout, 'profile noise\n__command_start__\ngenerated-title')
 end
 
+T['persistent stream startup filter'] = MiniTest.new_set()
+
+T['persistent stream startup filter']['discards startup output across split chunks'] = function()
+  local Process = require('cc.process')
+  local process = Process.new({ on_message = function() end })
+  process._stdout_marker = '__stream_start__'
+  process._stdout_prefix = ''
+
+  eq(process:_strip_stdout_prefix('profile noise\n__stream_'), nil)
+  eq(process:_strip_stdout_prefix('start__\n{"type":"system"}\n'),
+    '{"type":"system"}\n')
+  eq(process:_strip_stdout_prefix('{"type":"result"}\n'),
+    '{"type":"result"}\n')
+end
+
+T['persistent stream startup filter']['passes direct executable output unchanged'] = function()
+  local Process = require('cc.process')
+  local process = Process.new({ on_message = function() end })
+  eq(process:_strip_stdout_prefix('{"type":"system"}\n'),
+    '{"type":"system"}\n')
+end
+
 return T
