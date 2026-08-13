@@ -1,8 +1,11 @@
+- [ ] add :CcModelsUpdate to fetch latest available models and update :CcModel,:CcNew autocomplete
+- [ ] add config for statusline priorities (as screen shrinks, which parts stay visible)
 - [ ] audit token usage in statusline for codex accuracy
 - [ ] audit codex repo against cc.nvim repo for accuracy
 - [ ] remove CcPeek
 - [ ] fix when :CcNew is invoked and the only buffer is my custom VerticalBuffers plugin
-- [ ] prevent :CcNew when active buffer is a floating permission window
+   this actually might be a fix for VerticalBuffers not here
+- [ ] prevent :CcNew when active buffer is a floating permission window ?
 - [ ] Better handling and exposure of error messages (401 logged out)
 
 
@@ -31,6 +34,7 @@
 
 ## Done
 
+- [x] add on_permission_prompt callback to config to enable users to get os-level notifications
 - [x] interrupted agent turns' time/token usage stamp should omit cost and token counts (because it is inaccurate)
 - [x] add ability to switch /effort at runtime
 - [x] add ability to switch /model at runtime
