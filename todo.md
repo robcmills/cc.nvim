@@ -1,5 +1,4 @@
 - [x] add :CcModelsUpdate to fetch latest available models and update :CcModel,:CcNew autocomplete
-- [ ] add config for statusline priorities (as screen shrinks, which parts stay visible)
 - [ ] audit token usage in statusline for codex accuracy
 - [ ] audit codex repo against cc.nvim repo for accuracy
 - [ ] remove CcPeek
@@ -34,6 +33,7 @@
 
 ## Done
 
+- [x] add config for statusline priorities (as screen shrinks, which parts stay visible)
 - [x] add on_permission_prompt callback to config to enable users to get os-level notifications
 - [x] interrupted agent turns' time/token usage stamp should omit cost and token counts (because it is inaccurate)
 - [x] add ability to switch /effort at runtime

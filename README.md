@@ -81,8 +81,8 @@ Nearly every visible element is configurable:
   syntax. The `state` table hands you `is_thinking`, `spinner_frame`,
   `interrupt_pending`, `total_tokens`, `input_tokens`, `output_tokens`,
   `cost_usd`, `mode`, `branch`, `pr`, `model`, `cli_version`,
-  `session_name`, `session_id`, and `remote_control` — build your own
-  layout around any subset.
+  `session_name`, `session_id`, `remote_control`, and `window_width` — build
+  your own layout around any subset.
 - **Per-tool input rendering.** `tool_input_format = function(tool_name,
   input) -> string | nil` lets you decide exactly how each tool's input
   is displayed below its header (custom Bash prefixes, compact Edit
@@ -294,6 +294,18 @@ require('cc').setup({
     context_window = nil,
     enabled = true,
     format = nil,
+    -- Highest priority first; lower-priority components disappear as the
+    -- output window narrows. Applies only to the default formatter.
+    priorities = {
+      'tokens',
+      'model',
+      'effort',
+      'activity',
+      'mode',
+      'git',
+      'session_name',
+      'remote_control',
+    },
     model_icons = {
       -- Nerd Font: Claude ✻ / Codex ; Unicode: Claude ⁕ / Codex ›
       claude = nil, -- string override; '' hides the icon
@@ -533,11 +545,20 @@ cc.nvim sets automatically when attaching). The default format shows:
 - Current git branch and PR number (if any)
 - Session name / `⚡` remote-control indicator when applicable
 
+As the output window narrows, the default formatter drops whole components
+according to `statusline.priorities`. The first entry has the highest priority
+and is the last to disappear. This controls visibility only; the components'
+visual order does not change. A valid list contains each of `activity`,
+`tokens`, `mode`, `model`, `effort`, `git`, `session_name`, and
+`remote_control` exactly once.
+
 Provide `statusline.format = function(state) ... end` to build your own.
 The `state` table exposes `provider`, `is_thinking`, `spinner_frame`,
 `interrupt_pending`, `total_tokens`, `input_tokens`, `output_tokens`,
 `cost_usd`, `mode`, `branch`, `pr`, `model`, `cli_version`, `session_name`,
-`session_id`, and `remote_control`. Return a string using standard Neovim
+`session_id`, `remote_control`, and the current output `window_width`. Custom
+formatters are not shortened automatically; they can use `window_width` to
+implement their own responsive layout. Return a string using standard Neovim
 statusline syntax.
 
 `:CcStop` (or `<C-c>`) sends a stream-json `control_request` with

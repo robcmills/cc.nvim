@@ -84,4 +84,95 @@ T['streaming config']['non-table value warns and restores all defaults'] = funct
   eq(notices[1]:find('invalid streaming=', 1, true) ~= nil, true)
 end
 
+T['statusline config'] = MiniTest.new_set()
+
+T['statusline config']['uses the default component priorities'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({})
+    _G._priorities = require('cc.config').options.statusline.priorities
+  ]])
+  eq(_G.child.lua_get('_G._priorities'), {
+    'tokens',
+    'model',
+    'effort',
+    'activity',
+    'mode',
+    'git',
+    'session_name',
+    'remote_control',
+  })
+end
+
+T['statusline config']['accepts a complete custom priority order'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      statusline = {
+        priorities = {
+          'remote_control',
+          'session_name',
+          'git',
+          'mode',
+          'activity',
+          'effort',
+          'model',
+          'tokens',
+        },
+      },
+    })
+    _G._priorities = require('cc.config').options.statusline.priorities
+  ]])
+  eq(_G.child.lua_get('_G._priorities'), {
+    'remote_control',
+    'session_name',
+    'git',
+    'mode',
+    'activity',
+    'effort',
+    'model',
+    'tokens',
+  })
+end
+
+T['statusline config']['invalid priorities warn and restore the default'] = function()
+  _G.child.lua([[
+    local notices = {}
+    local original_notify = vim.notify
+    vim.notify = function(msg, level)
+      notices[#notices + 1] = { msg = msg, level = level }
+    end
+    require('cc.config').setup({
+      statusline = {
+        priorities = {
+          'tokens',
+          'tokens',
+          'effort',
+          'activity',
+          'mode',
+          'git',
+          'session_name',
+          'unknown',
+        },
+      },
+    })
+    vim.notify = original_notify
+    _G._priorities = require('cc.config').options.statusline.priorities
+    _G._notices = notices
+  ]])
+
+  eq(_G.child.lua_get('_G._priorities'), {
+    'tokens',
+    'model',
+    'effort',
+    'activity',
+    'mode',
+    'git',
+    'session_name',
+    'remote_control',
+  })
+  local notices = _G.child.lua_get('_G._notices')
+  eq(#notices, 1)
+  eq(notices[1].level, vim.log.levels.WARN)
+  eq(notices[1].msg:find('statusline.priorities', 1, true) ~= nil, true)
+end
+
 return T

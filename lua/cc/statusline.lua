@@ -85,20 +85,87 @@ local HL_MODEL_PROVIDER = {
   codex = '%#CcStlModelCodex#',
 }
 local SEP = HL_LINE .. ' ── '
+local MAX_STATUSLINE_WIDTH = 2147483647
+
+---@class cc.StatuslineSegment
+---@field component string
+---@field text string
+
+---@param segments cc.StatuslineSegment[]
+---@return string
+local function segment_content(segments)
+  local rendered = {}
+  for _, segment in ipairs(segments) do
+    rendered[#rendered + 1] = segment.text
+  end
+  return table.concat(rendered, SEP)
+end
+
+---@param segments cc.StatuslineSegment[]
+---@return integer?
+local function rendered_width(segments)
+  if #segments == 0 then return 0 end
+  -- Deliberately omit %= here: evaluating a right-aligned statusline with
+  -- maxwidth would always report the full window width. This string contains
+  -- the exact visible padding, separators, glyphs, and highlight switches.
+  local candidate = HL_LINE .. ' ' .. segment_content(segments) .. HL_LINE .. ' '
+  local ok, evaluated = pcall(vim.api.nvim_eval_statusline, candidate, {
+    maxwidth = MAX_STATUSLINE_WIDTH,
+  })
+  if not ok or type(evaluated) ~= 'table' then return nil end
+  return evaluated.width
+end
+
+---@param segments cc.StatuslineSegment[]
+---@param window_width integer?
+---@return cc.StatuslineSegment[]
+local function fit_segments(segments, window_width)
+  if type(window_width) ~= 'number' or window_width <= 0 or #segments <= 1 then
+    return segments
+  end
+
+  local cfg = require('cc.config').options.statusline or {}
+  local rank = {}
+  for index, component in ipairs(cfg.priorities or {}) do
+    rank[component] = index
+  end
+
+  while #segments > 1 do
+    local width = rendered_width(segments)
+    if not width or width <= window_width then break end
+
+    local drop_index = 1
+    local drop_rank = -1
+    for index, segment in ipairs(segments) do
+      local component_rank = rank[segment.component] or math.huge
+      if component_rank > drop_rank then
+        drop_index = index
+        drop_rank = component_rank
+      end
+    end
+    table.remove(segments, drop_index)
+  end
+
+  return segments
+end
 
 ---@param state table
 ---@return string
 local function default_format(state)
+  ---@type cc.StatuslineSegment[]
   local segments = {}
+  local function add(component, text)
+    segments[#segments + 1] = { component = component, text = text }
+  end
   if state.interrupt_pending then
-    table.insert(segments, HL_LINE .. 'interrupting…')
+    add('activity', HL_LINE .. 'interrupting…')
   elseif state.is_thinking then
     local glyph = state.spinner_frame
     if not glyph or glyph == '' then glyph = '⏳' end
     local seg = HL_LINE .. glyph
     local elapsed = fmt_elapsed(state.turn_elapsed_ms)
     if elapsed ~= '' then seg = seg .. ' ' .. elapsed end
-    table.insert(segments, seg)
+    add('activity', seg)
   end
   -- Show the live context size (input + cache_creation + cache_read on the
   -- last turn), not the cumulative billing total. Falls back to the
@@ -115,16 +182,16 @@ local function default_format(state)
     local seg = HL_TOKENS
     if icon ~= '' then seg = seg .. icon .. ' ' end
     seg = seg .. toks
-    table.insert(segments, seg)
+    add('tokens', seg)
   end
   if state.mode and state.mode ~= '' then
-    table.insert(segments, HL_MODE .. state.mode)
+    add('mode', HL_MODE .. state.mode)
   end
   if state.model and state.model ~= '' then
     local icon = require('cc.icons').for_provider(state.provider)
     local seg = HL_MODEL_PROVIDER[state.provider] or HL_MODEL
     if icon ~= '' then seg = seg .. icon .. ' ' end
-    table.insert(segments, seg .. state.model)
+    add('model', seg .. state.model)
   end
   if state.effort and state.effort ~= '' then
     local Effort = require('cc.effort')
@@ -135,36 +202,38 @@ local function default_format(state)
     local lbl = Effort.label(state.effort)
     local seg = HL_EFFORT
     if sym ~= '' then seg = seg .. sym .. ' ' end
-    table.insert(segments, seg .. lbl)
+    add('effort', seg .. lbl)
   end
   if state.branch and state.branch ~= '' then
     local b = HL_BRANCH .. ' ' .. state.branch
     if state.pr and state.pr ~= '' then
       b = b .. ' ' .. state.pr
     end
-    table.insert(segments, b)
+    add('git', b)
   end
   local display_name = state.session_name
   if not display_name or display_name == '' then
     display_name = state.pending_session_name
   end
   if display_name and display_name ~= '' then
-    table.insert(segments, HL_SESSION .. display_name)
+    add('session_name', HL_SESSION .. display_name)
   end
   if state.remote_control then
-    table.insert(segments, HL_LINE .. '⚡')
+    add('remote_control', HL_LINE .. '⚡')
   end
+  segments = fit_segments(segments, state.window_width)
   -- %= pushes all content to the right; the left side is filled with the
   -- 'stl' fillchar (─, set by output.lua window opts). Trailing space after
   -- the last segment lets the line visually close with one fill unit before
   -- the window edge.
   if #segments == 0 then return HL_LINE .. '%=─' end
-  return HL_LINE .. '%= ' .. table.concat(segments, SEP) .. HL_LINE .. ' '
+  return HL_LINE .. '%= ' .. segment_content(segments) .. HL_LINE .. ' '
 end
 
 ---@param instance cc.Instance
+---@param winid integer?
 ---@return table state
-function M.build_state(instance)
+function M.build_state(instance, winid)
   local session = instance and instance.session
   local on_update = function()
     pcall(M.refresh, instance)
@@ -215,6 +284,11 @@ function M.build_state(instance)
       if ok and popts then provider_cmd = popts.cmd end
     end
   end
+  local statusline_winid = winid or (instance and instance.output_winid)
+  local window_width = nil
+  if statusline_winid and vim.api.nvim_win_is_valid(statusline_winid) then
+    window_width = vim.api.nvim_win_get_width(statusline_winid)
+  end
   return {
     provider = provider_name,
     is_thinking = session and session.turn_active or false,
@@ -240,15 +314,17 @@ function M.build_state(instance)
     pending_session_name = instance and instance.pending_session_name or nil,
     session_id = instance and instance.last_session_id or nil,
     remote_control = instance and instance.remote_control_active == true,
+    window_width = window_width,
   }
 end
 
 ---@param instance cc.Instance
+---@param winid integer?
 ---@return string
-function M.render(instance)
+function M.render(instance, winid)
   if not instance then return '' end
   local cfg = require('cc.config').options.statusline or {}
-  local state = M.build_state(instance)
+  local state = M.build_state(instance, winid)
   local fmt = cfg.format
   if type(fmt) == 'function' then
     local ok, result = pcall(fmt, state)
@@ -275,7 +351,7 @@ end
 function M.render_for(winid)
   local inst = winid_to_instance[winid]
   if not inst then return '' end
-  return M.render(inst)
+  return M.render(inst, winid)
 end
 
 -- Expose for vimscript callback.

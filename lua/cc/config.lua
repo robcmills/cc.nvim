@@ -133,6 +133,18 @@ local defaults = {
     context_window = nil,
     enabled = true,
     format = nil, -- function(state) -> Neovim statusline string
+    -- Highest priority first. The default formatter drops lower-priority
+    -- components as the output window narrows.
+    priorities = {
+      'tokens',
+      'model',
+      'effort',
+      'activity',
+      'mode',
+      'git',
+      'session_name',
+      'remote_control',
+    },
     spinner = {
       frames = nil,
       frames_nerdfont = {
@@ -225,6 +237,50 @@ local function validate_streaming_options()
   end
 end
 
+local STATUSLINE_COMPONENTS = {
+  activity = true,
+  effort = true,
+  git = true,
+  mode = true,
+  model = true,
+  remote_control = true,
+  session_name = true,
+  tokens = true,
+}
+
+local function valid_statusline_priorities(priorities)
+  if type(priorities) ~= 'table' then return false end
+
+  local seen = {}
+  local count = 0
+  for key, component in pairs(priorities) do
+    if type(key) ~= 'number' or key < 1 or key % 1 ~= 0 then return false end
+    if not STATUSLINE_COMPONENTS[component] or seen[component] then return false end
+    seen[component] = true
+    count = count + 1
+  end
+
+  if count ~= #defaults.statusline.priorities then return false end
+  for index = 1, count do
+    if priorities[index] == nil then return false end
+  end
+  return true
+end
+
+local function validate_statusline_options()
+  local statusline = M.options.statusline
+  if type(statusline) ~= 'table' then return end
+  if valid_statusline_priorities(statusline.priorities) then return end
+
+  warn_invalid(
+    'statusline.priorities',
+    statusline.priorities,
+    vim.inspect(defaults.statusline.priorities),
+    'a list containing each statusline component exactly once'
+  )
+  statusline.priorities = vim.deepcopy(defaults.statusline.priorities)
+end
+
 local REMOVED_CLAUDE_KEYS = {
   'claude_cmd',
   'extra_args',
@@ -236,6 +292,7 @@ local REMOVED_CLAUDE_KEYS = {
 function M.setup(opts)
   M.options = vim.tbl_deep_extend('force', vim.deepcopy(defaults), opts or {})
   validate_streaming_options()
+  validate_statusline_options()
   -- These former top-level Claude settings are intentionally unsupported.
   -- Drop them even if an old setup table still supplies them so no caller
   -- can accidentally observe or revive the compatibility path.

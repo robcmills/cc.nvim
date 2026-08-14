@@ -140,6 +140,17 @@ T['build_state']['includes spinner_frame from statusline_spinner module'] = func
   eq(_G.child.lua_get('_G._state.spinner_frame'), 'A')
 end
 
+T['build_state']['includes the output window width'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    vim.cmd('vnew')
+    local winid = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_width(winid, 47)
+    _G._state = require('cc.statusline').build_state({ session = Session.new() }, winid)
+  ]])
+  eq(_G.child.lua_get('_G._state.window_width'), 47)
+end
+
 -- ---------------------------------------------------------------------------
 -- Default format
 -- ---------------------------------------------------------------------------
@@ -338,6 +349,115 @@ T['default_format']['branch alone (no PR) renders without PR number'] = function
   eq(out:find('main', 1, true) ~= nil, true)
   -- No PR number like "#42" — the raw '#' is allowed in %# highlight codes.
   eq(out:find('#%d', 1, false) == nil, true)
+end
+
+T['default_format']['wide windows preserve every component and visual order'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      statusline = { model_icons = { claude = '' }, tokens_icon = '' },
+    })
+    _G._out = require('cc.statusline')._default_format({
+      provider = 'claude',
+      is_thinking = true,
+      spinner_frame = 'ACTIVE',
+      context_tokens = 10,
+      mode = 'MODE',
+      model = 'MODEL',
+      effort = 'high',
+      branch = 'BRANCH',
+      pr = '#12',
+      session_name = 'SESSION',
+      remote_control = true,
+      window_width = 1000,
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  local activity_at = assert(out:find('ACTIVE', 1, true))
+  local tokens_at = assert(out:find('10', 1, true))
+  local mode_at = assert(out:find('MODE', 1, true))
+  local model_at = assert(out:find('MODEL', 1, true))
+  local effort_at = assert(out:find('high', 1, true))
+  local git_at = assert(out:find('BRANCH', 1, true))
+  local session_at = assert(out:find('SESSION', 1, true))
+  local remote_at = assert(out:find('⚡', 1, true))
+  eq(
+    activity_at < tokens_at
+      and tokens_at < mode_at
+      and mode_at < model_at
+      and model_at < effort_at
+      and effort_at < git_at
+      and git_at < session_at
+      and session_at < remote_at,
+    true
+  )
+end
+
+T['default_format']['narrow windows retain the highest-priority component'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      statusline = { model_icons = { claude = '' }, tokens_icon = '' },
+    })
+    _G._out = require('cc.statusline')._default_format({
+      provider = 'claude',
+      is_thinking = true,
+      spinner_frame = 'ACTIVE',
+      context_tokens = 10,
+      mode = 'MODE',
+      model = 'MODEL',
+      effort = 'high',
+      branch = 'BRANCH',
+      session_name = 'SESSION',
+      remote_control = true,
+      window_width = 1,
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('10', 1, true) ~= nil, true)
+  eq(out:find('ACTIVE', 1, true) == nil, true)
+  eq(out:find('MODE', 1, true) == nil, true)
+  eq(out:find('MODEL', 1, true) == nil, true)
+  eq(out:find('high', 1, true) == nil, true)
+  eq(out:find('BRANCH', 1, true) == nil, true)
+  eq(out:find('SESSION', 1, true) == nil, true)
+  eq(out:find('⚡', 1, true) == nil, true)
+end
+
+T['default_format']['custom priorities change which component survives'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      statusline = {
+        priorities = {
+          'remote_control',
+          'session_name',
+          'git',
+          'mode',
+          'activity',
+          'effort',
+          'model',
+          'tokens',
+        },
+        model_icons = { claude = '' },
+        tokens_icon = '',
+      },
+    })
+    _G._out = require('cc.statusline')._default_format({
+      provider = 'claude',
+      is_thinking = true,
+      spinner_frame = 'ACTIVE',
+      context_tokens = 10,
+      mode = 'MODE',
+      model = 'MODEL',
+      effort = 'high',
+      branch = 'BRANCH',
+      session_name = 'SESSION',
+      remote_control = true,
+      window_width = 1,
+    })
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('⚡', 1, true) ~= nil, true)
+  eq(out:find('10', 1, true) == nil, true)
+  eq(out:find('SESSION', 1, true) == nil, true)
 end
 
 -- ---------------------------------------------------------------------------
@@ -614,6 +734,50 @@ T['render']['user format receives state and returns string'] = function()
     _G._out = require('cc.statusline').render({ session = s })
   ]])
   eq(_G.child.lua_get('_G._out'), 'mode=plan')
+end
+
+T['render']['user format receives width and is not automatically shortened'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    require('cc.config').setup({
+      statusline = {
+        format = function(state)
+          return 'width=' .. tostring(state.window_width) .. ' custom-content'
+        end,
+      },
+    })
+    local inst = { session = Session.new() }
+    vim.cmd('vnew')
+    local winid = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_width(winid, 23)
+    require('cc.statusline').attach(inst, winid)
+    _G._out = require('cc.statusline').render_for(winid)
+  ]])
+  eq(_G.child.lua_get('_G._out'), 'width=23 custom-content')
+end
+
+T['render']['default format drops components using the attached window width'] = function()
+  _G.child.lua([[
+    local Session = require('cc.session')
+    require('cc.config').setup({
+      statusline = { model_icons = { claude = '' }, tokens_icon = '' },
+    })
+    local session = Session.new()
+    session.context_tokens = 10
+    session.model = 'MODEL'
+    session.permission_mode = 'MODE'
+    local inst = { session = session }
+    vim.cmd('vnew')
+    local winid = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_width(winid, 15)
+    require('cc.statusline').attach(inst, winid)
+    _G._out = require('cc.statusline').render_for(winid)
+  ]])
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('10', 1, true) ~= nil, true)
+  eq(out:find('MODEL', 1, true) ~= nil, true)
+  eq(out:find('%#CcStlMode#', 1, true) == nil, true)
+  eq(out:find('med', 1, true) == nil, true)
 end
 
 T['render']['errors fall back to default format'] = function()
