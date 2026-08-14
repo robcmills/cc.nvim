@@ -1,4 +1,4 @@
-- [ ] add :CcModelsUpdate to fetch latest available models and update :CcModel,:CcNew autocomplete
+- [x] add :CcModelsUpdate to fetch latest available models and update :CcModel,:CcNew autocomplete
 - [ ] add config for statusline priorities (as screen shrinks, which parts stay visible)
 - [ ] audit token usage in statusline for codex accuracy
 - [ ] audit codex repo against cc.nvim repo for accuracy

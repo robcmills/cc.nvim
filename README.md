@@ -133,7 +133,7 @@ require('cc').setup()
 
 ```vim
 :CcNew
-:CcNew opus5 high
+:CcNew opus high
 ```
 
 This opens a horizontal split: output buffer on top, editable markdown prompt
@@ -142,17 +142,18 @@ on the bottom. Type your message, then press `<CR>` in normal mode (or run
 `:CcNew [model] [effort]` arguments override the configured provider defaults
 for that session only. Recognized model families also select the provider:
 `gpt-*`, `o3*`, `o4*`, `codex-*`, and `openai/*` use Codex; `claude-*`,
-`opus`, `opus5`, `sonnet`, `haiku`, and `fable` use Claude. `opus` and
-`opus5` both resolve to the versioned `claude-opus-5` model. Unknown model
-names use the configured provider.
+`opus`, `sonnet`, `haiku`, and `fable` use Claude. Unknown model names use
+the configured provider.
 
-Model arguments support shorthand and conservative fuzzy matching. For
-example, `sol`, `soll`, and `gpt56sol` resolve to the configured
-`gpt-*-sol` model (currently `gpt-5.6-sol`). Configured models take precedence
-over built-in names, so stable shorthand follows future model upgrades.
-Ambiguous input is rejected with matching choices instead of being guessed.
-`:CcNew` and `:CcModel` command-line completion also fuzzy-match canonical
-model names.
+Model names come from the CLIs themselves: run `:CcModelsUpdate` to fetch
+the current catalogs from `claude` and `codex` into a local cache, which
+then drives `:CcNew` / `:CcModel` completion and shorthand resolution. Run
+it again whenever new models are released. Model arguments support
+shorthand and conservative fuzzy matching — for example, `sol`, `soll`,
+and `gpt56sol` all resolve to the cached `gpt-*-sol` model. Configured
+models take precedence over cached ones, so stable shorthand follows
+future model upgrades. Ambiguous input is rejected with matching choices
+instead of being guessed.
 
 ## Commands
 
@@ -174,6 +175,7 @@ model names.
 | `:CcRename [name]` | Rename the current session (no arg = show current title) |
 | `:CcEffort [level]` | Set reasoning effort on the active session; without a session, set the in-memory default for the next `:CcNew` |
 | `:CcModel [model]` | Set the active session's model for subsequent turns; no argument reports the current model |
+| `:CcModelsUpdate [provider]` | Fetch the available models from the `claude` and `codex` CLIs (or just one) and refresh model completion |
 | `:CcPeek` | Tail a running Bash tool call in a floating window (see [Peeking at running Bash](#peeking-at-running-bash)) |
 | `:CcPeekInstall` / `:CcPeekUninstall` | Install / remove the `PreToolUse` hook that wires up `:CcPeek` |
 | `:CcDumpNdjson [path]` | Tee raw NDJSON from the subprocess to a file (no arg = stop) |
@@ -242,6 +244,8 @@ require('cc').setup({
   },
 
   max_tool_result_lines = 50,
+  -- Models cache written by :CcModelsUpdate; drives model completion.
+  models_path = nil, -- nil → stdpath('data') .. '/cc/models.json'
   -- Called when a Claude or Codex tool permission prompt opens.
   on_permission_prompt = nil, -- function(event)
   prompt_height = 10,
@@ -251,22 +255,22 @@ require('cc').setup({
 
   providers = {
     claude = {
-      auto_rename_model = 'haiku',
+      auto_rename_model = nil, -- one-shot session-title model; nil → CLI default
       -- Bare names also resolve Bash login aliases (for example,
       -- alias cc='claude --chrome').
       cmd = 'claude',
       effort = 'medium',
       extra_args = {},
-      model = 'fable',
+      model = nil, -- nil → the CLI's default model
       permission_mode = nil,
     },
     codex = {
       approval_policy = nil,
-      auto_rename_model = 'gpt-5.6-luna',
+      auto_rename_model = nil, -- one-shot session-title model; nil → CLI default
       cmd = 'codex',
       effort = 'medium',
       extra_args = {},
-      model = 'gpt-5.6-sol',
+      model = nil, -- nil → the CLI's default model
       sandbox = nil,
     },
   },
@@ -593,8 +597,9 @@ via `auto_rename` — flip `enabled = false` to turn it off, or rewrite
 `prompt` to ask for CamelCase / sentence case / a different style. The
 `validate` hook gives you final say over the model's output before it
 lands. Configure the naming model with
-`providers.<provider>.auto_rename_model`. Claude defaults to `haiku`;
-Codex defaults to the fast, affordable `gpt-5.6-luna`.
+`providers.<provider>.auto_rename_model`; unset, the CLI's default model
+does the naming. Setting a small model (for example `haiku`) makes
+renames faster and cheaper.
 
 ## Codex CLI support
 

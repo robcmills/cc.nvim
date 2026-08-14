@@ -1,11 +1,19 @@
--- Model shorthand, fuzzy resolution, and completion.
+-- Model shorthand, fuzzy resolution, and completion. Candidates come from
+-- the models cache fixture (tests/fixtures/models/models.json) plus any
+-- configured models — mirroring a user who has run :CcModelsUpdate.
 local helpers = dofile('tests/helpers.lua')
 local MiniTest = require('mini.test')
 local eq = MiniTest.expect.equality
 
-local T = MiniTest.new_set({
-  hooks = helpers.shared_child_hooks(),
-})
+local hooks = helpers.shared_child_hooks()
+local base_pre_case = hooks.pre_case
+hooks.pre_case = function()
+  base_pre_case()
+  _G.child.lua(('require("cc.config").setup({ models_path = %q })')
+    :format(helpers.models_fixture))
+end
+
+local T = MiniTest.new_set({ hooks = hooks })
 
 T['resolve'] = MiniTest.new_set()
 
@@ -38,24 +46,23 @@ T['resolve']['accepts compact names and small typos'] = function()
   eq(got.claude, { 'sonnet', 'claude', 'shorthand' })
 end
 
-T['resolve']['opus aliases select the versioned Opus 5 model'] = function()
-  local got = _G.child.lua_get([[(function()
+T['resolve']['opus shorthand selects the cached 1M alias'] = function()
+  local got = _G.child.lua_get(([[(function()
     local Model = require('cc.model')
     local alias, alias_provider, alias_status = Model.resolve('opus')
-    local compact, compact_provider, compact_status = Model.resolve('opus5')
     require('cc.config').setup({
+      models_path = %q,
       providers = { claude = { model = 'opus' } },
     })
-    local configured, configured_provider = Model.resolve('opus')
+    local configured, configured_provider, configured_status = Model.resolve('opus')
     return {
       alias = { alias, alias_provider, alias_status },
-      compact = { compact, compact_provider, compact_status },
-      configured = { configured, configured_provider },
+      configured = { configured, configured_provider, configured_status },
     }
-  end)()]])
-  eq(got.alias, { 'claude-opus-5', 'claude', 'shorthand' })
-  eq(got.compact, { 'claude-opus-5', 'claude', 'shorthand' })
-  eq(got.configured, { 'claude-opus-5', 'claude' })
+  end)()]]):format(helpers.models_fixture))
+  eq(got.alias, { 'opus[1m]', 'claude', 'shorthand' })
+  -- A configured model is used verbatim — no remapping.
+  eq(got.configured, { 'opus', 'claude', 'exact' })
 end
 
 T['resolve']['ambiguous prefixes are not guessed'] = function()
@@ -76,13 +83,14 @@ T['resolve']['ambiguous prefixes are not guessed'] = function()
 end
 
 T['resolve']['configured generation wins for a stable shorthand'] = function()
-  local got = _G.child.lua_get([[(function()
+  local got = _G.child.lua_get(([[(function()
     require('cc.config').setup({
+      models_path = %q,
       providers = { codex = { model = 'gpt-9-sol' } },
     })
     local model, provider = require('cc.model').resolve('sol')
     return { model = model, provider = provider }
-  end)()]])
+  end)()]]):format(helpers.models_fixture))
   eq(got.model, 'gpt-9-sol')
   eq(got.provider, 'codex')
 end
@@ -100,22 +108,19 @@ end
 T['complete'] = MiniTest.new_set()
 
 T['complete']['fuzzy query returns the canonical model first'] = function()
-  _G.child.lua([[require('cc.config').setup({})]])
   local got = _G.child.lua_get([[require('cc.model').complete('sol')]])
   eq(got[1], 'gpt-5.6-sol')
 end
 
-T['complete']['shows the versioned Opus 5 model'] = function()
-  _G.child.lua([[require('cc.config').setup({})]])
+T['complete']['lists cached model names verbatim'] = function()
   local all = _G.child.lua_get([[require('cc.model').complete('')]])
-  local compact = _G.child.lua_get([[require('cc.model').complete('opus5')]])
-  eq(vim.tbl_contains(all, 'claude-opus-5'), true)
+  local opus = _G.child.lua_get([[require('cc.model').complete('opus')]])
+  eq(vim.tbl_contains(all, 'opus[1m]'), true)
   eq(vim.tbl_contains(all, 'opus'), false)
-  eq(compact[1], 'claude-opus-5')
+  eq(opus[1], 'opus[1m]')
 end
 
 T['complete']['provider filter excludes the other provider'] = function()
-  _G.child.lua([[require('cc.config').setup({})]])
   local got = _G.child.lua_get([[require('cc.model').complete('', 'claude')]])
   eq(vim.tbl_contains(got, 'sonnet'), true)
   eq(vim.tbl_contains(got, 'gpt-5.6-sol'), false)

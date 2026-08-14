@@ -195,12 +195,19 @@ T['options']['claude options resolve only from providers.claude'] = function()
   eq(opts.extra_args, { '--foo' })
 end
 
-T['options']['codex auto-rename defaults to luna'] = function()
+T['options']['codex model and auto-rename default to the CLI'] = function()
   _G.child.lua([[require('cc.config').setup({ provider = 'codex' })]])
-  local opts = _G.child.lua_get([[require('cc.providers.codex').options()]])
-  eq(opts.auto_rename_model, 'gpt-5.6-luna')
+  local opts = _G.child.lua_get([[(function()
+    local o = require('cc.providers.codex').options()
+    return {
+      auto_rename_model = o.auto_rename_model or 'nil',
+      effort = o.effort,
+      model = o.model or 'nil',
+    }
+  end)()]])
+  eq(opts.auto_rename_model, 'nil')
   eq(opts.effort, 'medium')
-  eq(opts.model, 'gpt-5.6-sol')
+  eq(opts.model, 'nil')
 end
 
 T['options']['codex configured effort uses the shared effort mapping'] = function()
@@ -269,7 +276,7 @@ T['options']['legacy top-level Claude keys are ignored'] = function()
   eq(opts.permission_mode, nil)
   eq(opts.effort, 'medium')
   eq(opts.extra_args, {})
-  eq(opts.model, 'fable')
+  eq(opts.model, nil)
   eq(config, {})
 end
 

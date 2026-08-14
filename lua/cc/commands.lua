@@ -127,6 +127,25 @@ function M.create()
     desc = 'Set the model for subsequent conversation turns',
   })
 
+  vim.api.nvim_create_user_command('CcModelsUpdate', function(opts)
+    local provider = opts.args ~= '' and opts.args or nil
+    if provider and provider ~= 'claude' and provider ~= 'codex' then
+      vim.notify('cc.nvim: :CcModelsUpdate [claude|codex]', vim.log.levels.WARN)
+      return
+    end
+    require('cc.models').update(provider and { providers = { provider } } or nil)
+  end, {
+    nargs = '?',
+    complete = function(arg_lead)
+      local out = {}
+      for _, provider in ipairs({ 'claude', 'codex' }) do
+        if provider:sub(1, #arg_lead) == arg_lead then table.insert(out, provider) end
+      end
+      return out
+    end,
+    desc = 'Fetch the available models from the provider CLIs and refresh model completion',
+  })
+
   vim.api.nvim_create_user_command('CcPermissionMode', function(opts)
     cc.set_permission_mode(opts.args)
   end, {

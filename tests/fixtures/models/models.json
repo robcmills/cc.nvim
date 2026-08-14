@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "updated_at": 1755043200,
+  "providers": {
+    "claude": [
+      { "name": "opus[1m]", "display": "Opus (1M context)", "efforts": ["low", "medium", "high", "xhigh", "max"] },
+      { "name": "claude-fable-5[1m]", "display": "Fable", "efforts": ["low", "medium", "high", "xhigh", "max"] },
+      { "name": "sonnet", "display": "Sonnet", "efforts": ["low", "medium", "high", "xhigh", "max"] },
+      { "name": "haiku", "display": "Haiku" }
+    ],
+    "codex": [
+      { "name": "gpt-5.6-sol", "display": "GPT-5.6-Sol", "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"], "default": true },
+      { "name": "gpt-5.6-terra", "display": "GPT-5.6-Terra", "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"] },
+      { "name": "gpt-5.6-luna", "display": "GPT-5.6-Luna", "efforts": ["low", "medium", "high", "xhigh", "max"] },
+      { "name": "gpt-5.5", "display": "GPT-5.5", "efforts": ["low", "medium", "high", "xhigh"] },
+      { "name": "gpt-5.4", "display": "GPT-5.4", "efforts": ["low", "medium", "high", "xhigh"] },
+      { "name": "gpt-5.4-mini", "display": "GPT-5.4-Mini", "efforts": ["low", "medium", "high", "xhigh"] }
+    ]
+  }
+}

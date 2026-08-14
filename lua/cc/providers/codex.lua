@@ -29,17 +29,19 @@ M.capabilities = {
   plan_mode = false,
 }
 
---- Effective codex options from Config.options.providers.codex.
----@return { approval_policy: string?, auto_rename_model: string, cmd: string, effort: string, extra_args: string[], model: string, sandbox: string? }
+--- Effective codex options from Config.options.providers.codex. `model`
+--- and `auto_rename_model` stay nil unless configured; the CLI then picks
+--- its own defaults.
+---@return { approval_policy: string?, auto_rename_model: string?, cmd: string, effort: string, extra_args: string[], model: string?, sandbox: string? }
 function M.options()
   local p = (Config.options.providers or {}).codex or {}
   return {
     approval_policy = p.approval_policy,
-    auto_rename_model = p.auto_rename_model or 'gpt-5.6-luna',
+    auto_rename_model = p.auto_rename_model,
     cmd = p.cmd or 'codex',
     effort = p.effort or 'medium',
     extra_args = p.extra_args or {},
-    model = p.model or 'gpt-5.6-sol',
+    model = p.model,
     sandbox = p.sandbox,
   }
 end

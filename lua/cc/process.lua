@@ -269,6 +269,15 @@ function Process:send_control_set_effort(effort, callback)
     callback)
 end
 
+--- Ask the CLI for its selectable model catalog — the same list its /model
+--- picker shows, already filtered by subscription and settings. Used by
+--- cc.models (:CcModelsUpdate).
+---@param callback fun(ok: boolean, response: table?)?
+---@return string?
+function Process:send_control_list_models(callback)
+  return self:_send_control('list_models', { subtype = 'list_models' }, callback)
+end
+
 --- Send a stream-json control_request to read the CLI's effective settings
 --- (the merge of user/project/local/policy settings.json files). Used at
 --- session startup to discover the resolved `permissions.defaultMode`

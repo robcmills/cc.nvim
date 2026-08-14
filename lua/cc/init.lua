@@ -1493,6 +1493,21 @@ function M._get_instance()
   return get_current_instance()
 end
 
+--- First instance whose provider matches `name` and whose transport is
+--- alive. Used by cc.models to reuse a live subprocess instead of
+--- spawning a one-shot.
+---@param name string 'claude' | 'codex'
+---@return cc.Instance?
+function M._find_live_instance(name)
+  for _, inst in pairs(instances) do
+    if inst.provider and inst.provider.name == name
+        and inst.process and inst.process:is_alive() then
+      return inst
+    end
+  end
+  return nil
+end
+
 --- Test-only: clear the module-level instances registry. Allows a shared
 --- test nvim to simulate fresh module state across cases.
 function M._reset_instances()

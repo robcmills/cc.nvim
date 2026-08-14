@@ -23,16 +23,18 @@ M.capabilities = {
   plan_mode = true,
 }
 
---- Effective Claude options from Config.options.providers.claude.
----@return { auto_rename_model: string, cmd: string, effort: string, extra_args: string[], model: string, permission_mode: string? }
+--- Effective Claude options from Config.options.providers.claude. `model`
+--- and `auto_rename_model` stay nil unless configured; the CLI then picks
+--- its own defaults.
+---@return { auto_rename_model: string?, cmd: string, effort: string, extra_args: string[], model: string?, permission_mode: string? }
 function M.options()
   local p = (Config.options.providers or {}).claude or {}
   return {
-    auto_rename_model = p.auto_rename_model or 'haiku',
+    auto_rename_model = p.auto_rename_model,
     cmd = p.cmd or 'claude',
     effort = p.effort or 'medium',
     extra_args = p.extra_args or {},
-    model = p.model or 'fable',
+    model = p.model,
     permission_mode = p.permission_mode,
   }
 end
@@ -137,16 +139,21 @@ end
 ---@return table
 function Claude:auto_rename_spec(prompt, _cfg)
   local session_id = gen_uuid()
+  local args = { '-p', prompt }
+  local model = self.opts.auto_rename_model
+  if type(model) == 'string' and model ~= '' then
+    table.insert(args, '--model')
+    table.insert(args, model)
+  end
+  vim.list_extend(args, {
+    '--tools', '',
+    '--no-session-persistence',
+    '--session-id', session_id,
+    '--output-format', 'text',
+  })
   return {
     cmd = self.opts.cmd,
-    args = {
-      '-p', prompt,
-      '--model', self.opts.auto_rename_model,
-      '--tools', '',
-      '--no-session-persistence',
-      '--session-id', session_id,
-      '--output-format', 'text',
-    },
+    args = args,
     cleanup = function()
       cleanup_auto_rename_jsonl(session_id)
     end,

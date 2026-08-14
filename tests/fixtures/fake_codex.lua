@@ -10,6 +10,7 @@
 --                         + tokenUsage + turn/completed)
 --   - turn/interrupt    → success + turn/completed(status=interrupted)
 --   - thread/name/set   → success
+--   - model/list        → canned catalog (one visible, one hidden model)
 --   - anything else with an id → empty success
 --   - exits when stdin closes
 
@@ -131,6 +132,20 @@ while true do
         turn = { id = 'turn-1', items = {}, status = 'inProgress' },
       } })
       play_turn()
+    elseif method == 'model/list' then
+      writeln({ id = id, result = { data = {
+        { id = 'gpt-test', model = 'gpt-test', displayName = 'GPT-Test',
+          description = 'fake model', hidden = false, isDefault = true,
+          defaultReasoningEffort = 'medium',
+          supportedReasoningEfforts = {
+            { reasoningEffort = 'low', description = 'low' },
+            { reasoningEffort = 'high', description = 'high' },
+          } },
+        { id = 'gpt-hidden', model = 'gpt-hidden', displayName = 'GPT-Hidden',
+          description = 'hidden fake model', hidden = true, isDefault = false,
+          defaultReasoningEffort = 'medium',
+          supportedReasoningEfforts = {} },
+      }, nextCursor = vim.NIL } })
     elseif method == 'turn/interrupt' then
       writeln({ id = id, result = vim.empty_dict() })
       writeln({ method = 'turn/completed', params = {

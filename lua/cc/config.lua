@@ -72,6 +72,10 @@ local defaults = {
 
   max_tool_result_lines = 50,
 
+  -- Models cache written by :CcModelsUpdate; the source of :CcModel/:CcNew
+  -- model completion. nil → stdpath('data') .. '/cc/models.json'.
+  models_path = nil,
+
   -- Called once when a tool permission prompt opens. Intended for
   -- integrations such as desktop notifications; callback errors are
   -- reported without interrupting the permission flow.
@@ -91,20 +95,20 @@ local defaults = {
 
   providers = {
     claude = {
-      auto_rename_model = 'haiku',
+      auto_rename_model = nil, -- one-shot session-title model; nil → the CLI's default
       cmd = 'claude',
       effort = 'medium', -- 'low'|'medium'|'high'|'xhigh'|'max'|'auto'
       extra_args = {},
-      model = 'fable',
+      model = nil, -- nil → the CLI's default model
       permission_mode = nil, -- nil | 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions' | 'auto'
     },
     codex = {
       approval_policy = nil, -- nil | 'untrusted' | 'on-request' | 'never'
-      auto_rename_model = 'gpt-5.6-luna',
+      auto_rename_model = nil, -- one-shot session-title model; nil → the CLI's default
       cmd = 'codex',
       effort = 'medium', -- 'low'|'medium'|'high'|'xhigh'|'max'|'auto'
       extra_args = {}, -- appended to `codex app-server`
-      model = 'gpt-5.6-sol',
+      model = nil, -- nil → the CLI's default model
       sandbox = nil, -- nil | 'read-only' | 'workspace-write' | 'danger-full-access'
     },
   },

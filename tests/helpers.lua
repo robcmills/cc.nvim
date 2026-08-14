@@ -8,6 +8,7 @@ M.this_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h')
 M.repo_root = vim.fn.fnamemodify(M.this_dir, ':h')
 M.fixtures_dir = M.this_dir .. '/fixtures/jsonl'
 M.ndjson_fixtures_dir = M.this_dir .. '/fixtures/ndjson'
+M.models_fixture = M.this_dir .. '/fixtures/models/models.json'
 
 --- Create a new mini.test child process with cc.nvim loaded.
 --- Uses the same init file as the parent (minimal or rob) unless overridden.
@@ -52,6 +53,7 @@ function M.reset_test_state(child)
     if ok and output._buf_state then output._buf_state = {} end
     local ok2, cc = pcall(require, 'cc')
     if ok2 and cc._reset_instances then cc._reset_instances() end
+    pcall(function() require('cc.models').invalidate() end)
     -- Wipe test scratch globals
     for k in pairs(_G) do
       if type(k) == 'string' and (k:match('^_test_') or k:match('^_G_test_')) then _G[k] = nil end

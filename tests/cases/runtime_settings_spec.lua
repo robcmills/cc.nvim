@@ -3,9 +3,16 @@ local helpers = dofile('tests/helpers.lua')
 local MiniTest = require('mini.test')
 local eq = MiniTest.expect.equality
 
-local T = MiniTest.new_set({
-  hooks = helpers.shared_child_hooks(),
-})
+local hooks = helpers.shared_child_hooks()
+local base_pre_case = hooks.pre_case
+hooks.pre_case = function()
+  base_pre_case()
+  -- Model completion candidates come from the models cache fixture.
+  _G.child.lua(('require("cc.config").setup({ models_path = %q })')
+    :format(helpers.models_fixture))
+end
+
+local T = MiniTest.new_set({ hooks = hooks })
 
 T['CcNew'] = MiniTest.new_set()
 
@@ -66,17 +73,17 @@ T['CcNew']['fuzzy model completion returns the canonical model'] = function()
   eq(got[1], 'gpt-5.6-sol')
 end
 
-T['CcNew']['Opus completion returns the versioned model'] = function()
+T['CcNew']['Opus completion returns the cached 1M alias'] = function()
   local all = _G.child.lua_get(
     [[vim.fn.getcompletion('CcNew ', 'cmdline')]])
-  local compact = _G.child.lua_get(
-    [[vim.fn.getcompletion('CcNew opus5', 'cmdline')]])
-  eq(vim.tbl_contains(all, 'claude-opus-5'), true)
+  local partial = _G.child.lua_get(
+    [[vim.fn.getcompletion('CcNew opus', 'cmdline')]])
+  eq(vim.tbl_contains(all, 'opus[1m]'), true)
   eq(vim.tbl_contains(all, 'opus'), false)
-  eq(compact[1], 'claude-opus-5')
+  eq(partial[1], 'opus[1m]')
 end
 
-T['CcNew']['Opus aliases are forwarded as the canonical Opus 5 model'] = function()
+T['CcNew']['Opus shorthand is forwarded as the cached alias'] = function()
   local got = _G.child.lua_get([[(function()
     local cc = require('cc')
     local original = cc.open
@@ -86,13 +93,11 @@ T['CcNew']['Opus aliases are forwarded as the canonical Opus 5 model'] = functio
       table.insert(opened, { model = model, provider = provider })
     end
     vim.cmd('CcNew opus')
-    vim.cmd('CcNew opus5')
     cc.open = original
     return opened
   end)()]])
   eq(got, {
-    { model = 'claude-opus-5', provider = 'claude' },
-    { model = 'claude-opus-5', provider = 'claude' },
+    { model = 'opus[1m]', provider = 'claude' },
   })
 end
 

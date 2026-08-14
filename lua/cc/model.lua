@@ -2,19 +2,13 @@
 --
 -- Provider model IDs are awkward to type, so cc.nvim accepts unambiguous
 -- suffixes and small typos (for example `sol` or `soll` →
--- `gpt-5.6-sol`). Configured models are preferred over built-in fallbacks,
--- allowing a user's setup to move a shorthand to a newer model generation.
+-- `gpt-5.6-sol`). Candidates come from the user's configured models plus
+-- the cache written by :CcModelsUpdate (cc.models) — the provider CLIs are
+-- the source of truth; no model names are hard-coded here. Configured
+-- models are preferred over cached ones, allowing a user's setup to move
+-- a shorthand to a different model.
 
 local M = {}
-
-local BUILTINS = {
-  { provider = 'claude', name = 'fable' },
-  { provider = 'claude', name = 'haiku' },
-  { provider = 'claude', name = 'claude-opus-5' },
-  { provider = 'claude', name = 'sonnet' },
-  { provider = 'codex', name = 'gpt-5.6-sol' },
-  { provider = 'codex', name = 'gpt-5.6-luna' },
-}
 
 local function trim(value)
   return type(value) == 'string' and (value:match('^%s*(.-)%s*$') or '') or ''
@@ -60,11 +54,6 @@ function M.candidates()
   local function add(provider, name, priority)
     name = trim(name)
     if name == '' then return end
-    local normalized = compact(name)
-    if provider == 'claude'
-        and (normalized == 'opus' or normalized == 'opus5') then
-      name = 'claude-opus-5'
-    end
     local key = provider .. '\0' .. name:lower()
     local existing = by_key[key]
     if existing then
@@ -82,8 +71,11 @@ function M.candidates()
     add(provider, opts.model, 0)
     add(provider, opts.auto_rename_model, 5)
   end
-  for _, candidate in ipairs(BUILTINS) do
-    add(candidate.provider, candidate.name, 10)
+  local Models = require('cc.models')
+  for _, provider in ipairs({ 'claude', 'codex' }) do
+    for _, entry in ipairs(Models.cached(provider)) do
+      add(provider, entry.name, 10)
+    end
   end
 
   table.sort(out, function(a, b)
