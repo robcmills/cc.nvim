@@ -11,7 +11,7 @@ local Providers = require('cc.providers')
 
 local M = {}
 
-M.VERSION = '0.9.0'
+M.VERSION = '0.10.0'
 
 -- ---------------------------------------------------------------------------
 -- Instance management
