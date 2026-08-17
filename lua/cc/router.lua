@@ -272,6 +272,7 @@ function Router:_handle_control_request(msg)
   if not req then return end
   if self.instance then
     self.instance.remote_control_active = true
+    self.instance.awaiting_input = true
     require('cc.statusline').refresh(self.instance)
   end
   if req.subtype == 'can_use_tool' then
@@ -321,6 +322,7 @@ function Router:_handle_permission_request(request_id, req)
     end
     if self.instance then
       self.instance.remote_control_active = false
+      self.instance.awaiting_input = false
       require('cc.statusline').refresh(self.instance)
     end
   end, { provider = 'claude', instance = self.instance })

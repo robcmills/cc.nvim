@@ -77,7 +77,7 @@ function M.attach(ctx)
   local opts = M.options()
   if ctx.model ~= nil then opts.model = ctx.model end
   if ctx.effort ~= nil then opts.effort = ctx.effort end
-  opts.cwd = vim.fn.getcwd()
+  opts.cwd = ctx.cwd or vim.fn.getcwd()
   local self = setmetatable({
     name = M.name,
     capabilities = M.capabilities,
@@ -265,6 +265,10 @@ end
 ---@param result table
 function Codex:respond(id, result)
   self:_write({ jsonrpc = '2.0', id = id, result = result })
+  if self.instance then
+    self.instance.awaiting_input = false
+    require('cc.statusline').refresh(self.instance)
+  end
 end
 
 ---@param id any
@@ -272,6 +276,10 @@ end
 ---@param message string
 function Codex:respond_error(id, code, message)
   self:_write({ jsonrpc = '2.0', id = id, error = { code = code, message = message } })
+  if self.instance then
+    self.instance.awaiting_input = false
+    require('cc.statusline').refresh(self.instance)
+  end
 end
 
 --- Dispatch one decoded JSON-RPC message from the server.
@@ -1246,6 +1254,10 @@ end
 function Codex:_on_server_request(msg)
   local method = msg.method
   local params = msg.params or {}
+  if self.instance then
+    self.instance.awaiting_input = true
+    require('cc.statusline').refresh(self.instance)
+  end
   if method == 'item/commandExecution/requestApproval' then
     self:_approve_command(msg.id, params, false)
   elseif method == 'execCommandApproval' then

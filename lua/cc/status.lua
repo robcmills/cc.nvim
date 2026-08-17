@@ -109,21 +109,18 @@ function M.build_lines(inst)
   add(row('name', (inst and inst.session_name) or (inst and inst.pending_session_name) or ''))
   add(row('pid', inst and inst.process and tostring(inst.process.pid or '') or ''))
 
-  local state, state_hl
-  if not inst or not inst.process then
-    state, state_hl = 'idle (no process)', 'CcStatusDim'
-  elseif not inst.process:is_alive() then
-    state, state_hl = 'exited', 'CcStatusWarn'
-  elseif session and session.interrupt_pending then
-    state, state_hl = 'interrupting…', 'CcStatusWarn'
-  elseif session and session.turn_active then
-    local elapsed = fmt_elapsed(session.turn_started_at and ((vim.uv or vim.loop).now() - session.turn_started_at) or nil)
-    state = elapsed ~= '' and ('thinking (' .. elapsed .. ')') or 'thinking'
-    state_hl = 'CcStatusOK'
-  else
-    state, state_hl = 'ready', 'CcStatusOK'
+  local State = require('cc.instance_state')
+  local state = State.get(inst)
+  local state_hl = (state == 'exited' or state == 'interrupting' or state == 'waiting')
+    and 'CcStatusWarn' or 'CcStatusOK'
+  local state_text = state
+  if state == 'working' then
+    local elapsed = fmt_elapsed(State.turn_elapsed_ms(inst))
+    if elapsed ~= '' then state_text = state .. ' (' .. elapsed .. ')' end
+  elseif state == 'interrupting' then
+    state_text = 'interrupting…'
   end
-  add(row('state', state, state_hl))
+  add(row('state', state_text, state_hl))
   add(blank())
 
   -- Model -----------------------------------------------------------------
@@ -141,7 +138,7 @@ function M.build_lines(inst)
 
   -- Project ---------------------------------------------------------------
   add(section('Project'))
-  add(row('cwd', vim.fn.getcwd()))
+  add(row('cwd', (inst and inst.cwd) or vim.fn.getcwd()))
   local Git = require('cc.git')
   add(row('branch', Git.branch()))
   add(row('pr', Git.pr()))

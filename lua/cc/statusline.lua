@@ -157,9 +157,19 @@ local function default_format(state)
   local function add(component, text)
     segments[#segments + 1] = { component = component, text = text }
   end
-  if state.interrupt_pending then
+  -- `build_state()` always supplies the shared lifecycle state. Preserve the
+  -- documented custom-formatter/test surface for callers that pass the older
+  -- booleans directly to `_default_format`.
+  local lifecycle = state.state
+  if lifecycle == nil then
+    if state.interrupt_pending then lifecycle = 'interrupting'
+    elseif state.is_thinking then lifecycle = 'working' end
+  end
+  if lifecycle == 'waiting' then
+    add('activity', HL_LINE .. 'waiting')
+  elseif lifecycle == 'interrupting' then
     add('activity', HL_LINE .. 'interrupting…')
-  elseif state.is_thinking then
+  elseif lifecycle == 'working' then
     local glyph = state.spinner_frame
     if not glyph or glyph == '' then glyph = '⏳' end
     local seg = HL_LINE .. glyph
@@ -235,6 +245,7 @@ end
 ---@return table state
 function M.build_state(instance, winid)
   local session = instance and instance.session
+  local instance_state = require('cc.instance_state').get(instance)
   local on_update = function()
     pcall(M.refresh, instance)
   end
@@ -290,6 +301,7 @@ function M.build_state(instance, winid)
     window_width = vim.api.nvim_win_get_width(statusline_winid)
   end
   return {
+    state = instance_state,
     provider = provider_name,
     is_thinking = session and session.turn_active or false,
     spinner_frame = spinner_frame,

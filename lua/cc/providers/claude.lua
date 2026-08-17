@@ -80,6 +80,7 @@ end
 ---@field effort string? per-session effort override
 ---@field on_session_id fun(id: string)?
 ---@field on_exit fun(code: integer, signal: integer)?
+---@field cwd string?
 
 --- Build a Claude provider instance wired to one cc.Instance.
 ---@param ctx cc.ProviderCtx
@@ -117,7 +118,7 @@ function M.attach(ctx)
 
   self.process = Process.new({
     cmd = opts.cmd,
-    cwd = vim.fn.getcwd(),
+    cwd = ctx.cwd or vim.fn.getcwd(),
     session_id = ctx.resume_id,
     permission_mode = effective_mode,
     model = opts.model,

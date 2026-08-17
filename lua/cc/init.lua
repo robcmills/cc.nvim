@@ -29,6 +29,8 @@ M.VERSION = '0.9.0'
 ---@field last_plan_file string?
 ---@field session_name string? user-set session title (set via /rename)
 ---@field pending_session_name string? rename requested before transcript exists; flushed by `_flush_pending_rename`
+---@field cwd string working directory captured when the instance was created
+---@field awaiting_input boolean? true while provider UI is waiting for a user response
 ---@field remote_control_active boolean?
 ---@field saved_output_view table? output winsaveview snapshot from the last close, restored on reopen
 ---@field saved_output_following_tail boolean? whether the output cursor was on the tail at the last close; reopen re-pins to the new tail instead of restoring saved_output_view
@@ -335,6 +337,8 @@ local function create_instance(opts)
     last_plan_file = nil,
     session_name = nil,
     pending_session_name = nil,
+    cwd = vim.fn.getcwd(),
+    awaiting_input = false,
     autosize_disabled = false,
     expected_prompt_height = Config.options.prompt_height,
   }
@@ -563,6 +567,7 @@ local function attach_provider(inst, opts)
     permission_mode = opts.permission_mode,
     model = opts.model,
     effort = opts.effort,
+    cwd = inst.cwd,
     on_session_id = function(id)
       inst.last_session_id = id
       require('cc.statusline').refresh(inst)
@@ -1485,6 +1490,62 @@ function M.get_skills()
   local inst = get_current_instance()
   if inst and inst.session then return inst.session.skills end
   return nil
+end
+
+--- Return provider-neutral, JSON-safe snapshots of every registered instance.
+--- Internal provider/process/buffer objects are deliberately not exposed.
+---@return table[]
+function M.list_instances()
+  local State = require('cc.instance_state')
+  local snapshots = {}
+  for output_bufnr, inst in pairs(instances) do
+    local session = inst.session
+    local provider = inst.provider and inst.provider.name or nil
+    local prompt_bufnr = inst.prompt and inst.prompt.bufnr or nil
+    if type(output_bufnr) == 'number' and type(prompt_bufnr) == 'number'
+        and (provider == 'claude' or provider == 'codex') then
+      snapshots[#snapshots + 1] = {
+        outputBufnr = output_bufnr,
+        promptBufnr = prompt_bufnr,
+        sessionId = inst.last_session_id or (session and session.id) or vim.NIL,
+        name = inst.session_name or inst.pending_session_name or vim.NIL,
+        provider = provider,
+        model = (session and session.model) or vim.NIL,
+        cwd = inst.cwd or '',
+        pid = (inst.process and inst.process.pid) or vim.NIL,
+        state = State.get(inst),
+        turnElapsedMs = State.turn_elapsed_ms(inst) or vim.NIL,
+      }
+    end
+  end
+  table.sort(snapshots, function(a, b) return a.outputBufnr < b.outputBufnr end)
+  return snapshots
+end
+
+--- Focus an existing instance by its output buffer, restoring its companion
+--- layout through the same BufWinEnter path used by normal buffer navigation.
+---@param output_bufnr integer
+---@return boolean
+function M.focus_instance(output_bufnr)
+  if type(output_bufnr) ~= 'number' or output_bufnr % 1 ~= 0 then return false end
+  local inst = instances[output_bufnr]
+  if not inst or not inst.output or inst.output.bufnr ~= output_bufnr
+      or not vim.api.nvim_buf_is_valid(output_bufnr) then
+    return false
+  end
+
+  if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid)
+      and vim.api.nvim_win_get_buf(inst.output_winid) == output_bufnr then
+    vim.api.nvim_set_current_win(inst.output_winid)
+  else
+    local visible_win = vim.fn.bufwinid(output_bufnr)
+    if visible_win ~= -1 then
+      vim.api.nvim_set_current_win(visible_win)
+    else
+      vim.api.nvim_set_current_buf(output_bufnr)
+    end
+  end
+  return true
 end
 
 --- Get the current instance (for dev commands like :CcDumpNdjson).

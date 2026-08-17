@@ -21,6 +21,7 @@ local function respond_success(process, request_id, response_body, instance)
   })
   if instance then
     instance.remote_control_active = false
+    instance.awaiting_input = false
     require('cc.statusline').refresh(instance)
   end
 end
