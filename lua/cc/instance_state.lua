@@ -4,7 +4,7 @@
 
 local M = {}
 
----@alias cc.InstanceState 'waiting'|'interrupting'|'working'|'starting'|'ready'|'exited'
+---@alias cc.InstanceState 'waiting'|'interrupting'|'working'|'monitoring'|'starting'|'ready'|'exited'
 
 ---@param inst cc.Instance?
 ---@return cc.InstanceState
@@ -16,6 +16,8 @@ function M.get(inst)
   local session = inst.session
   if session and session.interrupt_pending then return 'interrupting' end
   if session and session.turn_active then return 'working' end
+  if session and session.background_task_count
+      and session:background_task_count() > 0 then return 'monitoring' end
   local session_id = inst.last_session_id or (session and session.id)
   if not session_id or session_id == '' then return 'starting' end
   return 'ready'

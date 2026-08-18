@@ -568,6 +568,9 @@ end
 ---@param params table
 function Codex:_on_notification(method, params)
   if not self.output or not self.session then return end
+  -- Notifications cover streamed deltas, tool progress, approvals, and state
+  -- changes, so they are the authoritative activity signal for this provider.
+  self.session:touch()
   if method == 'turn/started' then
     self:_on_turn_started(params)
   elseif method == 'turn/completed' then
@@ -1252,6 +1255,7 @@ end
 
 ---@param msg table JSON-RPC request from the server
 function Codex:_on_server_request(msg)
+  if self.session then self.session:touch() end
   local method = msg.method
   local params = msg.params or {}
   if self.instance then

@@ -31,14 +31,56 @@ local function refresh_statusline(self)
   end
 end
 
+local function result_text(content)
+  if type(content) == 'string' then return content end
+  if type(content) ~= 'table' then return '' end
+  local parts = {}
+  for _, block in ipairs(content) do
+    if type(block) == 'string' then
+      table.insert(parts, block)
+    elseif type(block) == 'table' and type(block.text) == 'string' then
+      table.insert(parts, block.text)
+    end
+  end
+  return table.concat(parts, '\n')
+end
+
+local function launched_task_id(msg, block)
+  local result = msg.tool_use_result or msg.toolUseResult
+  if type(result) == 'table' then
+    local id = result.backgroundTaskId or result.background_task_id
+      or result.agentId or result.agent_id
+    if type(id) == 'string' and id ~= '' then return id end
+  end
+  local text = result_text(block.content)
+  return text:match('background with ID:%s*([^%s%.]+)')
+    or text:match('agentId:%s*([^%s%(]+)')
+end
+
+---@param msg table
+---@return boolean changed
+function Router:_handle_task_notification(msg)
+  local status = msg.status
+  if status == 'running' or status == 'in_progress' or status == 'pending' then
+    return false
+  end
+  local tool_use_id = msg.tool_use_id or msg.toolUseId
+  local task_id = msg.task_id or msg.taskId or msg.agent_id or msg.agentId
+  return self.session:finish_background_task(tool_use_id, task_id)
+end
+
 function Router:set_process(process)
   self.process = process
 end
 
 ---@param msg table SDK NDJSON message
 function Router:dispatch(msg)
+  -- Every provider message is live conversation activity, even when it only
+  -- updates rendered output or provider state rather than the session model.
+  self.session:touch()
   local t = msg.type
   local before_turn_active = self.session.turn_active
+  local background_changed = false
   if t == 'system' then
     self:_handle_system(msg)
   elseif t == 'stream_event' then
@@ -46,7 +88,7 @@ function Router:dispatch(msg)
   elseif t == 'assistant' then
     -- Post-streaming reconciliation; UI already current.
   elseif t == 'user' then
-    self:_handle_user(msg)
+    background_changed = self:_handle_user(msg)
   elseif t == 'result' then
     self:_handle_result(msg)
   elseif t == 'control_request' then
@@ -72,12 +114,13 @@ function Router:dispatch(msg)
   elseif t == 'task_progress' then
     -- Skip; tool_progress inside the subagent handles fine-grained updates.
   elseif t == 'task_notification' then
+    background_changed = self:_handle_task_notification(msg)
     self.output:render_task('done', msg.summary or msg.description or '')
   end
 
   -- Refresh statusline on events that change visible state.
   if t == 'system' or t == 'result' or t == 'control_response'
-      or before_turn_active ~= self.session.turn_active then
+      or background_changed or before_turn_active ~= self.session.turn_active then
     refresh_statusline(self)
   end
 end
@@ -111,6 +154,8 @@ function Router:_handle_system(msg)
     if msg.permissionMode and self.session then
       self.session.permission_mode = msg.permissionMode
     end
+  elseif sub == 'task_notification' then
+    self:_handle_task_notification(msg)
   end
 end
 
@@ -158,17 +203,35 @@ end
 --- Claude Code produces after executing tools.
 function Router:_handle_user(msg)
   local message = msg.message
-  if not message or message.role ~= 'user' then return end
+  if not message or message.role ~= 'user' then return false end
   local content = message.content
-  if type(content) ~= 'table' then return end
+  if type(content) == 'string' then
+    if content:match('^%s*<task%-notification>') then
+      return self.session:finish_background_task(
+        content:match('<tool%-use%-id>(.-)</tool%-use%-id>'),
+        content:match('<task%-id>(.-)</task%-id>'))
+    end
+    return false
+  end
+  if type(content) ~= 'table' then return false end
+  local changed = false
   for _, block in ipairs(content) do
     if type(block) == 'table' and block.type == 'tool_result' then
       local tool_use_id = block.tool_use_id
       self.session:record_tool_result(tool_use_id, block.content, block.is_error)
       self.output:render_tool_result(tool_use_id, block.content, block.is_error)
       pcall(function() require('cc.peek').notify_tool_result(tool_use_id, block.is_error) end)
+      local call = self.session.tool_calls[tool_use_id]
+      local input = call and call.input
+      if not block.is_error and call
+          and ((type(input) == 'table' and input.run_in_background == true)
+            or call.name == 'Monitor') then
+        self.session:begin_background_task(tool_use_id, launched_task_id(msg, block))
+        changed = true
+      end
     end
   end
+  return changed
 end
 
 function Router:_handle_result(msg)

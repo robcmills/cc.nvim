@@ -17,6 +17,8 @@ local M = {}
 ---@field is_streaming boolean
 ---@field turn_active boolean true from user submit through the final result
 ---@field turn_started_at integer? ms timestamp from vim.uv.now() while turn_active
+---@field background_tasks table<string, { task_id: string? }> background tools awaiting completion notification, keyed by tool-use id
+---@field last_modified_at integer epoch-ms timestamp of the latest conversation activity
 ---@field interrupt_pending boolean
 ---@field cost_usd number
 ---@field input_tokens integer cumulative fresh-input tokens for this conversation (across engine restarts / resume)
@@ -34,6 +36,12 @@ local function now_ms()
   return (vim.uv or vim.loop).now()
 end
 
+local function wall_time_ms()
+  local uv = vim.uv or vim.loop
+  local seconds, microseconds = uv.gettimeofday()
+  return (seconds * 1000) + math.floor(microseconds / 1000)
+end
+
 function M.new()
   return setmetatable({
     id = nil,
@@ -47,6 +55,8 @@ function M.new()
     is_streaming = false,
     turn_active = false,
     turn_started_at = nil,
+    background_tasks = {},
+    last_modified_at = wall_time_ms(),
     interrupt_pending = false,
     cost_usd = 0,
     input_tokens = 0,
@@ -59,6 +69,50 @@ function M.new()
     -- tool_use_id -> { name, input, result, is_error, start_time }
     tool_calls = {},
   }, Session)
+end
+
+--- Mark this session as recently changed. Wall-clock time is used so
+--- snapshots from separate Neovim processes remain directly comparable.
+function Session:touch()
+  self.last_modified_at = wall_time_ms()
+end
+
+--- Track a tool whose result says it will complete asynchronously.
+---@param tool_use_id string?
+---@param task_id string?
+function Session:begin_background_task(tool_use_id, task_id)
+  if type(tool_use_id) ~= 'string' or tool_use_id == '' then return end
+  self.background_tasks[tool_use_id] = {
+    task_id = type(task_id) == 'string' and task_id ~= '' and task_id or nil,
+  }
+end
+
+--- Remove a completed asynchronous tool by either identifier supplied by
+--- Claude's task notification.
+---@param tool_use_id string?
+---@param task_id string?
+---@return boolean changed
+function Session:finish_background_task(tool_use_id, task_id)
+  if type(tool_use_id) == 'string' and self.background_tasks[tool_use_id] then
+    self.background_tasks[tool_use_id] = nil
+    return true
+  end
+  if type(task_id) == 'string' and task_id ~= '' then
+    for id, task in pairs(self.background_tasks) do
+      if task.task_id == task_id then
+        self.background_tasks[id] = nil
+        return true
+      end
+    end
+  end
+  return false
+end
+
+---@return integer
+function Session:background_task_count()
+  local count = 0
+  for _ in pairs(self.background_tasks) do count = count + 1 end
+  return count
 end
 
 --- Record a tool_use block when it begins streaming.
@@ -114,6 +168,7 @@ end
 
 ---@param text string
 function Session:add_user_turn(text)
+  self:touch()
   self.interrupt_pending = false
   self.turn_active = true
   self.turn_started_at = now_ms()

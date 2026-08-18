@@ -63,8 +63,88 @@ T['list_instances']['uses shared state precedence and returns JSON-safe snapshot
   eq(snapshots[6].state, 'ready')
   eq(type(_G.child.lua_get('_G._encoded')), 'string')
   eq(type(snapshots[4].turnElapsedMs), 'number')
+  eq(snapshots[4].backgroundTaskCount, 0)
+  eq(type(snapshots[4].lastModifiedAt), 'number')
   eq(snapshots[6].provider, 'codex')
   eq(snapshots[6].cwd, '/Users/me/src/project')
+end
+
+T['list_instances']['tracks provider activity as last modified'] = function()
+  _G.child.lua([[
+    local session = require('cc.session').new()
+    local before = session.last_modified_at
+    vim.wait(5)
+    local router = require('cc.router').new({
+      session = session,
+      output = {},
+      process = {},
+    })
+    router:dispatch({ type = 'rate_limit' })
+    _G._modified_before = before
+    _G._modified_after = session.last_modified_at
+  ]])
+  local before = _G.child.lua_get('_G._modified_before')
+  local after = _G.child.lua_get('_G._modified_after')
+  eq(after > before, true)
+end
+
+T['list_instances']['tracks prompt submission as last modified'] = function()
+  _G.child.lua([[
+    local session = require('cc.session').new()
+    local before = session.last_modified_at
+    vim.wait(5)
+    session:add_user_turn('hello')
+    _G._submitted_before = before
+    _G._submitted_after = session.last_modified_at
+  ]])
+  local before = _G.child.lua_get('_G._submitted_before')
+  local after = _G.child.lua_get('_G._submitted_after')
+  eq(after > before, true)
+end
+
+T['list_instances']['reports background tool lifecycle as monitoring'] = function()
+  _G.child.lua([[
+    local session = require('cc.session').new()
+    local output = {
+      render_tool_result = function() end,
+      render_task = function() end,
+    }
+    local router = require('cc.router').new({ session = session, output = output })
+    session:begin_tool_call('tool-1', 'Bash')
+    session:finalize_tool_call('tool-1', {
+      command = 'gh run watch 123',
+      run_in_background = true,
+    })
+    router:dispatch({
+      type = 'user',
+      message = { role = 'user', content = {
+        {
+          type = 'tool_result',
+          tool_use_id = 'tool-1',
+          content = 'Command running in background with ID: task-1. You will be notified.',
+        },
+      } },
+      toolUseResult = { backgroundTaskId = 'task-1' },
+    })
+    local inst = {
+      session = session,
+      process = { is_alive = function() return true end },
+    }
+    _G._background_state = require('cc.instance_state').get(inst)
+    _G._background_count = session:background_task_count()
+    router:dispatch({
+      type = 'task_notification',
+      task_id = 'task-1',
+      status = 'completed',
+      summary = 'workflow completed',
+    })
+    _G._completed_state = require('cc.instance_state').get(inst)
+    _G._completed_count = session:background_task_count()
+  ]])
+  eq(_G.child.lua_get('_G._background_state'), 'monitoring')
+  eq(_G.child.lua_get('_G._background_count'), 1)
+  eq(_G.child.lua_get('_G._completed_state'), 'starting')
+  eq(_G.child.lua_get('_G._completed_count'), 0)
 end
 
 T['list_instances']['Claude permission requests set and clear awaiting_input'] = function()

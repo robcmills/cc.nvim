@@ -1515,6 +1515,9 @@ function M.list_instances()
         pid = (inst.process and inst.process.pid) or vim.NIL,
         state = State.get(inst),
         turnElapsedMs = State.turn_elapsed_ms(inst) or vim.NIL,
+        backgroundTaskCount = (session and session.background_task_count
+          and session:background_task_count()) or 0,
+        lastModifiedAt = (session and session.last_modified_at) or vim.NIL,
       }
     end
   end
