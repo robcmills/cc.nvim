@@ -878,4 +878,44 @@ T['attach']['render_for on unknown winid returns empty'] = function()
   eq(_G.child.lua_get('_G._out'), '')
 end
 
+T['attach']['refresh targets the output statusline without changing window context'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({})
+    local Session = require('cc.session')
+    local inst = { session = Session.new() }
+    local original_winid = vim.api.nvim_get_current_win()
+    vim.cmd('vsplit')
+    local output_winid = vim.api.nvim_get_current_win()
+    inst.output_winid = output_winid
+
+    local Statusline = require('cc.statusline')
+    Statusline.attach(inst, output_winid)
+    vim.api.nvim_set_current_win(original_winid)
+
+    local redraw = vim.api.nvim__redraw
+    vim.api.nvim__redraw = function(opts)
+      _G._redraw_opts = opts
+      _G._redraw_current_winid = vim.api.nvim_get_current_win()
+    end
+    Statusline.refresh(inst)
+    vim.api.nvim__redraw = redraw
+
+    _G._refresh_state = {
+      original_winid = original_winid,
+      current_winid = vim.api.nvim_get_current_win(),
+      redraw_current_winid = _G._redraw_current_winid,
+      output_winid = output_winid,
+      opts = _G._redraw_opts,
+    }
+  ]])
+  local state = _G.child.lua_get('_G._refresh_state')
+  eq(state.current_winid, state.original_winid)
+  eq(state.redraw_current_winid, state.original_winid)
+  eq(state.opts, {
+    win = state.output_winid,
+    statusline = true,
+    flush = true,
+  })
+end
+
 return T

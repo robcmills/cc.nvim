@@ -420,7 +420,7 @@ function M.detach(winid)
   pcall(vim.api.nvim_del_augroup_by_name, 'cc.statusline.win.' .. winid)
 end
 
---- Force a statusline/winbar redraw for any window tied to this instance.
+--- Force a statusline redraw for any window tied to this instance.
 ---@param instance cc.Instance
 function M.refresh(instance)
   if not instance then return end
@@ -428,9 +428,15 @@ function M.refresh(instance)
   if not cfg.enabled then return end
   for winid, inst in pairs(winid_to_instance) do
     if inst == instance and vim.api.nvim_win_is_valid(winid) then
-      pcall(vim.api.nvim_win_call, winid, function()
-        vim.cmd('redrawstatus')
-      end)
+      -- Target the output statusline directly. nvim_win_call() temporarily
+      -- changes the current-window context; statusline plugins can interpret
+      -- that as a focus change and blank or redraw the user's active
+      -- statusline on every spinner tick.
+      pcall(vim.api.nvim__redraw, {
+        win = winid,
+        statusline = true,
+        flush = true,
+      })
     end
   end
 end
