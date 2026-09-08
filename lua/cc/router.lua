@@ -1,5 +1,7 @@
 -- Dispatches SDK NDJSON messages to session (state) and output (render).
 
+local ErrorNotice = require('cc.output.error_notice')
+
 local M = {}
 
 ---@class cc.Router
@@ -9,6 +11,9 @@ local M = {}
 ---@field instance cc.Instance?
 ---@field on_session_id fun(session_id: string)?
 ---@field interrupted_result_pending boolean true after an acknowledged interrupt until Claude's optional trailing result
+---@field rate_limit_status string? status of the last rendered rate_limit_event
+---@field rate_limit_key string? dedupe key of the last rendered rate_limit_event
+---@field last_error_text string? error notice shown for the in-flight turn, so its `result` echo is not repeated
 local Router = {}
 Router.__index = Router
 
@@ -86,7 +91,13 @@ function Router:dispatch(msg)
   elseif t == 'stream_event' then
     self:_handle_stream_event(msg)
   elseif t == 'assistant' then
-    -- Post-streaming reconciliation; UI already current.
+    -- Streamed messages were rendered from stream_events and this complete
+    -- copy is reconciliation only. Synthetic API-error messages (rate
+    -- limit, auth, billing, max output tokens) never stream: this is their
+    -- only appearance, tagged with `error`.
+    if msg.error ~= nil then
+      self:_handle_assistant_error(msg)
+    end
   elseif t == 'user' then
     background_changed = self:_handle_user(msg)
   elseif t == 'result' then
@@ -100,7 +111,7 @@ function Router:dispatch(msg)
   elseif t == 'tool_use_summary' then
     -- Could surface as a status line; skip for now.
   elseif t == 'rate_limit' or t == 'rate_limit_event' then
-    -- No-op for MVP.
+    self:_handle_rate_limit(msg)
   elseif t == 'api_retry' then
     self.output:render_notice('API retry')
   elseif t == 'hook_started' then
@@ -243,11 +254,51 @@ function Router:_handle_result(msg)
   -- never arrived), so stop it before the cost line lands.
   self.output:stop_all_tool_timers()
   if not interrupted then
+    -- An error result usually echoes the assistant error already shown
+    -- (rate limit, auth failure); only render text we have not rendered.
+    local err = ErrorNotice.format_result_error(msg)
+    if err and err ~= self.last_error_text then
+      self.output:render_notice(err)
+      vim.notify('cc.nvim: ' .. err, vim.log.levels.WARN)
+    end
     self.output:render_result(msg)
   end
+  self.last_error_text = nil
   if self.instance then
     require('cc')._flush_pending_rename(self.instance)
   end
+end
+
+--- Surface claude.ai usage-limit changes. The CLI emits one event per
+--- status change, including the return to `allowed`; we render warnings,
+--- rejections, and the lift after either, and drop the rest.
+---@param msg table SDKRateLimitEvent
+function Router:_handle_rate_limit(msg)
+  local info = msg.rate_limit_info
+  if type(info) ~= 'table' then return end
+  local key = table.concat({
+    tostring(info.status), tostring(info.rateLimitType), tostring(info.resetsAt),
+    tostring(info.isUsingOverage),
+  }, '|')
+  if key == self.rate_limit_key then return end
+  local text = ErrorNotice.format_rate_limit(info, self.rate_limit_status)
+  self.rate_limit_key = key
+  self.rate_limit_status = info.status
+  if not text then return end
+  self.output:render_notice(text)
+  if info.status == 'rejected' then
+    vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
+  end
+end
+
+--- Render a synthetic API-error assistant message as an error notice.
+---@param msg table SDKAssistantMessage with `error` set
+function Router:_handle_assistant_error(msg)
+  local text = ErrorNotice.format_assistant_error(msg)
+  if not text then return end
+  self.last_error_text = text
+  self.output:render_notice(text)
+  vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
 end
 
 function Router:_handle_tool_progress(msg)
@@ -285,6 +336,20 @@ function Router:_handle_control_response(msg)
     else
       local err = resp.error or 'control_response error'
       self.output:render_notice('Interrupt failed: ' .. tostring(err))
+    end
+  elseif subtype == 'set_permission_mode' then
+    -- The CLI refuses some switches (bypassPermissions when the session
+    -- was not launched with --dangerously-skip-permissions or bypass is
+    -- disabled by settings; auto when unavailable). Nothing else reports
+    -- it, so surface the CLI's reason in the transcript and as a warning.
+    if resp.subtype ~= 'success' then
+      local err = resp.error or 'control_response error'
+      local text = 'Permission mode change failed: ' .. tostring(err)
+      self.output:render_notice(text)
+      vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
+      if self.instance then
+        require('cc.statusline').refresh(self.instance)
+      end
     end
   elseif subtype == 'get_settings' then
     if resp.subtype ~= 'success' then return end
@@ -328,20 +393,6 @@ function Router:_handle_control_response(msg)
         vim.log.levels.ERROR)
     end
   end
-  elseif subtype == 'set_permission_mode' then
-    -- The CLI refuses some switches (bypassPermissions when the session
-    -- was not launched with --dangerously-skip-permissions or bypass is
-    -- disabled by settings; auto when unavailable). Nothing else reports
-    -- it, so surface the CLI's reason in the transcript and as a warning.
-    if resp.subtype ~= 'success' then
-      local err = resp.error or 'control_response error'
-      local text = 'Permission mode change failed: ' .. tostring(err)
-      self.output:render_notice(text)
-      vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
-      if self.instance then
-        require('cc.statusline').refresh(self.instance)
-      end
-    end
 end
 
 function Router:_handle_control_request(msg)

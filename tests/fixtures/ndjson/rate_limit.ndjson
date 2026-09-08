@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"test-stream-rl1","tools":[],"model":"claude-sonnet-4-20250514","permissionMode":"auto"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.4},"uuid":"rl-1","session_id":"test-stream-rl1"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"five_hour","utilization":0.9,"resetsAt":1757350800},"uuid":"rl-2","session_id":"test-stream-rl1"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1757350800},"uuid":"rl-3","session_id":"test-stream-rl1"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1757350800},"uuid":"rl-4","session_id":"test-stream-rl1"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.1},"uuid":"rl-5","session_id":"test-stream-rl1"}

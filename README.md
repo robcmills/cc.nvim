@@ -451,6 +451,18 @@ is stashed for the next `:Cc` / `:CcNew`. Mode changes the CLI initiates
 (Shift+Tab round-trip from inside the CLI, `ExitPlanMode`, etc.) flow
 back through `system`/`status` messages so the statusline stays in sync.
 
+### Usage limits and API errors
+
+When a turn fails at the API instead of streaming a response, the CLI
+sends a synthetic assistant message tagged with an `error` (rate limit,
+authentication, billing, output-token cap). cc.nvim renders its text as
+an `── Error: … ──` notice in the transcript and raises a warning, so a
+limit-hit turn never ends in a bare cost line. `rate_limit_event`
+messages render too: `Approaching usage limit (5-hour) · 90% used`,
+`Usage limit reached (5-hour) · resets 15:00`, and `Usage limit lifted`
+once the window resets. Error `result`s (`error_during_execution`,
+`error_max_turns`, …) get the same treatment. These lines use `CcError`.
+
 ## Peeking at running Bash
 
 Long-running Bash tool calls (`yarn install`, builds, test runs) only show
@@ -831,8 +843,8 @@ Tests exercise two code paths that mirror how the plugin actually works:
 - **NDJSON (streaming path):** `helpers.replay_streaming()` feeds a `.ndjson`
   file through `parser:feed()` → `router:dispatch()` → output rendering. Tests
   the live streaming code path including streaming-only message types (hook
-  events, `tool_progress`, `result`/cost, `task_started`, `api_retry`, compact
-  notices, plan mode).
+  events, `tool_progress`, `result`/cost, `task_started`, `api_retry`,
+  `rate_limit_event`, API-error notices, compact notices, plan mode).
 
 ### Capturing new fixtures
 

@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"test-stream-re1","tools":[],"model":"claude-sonnet-4-20250514","permissionMode":"auto"}
+{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Something broke\nin the CLI"],"total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0},"uuid":"re-1","session_id":"test-stream-re1"}

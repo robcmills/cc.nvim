@@ -118,6 +118,9 @@ function M.apply_buffer_syntax(bufnr)
 
     -- Cost / notice delineator lines: "  ── $0.05 ─"  "  ── Plan Mode ──"
     vim.cmd([[syntax match CcCost    /^\s*──.*──\s*$/ containedin=ALL]])
+    -- Error notices: "  ── Error: … ──", "  ── API Error: … ──",
+    -- "  ── Usage limit reached … ──". Declared after CcCost to override it.
+    vim.cmd([[syntax match CcError   /^\s*── \%(\%(API \)\=Error:\|Usage limit reached\).*──\s*$/ containedin=ALL]])
 
     -- Thinking header + inline content: "  ∴ Thinking... <text>"
     vim.cmd([[syntax match CcThinking /^\s\+∴\s\+Thinking\.\.\..*$/ containedin=ALL]])
