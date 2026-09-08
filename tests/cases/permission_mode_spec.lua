@@ -28,6 +28,38 @@ T['no-arg opens a picker over all six modes'] = function()
     { 'acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan' })
 end
 
+T['picker labels each mode with its configured description'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({
+      permission_mode_descriptions = { plan = 'CUSTOM PLAN TEXT' },
+    })
+    _G._test_labels = nil
+    vim.ui.select = function(items, opts, _on_choice)
+      local labels = {}
+      for _, item in ipairs(items) do
+        table.insert(labels, opts.format_item(item))
+      end
+      _G._test_labels = labels
+    end
+    require('cc').set_permission_mode()
+  ]==])
+  local labels = _G.child.lua_get('_G._test_labels')
+  eq(#labels, 6)
+  -- Each label starts with the mode name and carries its description.
+  eq(labels[1]:match('^acceptEdits') ~= nil, true)
+  eq(labels[1]:find('Auto%-approve edits') ~= nil, true)
+  eq(labels[3]:find('Never prompts; everything runs', 1, true) ~= nil, true)
+  -- User override replaces the default wording.
+  eq(labels[6]:find('CUSTOM PLAN TEXT', 1, true) ~= nil, true)
+end
+
+T['permission_mode_description returns empty string for unknown mode'] = function()
+  _G.child.lua([==[ require('cc.config').setup({}) ]==])
+  eq(_G.child.lua_get([[require('cc').permission_mode_description('garbage')]]), '')
+  eq(_G.child.lua_get([[require('cc').permission_mode_description('dontAsk')]]),
+    'Never prompts; anything that would have asked is denied instead')
+end
+
 T['empty-string arg also opens the picker'] = function()
   _G.child.lua([==[
     require('cc.config').setup({})
@@ -437,6 +469,96 @@ T['system/status with permissionMode updates session.permission_mode'] = functio
     _G._test_session = session
   ]==])
   eq(_G.child.lua_get('_G._test_session.permission_mode'), 'acceptEdits')
+end
+
+-- The CLI refuses some live switches (bypassPermissions without
+-- --dangerously-skip-permissions, auto when unavailable) with an error
+-- control_response. Nothing else reports it, so the router must surface
+-- the CLI's reason and leave session.permission_mode alone.
+T['error control_response for set_permission_mode surfaces the CLI reason'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    local Process = require('cc.process')
+    local Router = require('cc.router')
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+
+    local session = Session.new()
+    session.permission_mode = 'default'
+    local output = Output.new(session, 'cc-test-output-pm-err')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+
+    local process = Process.new({ cmd = 'unused', on_message = function() end })
+    process.alive = true
+    process.stdin = {}
+    process.write = function() end
+
+    _G._test_notices = {}
+    vim.notify = function(msg, level)
+      table.insert(_G._test_notices, { msg = msg, level = level })
+    end
+
+    local router = Router.new({ session = session, output = output, process = process })
+    local rid = process:send_control_set_permission_mode('bypassPermissions')
+    router:dispatch({
+      type = 'control_response',
+      response = {
+        subtype = 'error',
+        request_id = rid,
+        error = 'Cannot set permission mode to bypassPermissions because the session was not launched with --dangerously-skip-permissions',
+      },
+    })
+    _G._test_mode = session.permission_mode
+    _G._test_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  ]==])
+  eq(_G.child.lua_get('_G._test_mode'), 'default')
+  local text = table.concat(_G.child.lua_get('_G._test_lines'), '\n')
+  if not text:find('Permission mode change failed: Cannot set permission mode to bypassPermissions', 1, true) then
+    error('expected refusal notice in output, got:\n' .. text)
+  end
+  local notices = _G.child.lua_get('_G._test_notices')
+  local warned = false
+  for _, n in ipairs(notices) do
+    if type(n.msg) == 'string'
+        and n.msg:find('--dangerously-skip-permissions', 1, true)
+        and n.level == vim.log.levels.WARN then
+      warned = true
+    end
+  end
+  eq(warned, true)
+end
+
+T['success control_response for set_permission_mode renders nothing'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    local Process = require('cc.process')
+    local Router = require('cc.router')
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+
+    local session = Session.new()
+    local output = Output.new(session, 'cc-test-output-pm-ok')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+    local before = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+    local process = Process.new({ cmd = 'unused', on_message = function() end })
+    process.alive = true
+    process.stdin = {}
+    process.write = function() end
+    vim.notify = function() end
+
+    local router = Router.new({ session = session, output = output, process = process })
+    local rid = process:send_control_set_permission_mode('acceptEdits')
+    router:dispatch({
+      type = 'control_response',
+      response = { subtype = 'success', request_id = rid },
+    })
+    _G._test_unchanged = vim.deep_equal(before,
+      vim.api.nvim_buf_get_lines(bufnr, 0, -1, false))
+  ]==])
+  eq(_G.child.lua_get('_G._test_unchanged'), true)
 end
 
 T['invalid arg warns and changes nothing'] = function()

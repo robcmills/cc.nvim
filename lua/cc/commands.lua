@@ -159,7 +159,7 @@ function M.create()
       end
       return out
     end,
-    desc = 'Set permission mode (acceptEdits|auto|bypassPermissions|default|dontAsk|plan); no arg opens a picker',
+    desc = 'Set permission mode (acceptEdits|auto|bypassPermissions|default|dontAsk|plan); no arg opens a picker with one-line descriptions',
   })
 
   vim.api.nvim_create_user_command('CcPromptAutosize', function(opts)

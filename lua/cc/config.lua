@@ -82,6 +82,17 @@ local defaults = {
   -- function(event: cc.PermissionPromptEvent)
   on_permission_prompt = nil,
 
+  -- One-line summaries shown in the :CcPermissionMode picker. Keys are the
+  -- CLI's mode names; override any entry to reword it.
+  permission_mode_descriptions = {
+    acceptEdits = 'Auto-approve edits in cwd and basic file commands; ask for the rest',
+    auto = 'AI classifier approves or denies each call; prompts only when it cannot decide',
+    bypassPermissions = 'Never prompts; everything runs (deny and explicit ask rules still apply)',
+    default = 'Ask before anything not covered by allow rules',
+    dontAsk = 'Never prompts; anything that would have asked is denied instead',
+    plan = 'Read-only until you approve a plan',
+  },
+
   prompt_height = 10,
 
   -- Set equal to prompt_height to disable automatic prompt growth.

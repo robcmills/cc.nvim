@@ -1108,6 +1108,16 @@ M.PERMISSION_MODES = {
   'plan',
 }
 
+--- One-line summary of a permission mode, from
+--- `config.permission_mode_descriptions`. Empty string when unknown.
+---@param mode string
+---@return string
+function M.permission_mode_description(mode)
+  local descs = Config.options.permission_mode_descriptions or {}
+  local d = descs[mode]
+  return type(d) == 'string' and d or ''
+end
+
 ---@param mode string
 ---@return boolean
 local function is_valid_permission_mode(mode)
@@ -1155,7 +1165,11 @@ local function apply_permission_mode(mode)
       request_id = inst.process:send_control_set_permission_mode(mode)
     end
     if request_id then
-      vim.notify('cc.nvim: permission_mode → ' .. mode, vim.log.levels.INFO)
+      -- The CLI can refuse (e.g. bypassPermissions without
+      -- --dangerously-skip-permissions); router surfaces that on the
+      -- error control_response.
+      vim.notify('cc.nvim: permission_mode → ' .. mode .. ' (requested)',
+        vim.log.levels.INFO)
     end
     return
   end
@@ -1202,9 +1216,18 @@ end
 function M.set_permission_mode(mode)
   local arg = mode and mode:match('^%s*(.-)%s*$') or ''
   if arg == '' then
+    local width = 0
+    for _, m in ipairs(M.PERMISSION_MODES) do
+      width = math.max(width, vim.fn.strdisplaywidth(m))
+    end
     vim.ui.select(M.PERMISSION_MODES, {
       prompt = 'Permission mode',
-      format_item = function(item) return item end,
+      format_item = function(item)
+        local desc = M.permission_mode_description(item)
+        if desc == '' then return item end
+        local pad = string.rep(' ', width - vim.fn.strdisplaywidth(item))
+        return item .. pad .. '  ' .. desc
+      end,
     }, function(choice)
       if choice then apply_permission_mode(choice) end
     end)

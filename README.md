@@ -167,7 +167,7 @@ instead of being guessed.
 | `:CcStop` | Interrupt current turn (stream-json `control_request`) |
 | `:CcFold {n}` | Set output fold level (0..3) |
 | `:CcPlan` | Open in plan mode (`--permission-mode plan`) |
-| `:CcPermissionMode [mode]` | Set permission mode (no arg = picker; tab-completes the six modes). Sent live to an active session via `set_permission_mode` control_request, else stored for the next `:Cc` / `:CcNew`. |
+| `:CcPermissionMode [mode]` | Set permission mode (no arg = picker with one-line descriptions; tab-completes the six modes). Sent live to an active session via `set_permission_mode` control_request, else stored for the next `:Cc` / `:CcNew`. |
 | `:CcPlanShow` | Open the most recent plan file |
 | `:CcResume [id\|claude\|codex]` | Resume by ID, or open the all-provider picker (optionally filtered by provider) |
 | `:CcContinue` | Resume the most recent session for the current cwd across providers |
@@ -248,6 +248,8 @@ require('cc').setup({
   models_path = nil, -- nil → stdpath('data') .. '/cc/models.json'
   -- Called when a Claude or Codex tool permission prompt opens.
   on_permission_prompt = nil, -- function(event)
+  -- One-line summaries shown in the :CcPermissionMode picker, keyed by mode.
+  permission_mode_descriptions = { --[[ see lua/cc/config.lua for defaults ]] },
   prompt_height = 10,
   prompt_max_height = 30,
   prompt_placeholder = 'Write prompt here. Press <Enter> in normal mode to submit.',
@@ -471,12 +473,36 @@ Setup is opt-in (the hook is not active until you install it):
 ```
 
 Then, while the agent is running a long Bash call:
+What each mode does (the picker shows these; override the wording via
+`permission_mode_descriptions`):
+
+| Mode | Behavior |
+|---|---|
+| `default` | Ask before anything not covered by allow rules |
+| `acceptEdits` | Auto-approve edits in cwd and basic file commands (mkdir, touch, rm, mv, cp, sed); ask for the rest |
+| `plan` | Read-only until you approve a plan |
+| `auto` | An AI classifier approves or denies each call; prompts only when it can't decide |
+| `dontAsk` | Never prompts; anything that would have asked is denied instead |
+| `bypassPermissions` | Never prompts; everything runs. Deny rules, explicit `ask` rules, and safety checks on paths like `.git/` and `.claude/` still apply |
+
+To run long tasks without prompts, use `bypassPermissions`. `dontAsk`
+also never prompts, but it fails the call instead of running it.
+
 
 ```vim
 :CcPeek           " opens a float; q or <Esc> closes it
 ```
 
 `:CcPeekUninstall` removes the matcher entry from `settings.json`.
+The CLI can refuse a live switch: `bypassPermissions` is only accepted
+when the session was launched with `--permission-mode bypassPermissions`
+or `--dangerously-skip-permissions`, and settings can disable it
+entirely; `auto` can be unavailable. When that happens cc.nvim shows the
+CLI's reason as a notice in the transcript and a warning, and the mode
+stays unchanged. Set `providers.claude.permission_mode = 'bypassPermissions'`
+(or `:CcPermissionMode bypassPermissions` with no session running) so
+the next session launches with it instead.
+
 
 ### Security & disclosure
 

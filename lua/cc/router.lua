@@ -328,6 +328,20 @@ function Router:_handle_control_response(msg)
         vim.log.levels.ERROR)
     end
   end
+  elseif subtype == 'set_permission_mode' then
+    -- The CLI refuses some switches (bypassPermissions when the session
+    -- was not launched with --dangerously-skip-permissions or bypass is
+    -- disabled by settings; auto when unavailable). Nothing else reports
+    -- it, so surface the CLI's reason in the transcript and as a warning.
+    if resp.subtype ~= 'success' then
+      local err = resp.error or 'control_response error'
+      local text = 'Permission mode change failed: ' .. tostring(err)
+      self.output:render_notice(text)
+      vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
+      if self.instance then
+        require('cc.statusline').refresh(self.instance)
+      end
+    end
 end
 
 function Router:_handle_control_request(msg)
