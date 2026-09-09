@@ -32,6 +32,17 @@ local function build_fold_info(bufnr, foldstart, foldend)
   local header = vim.fn.getline(foldstart)
   local line_count = foldend - foldstart + 1
 
+  -- Fold depth of the header (">2" → 2). Tool headers sit at even depths
+  -- (2 top-level, 4 nested in a subagent Activity section); their Output:
+  -- folds at the next odd depth.
+  local raw = state and state.fold_levels and state.fold_levels[foldstart]
+  local depth = 0
+  if type(raw) == 'string' then
+    depth = tonumber(raw:match('[>%<]?(%d+)')) or 0
+  elseif type(raw) == 'number' then
+    depth = raw
+  end
+
   -- Detect role from header line content.
   local role = 'unknown'
   if header:match('^%s*User:') then
@@ -40,14 +51,17 @@ local function build_fold_info(bufnr, foldstart, foldend)
     role = 'agent'
   elseif header:match('^%s*Output:') or header:match('^%s*Error:') then
     role = 'result'
-  elseif state and state.fold_levels and state.fold_levels[foldstart] == '>2' then
+  elseif header:match('^%s*Activity:') then
+    role = 'activity'
+  elseif depth == 2 or depth == 4 then
     role = 'tool'
-  elseif state and state.fold_levels and state.fold_levels[foldstart] == '>3' then
+  elseif depth >= 3 then
     role = 'result'
   end
 
   local info = {
     role = role,
+    depth = depth,
     header = header,
     line_count = line_count,
     fold_start = foldstart,
@@ -57,7 +71,13 @@ local function build_fold_info(bufnr, foldstart, foldend)
     first_text = nil,
     tool_name = nil,
     tool_input = nil,
+    status = nil,
   }
+
+  -- Subagent Activity folds show their latest item while collapsed.
+  if role == 'activity' then
+    info.status = require('cc.output').subagent_status(bufnr, foldstart)
+  end
 
   -- For tool folds, attach the originating tool block's name and input so
   -- foldtext can derive a fold-only summary for tools in tool_body.SUMMARY_FOLD_ONLY.
@@ -111,6 +131,7 @@ local function role_hl(info)
   if info.role == 'user' then return 'CcUser' end
   if info.role == 'agent' then return 'CcAgent' end
   if info.role == 'tool' then return 'CcTool' end
+  if info.role == 'activity' then return 'CcActivity' end
   if info.role == 'result' then
     if info.header and info.header:match('^%s*Error:') then return 'CcError' end
     return 'CcOutput'
@@ -127,6 +148,8 @@ end
 ---@return table list of { text, hl } chunks
 function M.default_foldtext(info)
   local hl = role_hl(info)
+  -- Caret indent matches the header's visual depth (see refresh_carets).
+  local caret = string.rep(' ', math.max(0, (info.depth or 1) - 1) * 2) .. '▸ '
   if info.role == 'user' then
     local body
     if info.first_text and #info.first_text > 0 then
@@ -159,11 +182,22 @@ function M.default_foldtext(info)
         stripped = stripped .. ' ' .. summary
       end
     end
-    return { { '  ▸ ', 'CcCaret' }, { stripped, hl } }
+    return { { caret, 'CcCaret' }, { stripped, hl } }
+  elseif info.role == 'activity' then
+    local body = 'Activity:'
+    if info.status and info.status ~= '' then
+      body = body .. ' ' .. info.status
+      return { { caret, 'CcCaret' }, { body, hl } }
+    end
+    return {
+      { caret, 'CcCaret' },
+      { body, hl },
+      { ' ⟨' .. info.line_count .. ' lines⟩', 'CcFolded' },
+    }
   elseif info.role == 'result' then
     local stripped = info.header:gsub('^%s*', '')
     return {
-      { '    ▸ ', 'CcCaret' },
+      { caret, 'CcCaret' },
       { stripped, hl },
       { ' ⟨' .. info.line_count .. ' lines⟩', 'CcFolded' },
     }

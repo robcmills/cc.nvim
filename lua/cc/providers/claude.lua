@@ -26,7 +26,7 @@ M.capabilities = {
 --- Effective Claude options from Config.options.providers.claude. `model`
 --- and `auto_rename_model` stay nil unless configured; the CLI then picks
 --- its own defaults.
----@return { auto_rename_model: string?, cmd: string, effort: string, extra_args: string[], model: string?, permission_mode: string? }
+---@return { auto_rename_model: string?, cmd: string, effort: string, extra_args: string[], forward_subagent_text: boolean, model: string?, permission_mode: string? }
 function M.options()
   local p = (Config.options.providers or {}).claude or {}
   return {
@@ -34,6 +34,7 @@ function M.options()
     cmd = p.cmd or 'claude',
     effort = p.effort or 'medium',
     extra_args = p.extra_args or {},
+    forward_subagent_text = p.forward_subagent_text ~= false,
     model = p.model,
     permission_mode = p.permission_mode,
   }
@@ -123,6 +124,7 @@ function M.attach(ctx)
     permission_mode = effective_mode,
     model = opts.model,
     extra_args = opts.extra_args,
+    forward_subagent_text = opts.forward_subagent_text,
     on_message = function(msg) self.router:dispatch(msg) end,
     on_stderr = function(data)
       vim.notify('cc.nvim [stderr]: ' .. data, vim.log.levels.WARN)

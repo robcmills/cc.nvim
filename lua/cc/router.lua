@@ -84,6 +84,13 @@ function Router:dispatch(msg)
   -- updates rendered output or provider state rather than the session model.
   self.session:touch()
   local t = msg.type
+  -- Messages from inside a subagent carry the parent Agent call's id. They
+  -- render nested under that tool block and never touch top-level turn state.
+  local parent_id = msg.parent_tool_use_id
+  if type(parent_id) == 'string' and parent_id ~= '' then
+    self:_handle_subagent_message(parent_id, msg)
+    return
+  end
   local before_turn_active = self.session.turn_active
   local background_changed = false
   if t == 'system' then
@@ -120,13 +127,10 @@ function Router:dispatch(msg)
     -- Usually noisy; skip. Could plumb through if needed.
   elseif t == 'hook_response' then
     self:_handle_hook(msg, 'response')
-  elseif t == 'task_started' then
-    self.output:render_task('started', msg.description or msg.agent_name or '')
-  elseif t == 'task_progress' then
-    -- Skip; tool_progress inside the subagent handles fine-grained updates.
   elseif t == 'task_notification' then
+    -- Current CLIs send this as system/task_notification (handled in
+    -- _handle_system); keep the top-level form for older emitters.
     background_changed = self:_handle_task_notification(msg)
-    self.output:render_task('done', msg.summary or msg.description or '')
   end
 
   -- Refresh statusline on events that change visible state.
@@ -167,6 +171,44 @@ function Router:_handle_system(msg)
     end
   elseif sub == 'task_notification' then
     self:_handle_task_notification(msg)
+  elseif sub == 'task_started' or sub == 'task_progress' or sub == 'task_updated'
+      or sub == 'background_tasks_changed' then
+    -- Subagent lifecycle. The nested Activity section is driven by the
+    -- parent_tool_use_id-tagged messages instead, which carry the actual
+    -- tool calls; these summaries add nothing the user can't already see.
+  end
+end
+
+--- Render a message emitted from inside a subagent (parent_tool_use_id set)
+--- under the parent Agent tool block. Subagent assistant messages arrive as
+--- completed blocks (one per message), never as stream_event deltas.
+---@param parent_id string
+---@param msg table
+function Router:_handle_subagent_message(parent_id, msg)
+  local t = msg.type
+  if t == 'assistant' or t == 'user' then
+    local message = msg.message
+    local content = message and message.content
+    if type(content) ~= 'table' then return end
+    for _, block in ipairs(content) do
+      if type(block) == 'table' then
+        if t == 'assistant' and block.type == 'tool_use' then
+          self.output:subagent_tool_use(parent_id, block)
+        elseif t == 'assistant' and block.type == 'text' then
+          self.output:subagent_text(parent_id, block.text)
+        elseif t == 'assistant' and block.type == 'thinking' then
+          self.output:subagent_thinking(parent_id, block.thinking)
+        elseif t == 'user' and block.type == 'tool_result' then
+          self.output:subagent_tool_result(parent_id, block.tool_use_id, block.content, block.is_error)
+        end
+        -- user text blocks echo the subagent prompt, already shown as the
+        -- parent tool's input.
+      end
+    end
+  elseif t == 'tool_progress' then
+    if msg.tool_use_id and msg.elapsed_time_seconds then
+      self.output:update_tool_elapsed(msg.tool_use_id, msg.elapsed_time_seconds)
+    end
   end
 end
 

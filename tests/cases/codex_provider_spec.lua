@@ -117,6 +117,17 @@ T['handshake']['thread/start response seeds session state'] = function()
   eq(_G.child.lua_get('_G._test_session_ids'), { 'thread-1' })
 end
 
+T['handshake']['thread/start receives an explicit session model'] = function()
+  setup_codex(_G.child)
+  _G.child.lua([[
+    _G._test_provider.opts.model = 'gpt-5.6-terra'
+    _G._test_provider:_start_protocol()
+    _G._feed({ id = _G._test_sent[1].id, result = {} })
+  ]])
+  local req = sent_with_method(_G.child, 'thread/start')
+  eq(req.params.model, 'gpt-5.6-terra')
+end
+
 T['handshake']['approval_policy and sandbox config forwarded'] = function()
   setup_codex(_G.child, [[{
     provider = 'codex',
@@ -767,7 +778,148 @@ T['misc']['pending request callbacks fail on close'] = function()
   eq(_G.child.lua_get('_G._test_err_msg'), 'gone')
 end
 
+T['subagents'] = MiniTest.new_set()
+
+T['subagents']['child thread renders nested under the Agent block and leaves turn state alone'] = function()
+  setup_codex(_G.child)
+  handshake(_G.child)
+  _G.child.lua([==[
+    local function usage(input, cached, output)
+      local b = { totalTokens = input + output, inputTokens = input,
+        cachedInputTokens = cached, outputTokens = output, reasoningOutputTokens = 0 }
+      return { total = b, last = b }
+    end
+    _G._feed({ method = 'turn/started', params = { threadId = 'thread-1',
+      turn = { id = 'turn-1', items = {}, status = 'inProgress' } } })
+    -- The child thread races ahead of the parent's subAgentActivity item.
+    _G._feed({ method = 'thread/status/changed', params = { threadId = 'thread-2', status = { type = 'active', activeFlags = {} } } })
+    _G._feed({ method = 'turn/started', params = { threadId = 'thread-2',
+      turn = { id = 'turn-2', items = {}, status = 'inProgress' } } })
+    _G._feed({ method = 'item/started', params = { threadId = 'thread-2', turnId = 'turn-2', startedAtMs = 0,
+      item = { type = 'commandExecution', id = 'exec-1', command = "/bin/bash -lc 'echo hello-sub'",
+        cwd = '/tmp', status = 'inProgress' } } })
+    _G._test_lines_before_map = vim.api.nvim_buf_get_lines(_G._test_bufnr, 0, -1, false)
+    -- Parent announces the spawn.
+    _G._feed({ method = 'item/completed', params = { threadId = 'thread-1', turnId = 'turn-1', completedAtMs = 1,
+      item = { type = 'subAgentActivity', id = 'call_spawn', kind = 'started',
+        agentThreadId = 'thread-2', agentPath = '/root/echo_scout' } } })
+    _G._feed({ method = 'item/completed', params = { threadId = 'thread-2', turnId = 'turn-2', completedAtMs = 2,
+      item = { type = 'commandExecution', id = 'exec-1', command = "/bin/bash -lc 'echo hello-sub'",
+        cwd = '/tmp', status = 'completed', exitCode = 0, aggregatedOutput = 'hello-sub\n' } } })
+    _G._feed({ method = 'item/started', params = { threadId = 'thread-2', turnId = 'turn-2', startedAtMs = 3,
+      item = { type = 'agentMessage', id = 'msg-2', text = '', phase = 'final_answer' } } })
+    _G._feed({ method = 'item/agentMessage/delta', params = { threadId = 'thread-2', turnId = 'turn-2',
+      itemId = 'msg-2', delta = 'finished' } })
+    _G._feed({ method = 'item/completed', params = { threadId = 'thread-2', turnId = 'turn-2', completedAtMs = 4,
+      item = { type = 'agentMessage', id = 'msg-2', text = 'finished', phase = 'final_answer' } } })
+    _G._feed({ method = 'thread/tokenUsage/updated', params = { threadId = 'thread-2', turnId = 'turn-2',
+      tokenUsage = usage(5000, 0, 900) } })
+    _G._feed({ method = 'turn/completed', params = { threadId = 'thread-2',
+      turn = { id = 'turn-2', items = {}, status = 'completed', durationMs = 900 } } })
+    _G._test_mid = {
+      turn_active = _G._test_session.turn_active,
+      output_tokens = _G._test_session.output_tokens,
+      lines = vim.api.nvim_buf_get_lines(_G._test_bufnr, 0, -1, false),
+    }
+    -- Parent's own wait call and final reply.
+    _G._feed({ method = 'item/started', params = { threadId = 'thread-1', turnId = 'turn-1', startedAtMs = 5,
+      item = { type = 'collabAgentToolCall', id = 'call_wait', tool = 'wait', status = 'inProgress',
+        senderThreadId = 'thread-1', receiverThreadIds = {}, agentsStates = {} } } })
+    _G._feed({ method = 'item/completed', params = { threadId = 'thread-1', turnId = 'turn-1', completedAtMs = 6,
+      item = { type = 'collabAgentToolCall', id = 'call_wait', tool = 'wait', status = 'completed',
+        senderThreadId = 'thread-1', receiverThreadIds = {}, agentsStates = {} } } })
+    _G._feed({ method = 'item/completed', params = { threadId = 'thread-1', turnId = 'turn-1', completedAtMs = 7,
+      item = { type = 'agentMessage', id = 'msg-1', text = 'done', phase = 'final_answer' } } })
+    _G._feed({ method = 'turn/completed', params = { threadId = 'thread-1',
+      turn = { id = 'turn-1', items = {}, status = 'completed', durationMs = 1500 } } })
+  ]==])
+  local function find(lines, pat)
+    for i, l in ipairs(lines) do if l:match(pat) then return i end end
+    return nil
+  end
+  local before = _G.child.lua_get('_G._test_lines_before_map')
+  eq(find(before, 'Bash:'), nil) -- held until the parent maps the thread
+  local mid = _G.child.lua_get('_G._test_mid')
+  eq(mid.turn_active, true)
+  eq(mid.output_tokens, 0) -- child usage is not ours
+  local lines = mid.lines
+  local header = find(lines, '^  %S+ Subagent: Echo scout')
+  local activity = find(lines, '^    Activity:$')
+  local bash = find(lines, "^      %S+ Bash: /bin/bash %-lc 'echo hello%-sub'")
+  local nested_out = find(lines, '^        Output:$')
+  local nested_text = find(lines, '^      finished$')
+  local parent_out = find(lines, '^    Output:$')
+  eq(header ~= nil and activity ~= nil and bash ~= nil and nested_out ~= nil, true)
+  eq(nested_text ~= nil and parent_out ~= nil, true)
+  eq(header < activity and activity < bash and bash < nested_out, true)
+  eq(nested_out < nested_text and nested_text < parent_out, true)
+  eq(lines[nested_out + 1], '          hello-sub')
+  eq(lines[parent_out + 1], '      finished')
+  -- No top-level rendering of child text, no cost line before our turn ends.
+  eq(find(lines, '^  finished'), nil)
+  eq(find(lines, '──'), nil)
+  local text = buffer_text(_G.child)
+  eq(text:find('Subagent: wait', 1, true) ~= nil, true)
+  eq(_G.child.lua_get('_G._test_session.turn_active'), false)
+  local cost_lines = 0
+  for _, l in ipairs(_G.child.lua_get('vim.api.nvim_buf_get_lines(_G._test_bufnr, 0, -1, false)')) do
+    if l:find('──', 1, true) then cost_lines = cost_lines + 1 end
+  end
+  eq(cost_lines, 1)
+end
+
+T['subagents']['history replay renders the spawn as an Agent block only'] = function()
+  setup_codex(_G.child)
+  _G.child.lua([==[
+    _G._test_provider.thread_id = 'thread-1'
+    _G._test_provider:_replay_turns({ { items = {
+      { type = 'userMessage', id = 'u1', content = { { type = 'text', text = 'spawn something' } } },
+      { type = 'subAgentActivity', id = 'call_spawn', kind = 'started', agentThreadId = 'thread-2', agentPath = '/root/scout' },
+      { type = 'subAgentActivity', id = 'call_spawn2', kind = 'interacted', agentThreadId = 'thread-2', agentPath = '/root/scout' },
+      { type = 'agentMessage', id = 'm1', text = 'done' },
+    } } })
+  ]==])
+  local lines = _G.child.lua_get('vim.api.nvim_buf_get_lines(_G._test_bufnr, 0, -1, false)')
+  local n = 0
+  for _, l in ipairs(lines) do if l:match('Subagent: Scout') then n = n + 1 end end
+  eq(n, 1)
+  eq(buffer_text(_G.child):find('Task done', 1, true), nil)
+end
+
 T['fixture'] = MiniTest.new_set()
+
+T['fixture']['replays a captured session with a spawned subagent'] = function()
+  setup_codex(_G.child)
+  _G.child.lua(string.format([==[
+    _G._test_provider:_start_protocol()
+    local Parser = require('cc.parser')
+    local parser = Parser.new()
+    for _, line in ipairs(vim.fn.readfile(%q)) do
+      for _, msg in ipairs(parser:feed(line .. '\n')) do
+        _G._feed(msg)
+      end
+    end
+  ]==], helpers.repo_root .. '/tests/fixtures/codex/subagent_turn.ndjson'))
+  eq(_G.child.lua_get('_G._test_session.id'), '01a07c53-7661-73b2-a854-790977b7cfc6')
+  eq(_G.child.lua_get('_G._test_session.turn_active'), false)
+  local lines = _G.child.lua_get('vim.api.nvim_buf_get_lines(_G._test_bufnr, 0, -1, false)')
+  local function find(pat)
+    for i, l in ipairs(lines) do if l:match(pat) then return i end end
+    return nil
+  end
+  local header = find('^  %S+ Subagent: Echo scout')
+  local activity = find('^    Activity:$')
+  local bash = find("^      %S+ Bash: /bin/bash %-lc 'echo hello%-sub'")
+  local parent_out = find('^    Output:$')
+  eq(header ~= nil and activity ~= nil and bash ~= nil and parent_out ~= nil, true)
+  eq(header < activity and activity < bash and bash < parent_out, true)
+  eq(lines[parent_out + 1], '      finished')
+  eq(find('^  done$') ~= nil, true) -- parent's own reply stays top-level
+  eq(find('^  finished$'), nil)     -- child's reply does not
+  local cost_lines = 0
+  for _, l in ipairs(lines) do if l:find('──', 1, true) then cost_lines = cost_lines + 1 end end
+  eq(cost_lines, 1)
+end
 
 T['fixture']['replays the captured live session'] = function()
   setup_codex(_G.child)

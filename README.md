@@ -263,6 +263,7 @@ require('cc').setup({
       cmd = 'claude',
       effort = 'medium',
       extra_args = {},
+      forward_subagent_text = true, -- --forward-subagent-text; false for CLIs that reject it
       model = nil, -- nil → the CLI's default model
       permission_mode = nil,
     },
@@ -384,6 +385,33 @@ Example at `foldlevel=1`:
 Unfold a tool with `zo` to see the input (at level 2) or result (at level 3).
 Change globally with `:CcFold 2` or the standard `zM` / `zR`.
 
+### Subagent activity
+
+When Claude delegates to a subagent, everything the subagent does streams
+into an `Activity:` section nested inside the `Subagent:` tool block. The
+section is a level-3 fold, so at the default `foldlevel=2` it stays closed
+and its header shows the subagent's most recent step: the running tool with
+its live timer, or the first line of its latest message. Open it (`zo`, or
+`:CcFold 3`) to see each nested tool call with its input and result, plus
+the subagent's text and thinking, laid out like top-level tools two depths
+deeper. Fold state is never changed behind your back: sections open or close
+only via `:CcFold` or your own `zo` / `zc`.
+
+```
+▾ Agent:
+    Let me analyze the codebase.
+  ▾ 󰋘 Subagent: Explore codebase structure 󰔛 42s
+      prompt: List all source files
+    ▸ Activity: 󰈙 Read: lua/cc/output.lua 󰔛 2s
+```
+
+Subagent tool calls always stream; text and thinking need the
+`--forward-subagent-text` CLI flag, which `providers.claude.forward_subagent_text`
+(default `true`) passes for you. Codex works the same way: a spawned agent's
+thread renders as a `Subagent: /root/<name>` block whose Activity section
+fills from that thread's items, and its final message becomes the block's
+output.
+
 ## Interactive features
 
 Claude Code's interactive tools get specialized UI:
@@ -445,11 +473,35 @@ statusline. Change it mid-session:
 - `:CcPermissionMode` opens a picker; `:CcPermissionMode <mode>` jumps
   straight to a mode (tab-completes)
 
+What each mode does (the picker shows these; override the wording via
+`permission_mode_descriptions`):
+
+| Mode | Behavior |
+|---|---|
+| `default` | Ask before anything not covered by allow rules |
+| `acceptEdits` | Auto-approve edits in cwd and basic file commands (mkdir, touch, rm, mv, cp, sed); ask for the rest |
+| `plan` | Read-only until you approve a plan |
+| `auto` | An AI classifier approves or denies each call; prompts only when it can't decide |
+| `dontAsk` | Never prompts; anything that would have asked is denied instead |
+| `bypassPermissions` | Never prompts; everything runs. Deny rules, explicit `ask` rules, and safety checks on paths like `.git/` and `.claude/` still apply |
+
+To run long tasks without prompts, use `bypassPermissions`. `dontAsk`
+also never prompts, but it fails the call instead of running it.
+
 Live sessions get a `set_permission_mode` control_request on stdin so
 the CLI switches without restart. If no session is running, the choice
 is stashed for the next `:Cc` / `:CcNew`. Mode changes the CLI initiates
 (Shift+Tab round-trip from inside the CLI, `ExitPlanMode`, etc.) flow
 back through `system`/`status` messages so the statusline stays in sync.
+
+The CLI can refuse a live switch: `bypassPermissions` is only accepted
+when the session was launched with `--permission-mode bypassPermissions`
+or `--dangerously-skip-permissions`, and settings can disable it
+entirely; `auto` can be unavailable. When that happens cc.nvim shows the
+CLI's reason as a notice in the transcript and a warning, and the mode
+stays unchanged. Set `providers.claude.permission_mode = 'bypassPermissions'`
+(or `:CcPermissionMode bypassPermissions` with no session running) so
+the next session launches with it instead.
 
 ### Usage limits and API errors
 
@@ -485,36 +537,12 @@ Setup is opt-in (the hook is not active until you install it):
 ```
 
 Then, while the agent is running a long Bash call:
-What each mode does (the picker shows these; override the wording via
-`permission_mode_descriptions`):
-
-| Mode | Behavior |
-|---|---|
-| `default` | Ask before anything not covered by allow rules |
-| `acceptEdits` | Auto-approve edits in cwd and basic file commands (mkdir, touch, rm, mv, cp, sed); ask for the rest |
-| `plan` | Read-only until you approve a plan |
-| `auto` | An AI classifier approves or denies each call; prompts only when it can't decide |
-| `dontAsk` | Never prompts; anything that would have asked is denied instead |
-| `bypassPermissions` | Never prompts; everything runs. Deny rules, explicit `ask` rules, and safety checks on paths like `.git/` and `.claude/` still apply |
-
-To run long tasks without prompts, use `bypassPermissions`. `dontAsk`
-also never prompts, but it fails the call instead of running it.
-
 
 ```vim
 :CcPeek           " opens a float; q or <Esc> closes it
 ```
 
 `:CcPeekUninstall` removes the matcher entry from `settings.json`.
-The CLI can refuse a live switch: `bypassPermissions` is only accepted
-when the session was launched with `--permission-mode bypassPermissions`
-or `--dangerously-skip-permissions`, and settings can disable it
-entirely; `auto` can be unavailable. When that happens cc.nvim shows the
-CLI's reason as a notice in the transcript and a warning, and the mode
-stays unchanged. Set `providers.claude.permission_mode = 'bypassPermissions'`
-(or `:CcPermissionMode bypassPermissions` with no session running) so
-the next session launches with it instead.
-
 
 ### Security & disclosure
 
@@ -705,6 +733,7 @@ drives them):
 | `CcTool` | `Constant` |
 | `CcToolInput` | `Normal` |
 | `CcOutput` | `Type` |
+| `CcActivity` | `Type` |
 | `CcError` | `ErrorMsg` |
 | `CcCost` | `Comment` |
 | `CcNotice` | `WarningMsg` |
@@ -741,7 +770,7 @@ subprocess. Bare command names resolve aliases from a Bash login profile, so
 claude -p --input-format stream-json --output-format stream-json \
        --permission-prompt-tool stdio \
        --include-partial-messages --include-hook-events --verbose \
-       [--resume <id>] [--permission-mode <mode>]
+       [--forward-subagent-text] [--resume <id>] [--permission-mode <mode>]
 ```
 
 NDJSON flows in both directions:

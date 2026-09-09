@@ -35,7 +35,7 @@ local function gen_uuid()
   return h(8) .. '-' .. h(4) .. '-4' .. h(3) .. '-' .. h(4) .. '-' .. h(8) .. h(4)
 end
 
----@param opts { cmd: string, cwd: string?, session_id: string?, permission_mode: string?, model: string?, effort: string?, extra_args: string[]?, on_message: fun(msg: table), on_stderr: fun(data: string)?, on_exit: fun(code: integer, signal: integer)? }
+---@param opts { cmd: string, cwd: string?, session_id: string?, permission_mode: string?, model: string?, effort: string?, extra_args: string[]?, forward_subagent_text: boolean?, on_message: fun(msg: table), on_stderr: fun(data: string)?, on_exit: fun(code: integer, signal: integer)? }
 function M.new(opts)
   return setmetatable({
     opts = opts,
@@ -69,6 +69,11 @@ function Process:spawn()
     }, ' '),
   }
 
+  -- Subagent tool calls and results always stream on stdout tagged with
+  -- parent_tool_use_id; this flag adds the subagent's text and thinking too.
+  if self.opts.forward_subagent_text ~= false then
+    table.insert(args, '--forward-subagent-text')
+  end
   if self.opts.session_id then
     table.insert(args, '--resume')
     table.insert(args, self.opts.session_id)

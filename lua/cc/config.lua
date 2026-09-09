@@ -110,6 +110,10 @@ local defaults = {
       cmd = 'claude',
       effort = 'medium', -- 'low'|'medium'|'high'|'xhigh'|'max'|'auto'
       extra_args = {},
+      -- Pass --forward-subagent-text so a subagent's text and thinking show
+      -- in its Activity section alongside its tool calls. Set false on CLI
+      -- versions that reject the flag; tool calls still stream either way.
+      forward_subagent_text = true,
       model = nil, -- nil → the CLI's default model
       permission_mode = nil, -- nil | 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions' | 'auto'
     },

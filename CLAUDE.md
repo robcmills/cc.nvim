@@ -107,6 +107,26 @@ verified against codex-cli 0.144.5.
 - Carets (`▾` / `▸`) are extmark `virt_text` synced from Vim's fold state
   on `CursorMoved`. Don't rewrite them imperatively — change the fold
   state and let the sync run.
+- Never rewrite an existing line with `nvim_buf_set_lines` or
+  `nvim_buf_set_text`. Neovim adjusts marks for the replaced range as a
+  delete plus insert, which shortens any fold starting at that line by one,
+  and the incremental foldexpr update never repairs it. Use
+  `Output:_set_line` (`setbufline()`), which leaves the fold tree alone.
+  Symptom was the output view jumping while subagent tool timers ticked.
+- Subagent messages arrive on stdout tagged with `parent_tool_use_id`
+  (complete `assistant`/`user` messages, never `stream_event` deltas).
+  `router.lua` diverts them before the type switch into `Output:subagent_*`,
+  which insert into the parent Agent block's `Activity:` section mid-buffer
+  via `_insert_lines`. The folded header's live status is foldtext, not
+  line text. Subagent lifecycle events are `system` messages with subtypes
+  `task_started` / `task_progress` / `task_notification`, not top-level types.
+- Codex app-server streams spawned subagent threads to the client with their
+  own `threadId`. `providers/codex.lua` routes any notification whose
+  `threadId` differs from the session's into `_on_foreign_thread_notification`
+  before the method switch; the parent's `subAgentActivity` item (kind=started,
+  `agentThreadId`, `agentPath`) is the Agent block those items nest under.
+  Never let a foreign thread's `turn/completed` or `tokenUsage` reach session
+  state. Captured stream: `tests/fixtures/codex/subagent_turn.ndjson`.
 
 ## Scope
 

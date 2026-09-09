@@ -33,7 +33,20 @@ end
 ---@field fold_headers table<integer, boolean>         line numbers that get a caret
 ---@field extmark_ids table<integer, integer>         line -> extmark id (1-indexed line)
 ---@field tool_blocks table<string, cc.OutputToolBlock> tool_use_id -> render metadata
+---@field subagents table<string, cc.OutputSubagent> parent Agent tool_use_id -> Activity section
+---@field pending_subagent table<string, table[]>? subagent messages queued until the parent input renders
 M._buf_state = {}
+
+--- Per-subagent "Activity:" section nested inside the parent Agent tool block.
+--- Holds the subagent's own tool calls, results, text and thinking at fold
+--- depth 3+. The section is created lazily with its first item so it never
+--- exists as an empty single-line fold.
+---@class cc.OutputSubagent
+---@field parent_id string tool_use_id of the parent Agent call
+---@field header_lnum integer 1-indexed line of the "Activity:" header
+---@field end_lnum integer last line of the section; the next item inserts after it
+---@field tool_count integer nested tool calls rendered so far
+---@field last { kind: 'tool'|'text'|'thinking', tool_use_id: string?, text: string? }? most recent item, shown in the folded header
 
 ---@class cc.OutputToolBlock
 ---@field bufnr integer
@@ -44,6 +57,8 @@ M._buf_state = {}
 ---@field result_header_lnum integer? line where "▾ Output:" was inserted
 ---@field input_rendered boolean
 ---@field input_end_lnum integer? last line of rendered tool input; insertion point for tool_result
+---@field depth integer? fold depth of the header line: 2 for top-level tools, 4 for tools nested inside a subagent Activity section (default 2)
+---@field parent_id string? parent Agent tool_use_id when this tool ran inside a subagent
 
 ---@class cc.Output
 ---@field bufnr integer
@@ -102,6 +117,7 @@ function Output:ensure_buffer()
     fold_headers = {},
     extmark_ids = {},
     tool_blocks = {},
+    subagents = {},
   }
 
   self:_setup_window_opts_for_buffer()
@@ -485,6 +501,15 @@ function Output:_insert_lines(start_lnum, lines, fold_levels, is_header)
     end
   end
 
+  for _, sub in pairs(state.subagents or {}) do
+    if sub.header_lnum >= start_lnum then
+      sub.header_lnum = sub.header_lnum + n
+    end
+    if sub.end_lnum >= start_lnum then
+      sub.end_lnum = sub.end_lnum + n
+    end
+  end
+
   if self.agent_header_lnum and self.agent_header_lnum >= start_lnum then
     self.agent_header_lnum = self.agent_header_lnum + n
   end
@@ -541,10 +566,15 @@ function M._flush_pending_fold_closes(bufnr)
   local remaining = {}
   local ready = {}
   for _, h in ipairs(state.pending_fold_closes) do
-    -- A fold is "ready to close" once at least one line past the header
-    -- exists in the buffer. Until then, the fold is a single line and zc
-    -- would climb to the parent and close it instead.
-    if h.lnum < line_count then
+    -- A following line must belong to this fold. During interleaved
+    -- subagent updates a header can sit immediately before another tool
+    -- or section; zc on that single-line fold closes its parent instead.
+    local next_fl = state.fold_levels[h.lnum + 1]
+    local next_depth = type(next_fl) == 'number' and next_fl
+      or tonumber(tostring(next_fl):match('[><]?(%d+)')) or 0
+    local starts_sibling = type(next_fl) == 'string'
+      and next_fl:sub(1, 1) == '>' and next_depth == h.depth
+    if h.lnum < line_count and next_depth >= h.depth and not starts_sibling then
       table.insert(ready, h)
     else
       table.insert(remaining, h)
@@ -604,6 +634,29 @@ function Output:_append_to_last_line(text, opts)
   if anchor_tail and was_following then
     self:_follow_tail()
   end
+end
+
+--- Replace the text of one existing line in place.
+---
+--- This must not go through nvim_buf_set_lines or nvim_buf_set_text. Both
+--- adjust marks for the replaced range as if the line had been deleted and
+--- re-inserted (mark_adjust with MAXLNUM), and foldMarkAdjust then shortens
+--- every fold that starts at that line by one. The incremental fold update
+--- that follows only re-evaluates the changed line and the one above it, so
+--- the line dropped from the fold's end is never re-added. Tool headers are
+--- fold headers rewritten every second by the elapsed timer, so their fold
+--- lost one line per tick until content spilled out below the closed fold and
+--- the view jumped. setbufline() uses ml_replace() with no mark adjustment and
+--- leaves the fold tree intact. Replacing the *last* line of a fold (as
+--- _append_to_last_line does) is harmless: the update range covers the fold
+--- end and re-extends it in the same call.
+---@param lnum integer 1-indexed
+---@param text string
+function Output:_set_line(lnum, text)
+  local bufnr = self.bufnr
+  vim.bo[bufnr].modifiable = true
+  vim.fn.setbufline(bufnr, lnum, text)
+  vim.bo[bufnr].modifiable = false
 end
 
 --- Return the screen-row height of the output buffer's last line. Unlike a
@@ -713,7 +766,12 @@ function Output:_is_following_tail()
   end
   local cursor_row = vim.api.nvim_win_get_cursor(self.winid)[1]
   local line_count = vim.api.nvim_buf_line_count(self.bufnr)
-  return cursor_row >= line_count
+  if cursor_row >= line_count then return true end
+  -- Redraw moves a cursor inside a closed tail fold to its header. It is
+  -- still on the final visible row, even though its buffer line is earlier.
+  return vim.api.nvim_win_call(self.winid, function()
+    return vim.fn.foldclosedend(cursor_row) == line_count
+  end)
 end
 
 --- Public: force-activate tail mode by moving the cursor to the last
@@ -892,6 +950,7 @@ function Output:on_content_block_start(block)
       tool_name = block.name,
       header_lnum = header_lnum,
       input_rendered = false,
+      depth = 2,
     }
   end
 end
@@ -962,6 +1021,17 @@ function Output:on_content_block_stop(block, opts)
           self:_render_tool_result_for(meta, pending.content, pending.is_error)
         end
       end
+      -- Same race for subagent activity: the subagent may start emitting
+      -- before the parent Agent block's content_block_stop lands.
+      if state.pending_subagent then
+        local queued = state.pending_subagent[block.id or '']
+        if queued then
+          state.pending_subagent[block.id or ''] = nil
+          for _, item in ipairs(queued) do
+            self[item.method](self, unpack(item.args))
+          end
+        end
+      end
     end
   end
   self.streaming_block_type = nil
@@ -979,18 +1049,15 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary)
   local bufnr = self.bufnr
   if lnum > vim.api.nvim_buf_line_count(bufnr) then return end
   self:_with_tail_anchor(function()
-    vim.bo[bufnr].modifiable = true
     local icon = require('cc.icons').for_tool(tool_name)
     local new_text = '  ' .. icon .. ' ' .. display_tool_name(tool_name) .. ':'
     if summary and summary ~= '' and not require('cc.output.tool_body').SUMMARY_FOLD_ONLY[tool_name] then
       new_text = new_text .. ' ' .. summary
     end
-    vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_text })
-    vim.bo[bufnr].modifiable = false
+    self:_set_line(lnum, new_text)
   end)
-  -- nvim_buf_set_lines drifts inline virt_text extmarks within the deleted
-  -- range down to the line below; refresh synchronously so the caret stays
-  -- visually anchored to the header.
+  -- Replacing the line moves the inline caret extmark; refresh synchronously
+  -- so the caret stays visually anchored to the header.
   M.refresh_carets(bufnr)
 end
 
@@ -1000,9 +1067,11 @@ end
 ---@param tool_name string
 ---@param input table?
 ---@param insert_lnum integer?
+---@param depth integer? fold depth of the owning tool header (default 2)
 ---@return integer? last_lnum 1-indexed last line written, or nil if nothing rendered
-function Output:_render_tool_input(tool_name, input, insert_lnum)
+function Output:_render_tool_input(tool_name, input, insert_lnum, depth)
   if not input then return nil end
+  depth = depth or 2
   local config = require('cc.config').options
   local body_lines, snippets
   if type(config.tool_input_format) == 'function' then
@@ -1025,12 +1094,16 @@ function Output:_render_tool_input(tool_name, input, insert_lnum)
   local lines = {}
   local levels = {}
   -- Diff renderers (Edit/MultiEdit/Write) already emit their own indentation
-  -- via the cc.diff module; other bodies get a 4-space indent.
+  -- via the cc.diff module; other bodies get a 4-space indent. Tools nested
+  -- in a subagent Activity section sit two fold depths deeper, so both
+  -- forms shift right by a further 4 columns.
   local pre_indented = tool_name == 'Edit' or tool_name == 'MultiEdit' or tool_name == 'Write'
-  local extra_indent = pre_indented and 0 or 4
+  local nested_indent = (depth - 2) * 2
+  local extra_indent = (pre_indented and 0 or 4) + nested_indent
+  local pad = string.rep(' ', extra_indent)
   for _, l in ipairs(body_lines) do
-    table.insert(lines, pre_indented and l or ('    ' .. l))
-    table.insert(levels, 2)
+    table.insert(lines, pad .. l)
+    table.insert(levels, depth)
   end
   local first_lnum
   if insert_lnum then
@@ -1142,25 +1215,37 @@ function Output:_render_tool_result_for(meta, content, is_error)
     truncated = true
   end
 
-  local lines = { '    ' .. (is_error and 'Error:' or 'Output:') }
-  local levels = { '>3' }
+  -- Top-level tools (depth 2) render "    Output:" at >3 with content at 3;
+  -- tools nested in a subagent Activity section (depth 4) shift two fold
+  -- depths and four columns deeper.
+  local depth = meta.depth or 2
+  local head_pad = string.rep(' ', depth * 2)
+  local body_pad = string.rep(' ', depth * 2 + 2)
+  local lines = { head_pad .. (is_error and 'Error:' or 'Output:') }
+  local levels = { '>' .. (depth + 1) }
   -- Skip rendering content lines when the result is empty; otherwise
   -- vim.split('', '\n') yields {''} and we'd append a 6-space "blank"
   -- line that creates inconsistent visual spacing between tool blocks.
   if not (#display_lines == 1 and display_lines[1] == '') then
     for _, l in ipairs(display_lines) do
-      table.insert(lines, '      ' .. l)
-      table.insert(levels, 3)
+      table.insert(lines, body_pad .. l)
+      table.insert(levels, depth + 1)
     end
   end
   if truncated then
-    table.insert(lines, string.format('      [... %d more lines]', #all_lines - max_lines))
-    table.insert(levels, 3)
+    table.insert(lines, string.format('%s[... %d more lines]', body_pad, #all_lines - max_lines))
+    table.insert(levels, depth + 1)
   end
 
   local bufnr = self.bufnr
+  local state = M._buf_state[bufnr]
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   local anchor = meta.input_end_lnum or meta.header_lnum or line_count
+  -- An Agent tool's own Output: lands below its subagent Activity section.
+  local own_section = state.subagents[meta.tool_use_id or '']
+  if own_section and own_section.end_lnum > anchor then
+    anchor = own_section.end_lnum
+  end
   local insertion_point = anchor + 1
 
   meta.full_result = text
@@ -1171,6 +1256,245 @@ function Output:_render_tool_result_for(meta, content, is_error)
     meta.result_header_lnum = insertion_point
     self:_insert_lines(insertion_point, lines, levels, true)
   end
+  -- A nested result that lands at the end of its Activity section extends it.
+  local parent_section = meta.parent_id and state.subagents[meta.parent_id]
+  if parent_section then
+    parent_section.end_lnum = math.max(parent_section.end_lnum, insertion_point + #lines - 1)
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Subagent activity: nested rendering of a subagent's own tool calls, results,
+-- text and thinking under the parent Agent tool block. Driven by NDJSON
+-- messages carrying parent_tool_use_id (see router.lua).
+--
+-- Layout (fold depths in brackets):
+--     󰋘 Subagent: <description> 󰔛 42s        [>2] parent tool header
+--     prompt: ...                             [2]  parent input
+--     Activity:                               [>3] section header (closed by default)
+--       󰘳 Bash: Count Lua files 󰔛 0.2s       [>4] nested tool header
+--         find . -name '*.lua' | wc -l        [4]  nested input
+--         Output:                             [>5] nested result
+--           42                                [5]
+--       ∴ Thinking... ...                     [3]  nested thinking
+--       Found 42 source files                 [3]  nested text
+--     Output:                                 [>3] parent result
+-- The folded Activity header shows the most recent item via foldtext, so the
+-- live status is visible while collapsed and disappears when opened.
+-- ---------------------------------------------------------------------------
+
+local SUBAGENT_STATUS_MAX = 80
+
+--- Truncate a one-line status for the folded Activity header.
+---@param s string
+---@return string
+local function clip_status(s)
+  s = vim.trim(s or '')
+  if vim.fn.strchars(s) > SUBAGENT_STATUS_MAX then
+    return vim.fn.strcharpart(s, 0, SUBAGENT_STATUS_MAX - 1) .. '…'
+  end
+  return s
+end
+
+--- Queue a subagent render call until the parent Agent block's input has
+--- rendered. Returns true when queued (caller should return), false when the
+--- parent is ready. Messages for an unknown parent are dropped.
+---@param parent_id string
+---@param method string Output method name to replay
+---@param args table
+---@return boolean queued
+---@return cc.OutputToolBlock? parent
+function Output:_defer_subagent(parent_id, method, args)
+  local state = M._buf_state[self.bufnr]
+  local parent = state and state.tool_blocks[parent_id]
+  if not parent then return true, nil end
+  if parent.input_rendered then return false, parent end
+  state.pending_subagent = state.pending_subagent or {}
+  state.pending_subagent[parent_id] = state.pending_subagent[parent_id] or {}
+  table.insert(state.pending_subagent[parent_id], { method = method, args = args })
+  return true, parent
+end
+
+--- Insert lines at the end of a subagent's Activity section, creating the
+--- section (header + these lines) on first use so it is never an empty
+--- single-line fold. Returns the first inserted content line.
+---@param parent cc.OutputToolBlock
+---@param lines string[]
+---@param levels (string|integer)[]
+---@param is_header boolean whether lines[1] is a fold header
+---@return cc.OutputSubagent section
+---@return integer first_lnum first line of `lines` in the buffer
+function Output:_subagent_insert(parent, lines, levels, is_header)
+  local bufnr = self:ensure_buffer()
+  local state = M._buf_state[bufnr]
+  local sub = state.subagents[parent.tool_use_id]
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  if not sub then
+    local header_at = (parent.input_end_lnum or parent.header_lnum) + 1
+    local all_lines = { '    Activity:' }
+    local all_levels = { '>3' }
+    vim.list_extend(all_lines, lines)
+    vim.list_extend(all_levels, levels)
+    if header_at > line_count then
+      header_at = self:_append(all_lines, all_levels, true)
+    else
+      self:_insert_lines(header_at, all_lines, all_levels, true)
+    end
+    -- Register carets for nested headers inside the freshly inserted block.
+    if is_header then
+      state.fold_headers[header_at + 1] = true
+    end
+    sub = {
+      parent_id = parent.tool_use_id,
+      header_lnum = header_at,
+      end_lnum = header_at + #all_lines - 1,
+      tool_count = 0,
+      last = nil,
+    }
+    state.subagents[parent.tool_use_id] = sub
+    return sub, header_at + 1
+  end
+  local at = sub.end_lnum + 1
+  if at > line_count then
+    at = self:_append(lines, levels, is_header)
+  else
+    self:_insert_lines(at, lines, levels, is_header)
+  end
+  sub.end_lnum = math.max(sub.end_lnum, at + #lines - 1)
+  return sub, at
+end
+
+--- Render a tool call made by a subagent as a nested tool block.
+---@param parent_id string parent Agent tool_use_id
+---@param block table tool_use content block { id, name, input }
+function Output:subagent_tool_use(parent_id, block)
+  if type(block) ~= 'table' or not block.id then return end
+  local deferred, parent = self:_defer_subagent(parent_id, 'subagent_tool_use', { parent_id, block })
+  if deferred or not parent then return end
+  self:flush_pending_delta()
+  local state = M._buf_state[self.bufnr]
+  if state.tool_blocks[block.id] then return end -- duplicate delivery
+
+  local name = block.name or '?'
+  local icon = require('cc.icons').for_tool(name)
+  local tool_body = require('cc.output.tool_body')
+  local header = '      ' .. icon .. ' ' .. display_tool_name(name) .. ':'
+  local summary = tool_body.summarize_tool_input(name, block.input)
+  if summary and summary ~= '' and not tool_body.SUMMARY_FOLD_ONLY[name] then
+    header = header .. ' ' .. summary
+  end
+  local sub, header_lnum = self:_subagent_insert(parent, { header }, { '>4' }, true)
+  local meta = {
+    bufnr = self.bufnr,
+    tool_use_id = block.id,
+    tool_name = name,
+    input = block.input,
+    header_lnum = header_lnum,
+    input_rendered = true,
+    input_end_lnum = header_lnum,
+    depth = 4,
+    parent_id = parent_id,
+  }
+  state.tool_blocks[block.id] = meta
+  local last_lnum = self:_render_tool_input(name, block.input, header_lnum + 1, 4)
+  if last_lnum then
+    meta.input_end_lnum = last_lnum
+    sub.end_lnum = math.max(sub.end_lnum, last_lnum)
+  end
+  sub.tool_count = sub.tool_count + 1
+  sub.last = { kind = 'tool', tool_use_id = block.id }
+  self:start_tool_timer(block.id)
+end
+
+--- Render the result of a subagent's nested tool call.
+---@param parent_id string
+---@param tool_use_id string
+---@param content string|table
+---@param is_error boolean?
+function Output:subagent_tool_result(parent_id, tool_use_id, content, is_error)
+  local deferred, parent = self:_defer_subagent(parent_id, 'subagent_tool_result',
+    { parent_id, tool_use_id, content, is_error })
+  if deferred or not parent then return end
+  self:flush_pending_delta()
+  local state = M._buf_state[self.bufnr]
+  local meta = state.tool_blocks[tool_use_id]
+  if not meta or meta.parent_id ~= parent_id then return end
+  self:_render_tool_result_for(meta, content, is_error)
+end
+
+--- Render a completed text or thinking block from a subagent.
+---@param parent_id string
+---@param text string
+---@param kind 'text'|'thinking'
+function Output:_subagent_prose(parent_id, text, kind)
+  if type(text) ~= 'string' or vim.trim(text) == '' then return end
+  local deferred, parent = self:_defer_subagent(parent_id, '_subagent_prose', { parent_id, text, kind })
+  if deferred or not parent then return end
+  self:flush_pending_delta()
+  local raw = vim.split(text, '\n', { plain = true })
+  -- Trim leading/trailing blank lines so the section stays compact.
+  while #raw > 0 and vim.trim(raw[1]) == '' do table.remove(raw, 1) end
+  while #raw > 0 and vim.trim(raw[#raw]) == '' do table.remove(raw) end
+  if #raw == 0 then return end
+  local lines, levels = {}, {}
+  if kind == 'thinking' then
+    table.insert(lines, '      ∴ Thinking... ' .. raw[1])
+    for i = 2, #raw do table.insert(lines, '      ' .. raw[i]) end
+  else
+    for _, l in ipairs(raw) do table.insert(lines, '      ' .. l) end
+  end
+  for _ in ipairs(lines) do table.insert(levels, 3) end
+  local sub = self:_subagent_insert(parent, lines, levels, false)
+  local first_text = nil
+  for _, l in ipairs(raw) do
+    if vim.trim(l) ~= '' then first_text = l; break end
+  end
+  sub.last = { kind = kind, text = clip_status(first_text or '') }
+end
+
+--- Render a subagent's text block.
+---@param parent_id string
+---@param text string
+function Output:subagent_text(parent_id, text)
+  self:_subagent_prose(parent_id, text, 'text')
+end
+
+--- Render a subagent's thinking block (honours config.show_thinking).
+---@param parent_id string
+---@param text string
+function Output:subagent_thinking(parent_id, text)
+  if not require('cc.config').options.show_thinking then return end
+  self:_subagent_prose(parent_id, text, 'thinking')
+end
+
+--- Status shown in a folded "Activity:" header: the most recent nested
+--- item. For a tool that is the current header line text (so a running
+--- tool's live timer shows through); for prose the first line of text.
+---@param bufnr integer
+---@param header_lnum integer line of the Activity: header
+---@return string? status
+function M.subagent_status(bufnr, header_lnum)
+  local state = M._buf_state[bufnr]
+  if not state or not state.subagents then return nil end
+  for _, sub in pairs(state.subagents) do
+    if sub.header_lnum == header_lnum then
+      local last = sub.last
+      if not last then return nil end
+      if last.kind == 'tool' then
+        local meta = state.tool_blocks[last.tool_use_id or '']
+        if meta and meta.header_lnum
+            and meta.header_lnum <= vim.api.nvim_buf_line_count(bufnr) then
+          local line = vim.api.nvim_buf_get_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false)[1]
+          return clip_status(line or '')
+        end
+        return nil
+      elseif last.kind == 'thinking' then
+        return '∴ Thinking...'
+      end
+      return last.text
+    end
+  end
+  return nil
 end
 
 local turn_cost_format_errored = false
@@ -1258,12 +1582,8 @@ function Output:render_permission_outcome(behavior, tool_name)
   local verb = behavior == 'allow' and 'Allowed' or 'Denied'
   local bufnr = self:ensure_buffer()
   self:_with_tail_anchor(function()
-    vim.bo[bufnr].modifiable = true
     local line_count = vim.api.nvim_buf_line_count(bufnr)
-    local last_row = line_count - 1
-    vim.api.nvim_buf_set_lines(bufnr, last_row, last_row + 1, false,
-      { '  ' .. icon .. ' ' .. verb .. ': ' .. tool_name })
-    vim.bo[bufnr].modifiable = false
+    self:_set_line(line_count, '  ' .. icon .. ' ' .. verb .. ': ' .. tool_name)
   end)
 end
 
@@ -1328,15 +1648,6 @@ function Output:render_hook(hook_name, phase, elapsed_s)
     suffix = string.format(' (%.1fs)', elapsed_s)
   end
   local text = string.format('    %s Hook: %s [%s]%s', icon, hook_name, phase, suffix)
-  self:_append({ text }, { 2 }, false)
-end
-
---- Render a subagent task notice (nested under parent tool).
----@param phase string 'started' | 'progress' | 'done'
----@param description string
-function Output:render_task(phase, description)
-  self:flush_pending_delta()
-  local text = string.format('    ⤷ Task %s: %s', phase, description or '')
   self:_append({ text }, { 2 }, false)
 end
 

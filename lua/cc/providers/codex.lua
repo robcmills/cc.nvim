@@ -65,7 +65,19 @@ local EFFORT_MAP = {
 ---@field alive boolean
 ---@field pending table<integer, fun(result: table?, err: table?)> request id -> callback
 ---@field items table<string, table> item id -> live render state
+---@field _subagent_threads table<string, cc.CodexSubagent> spawned thread id -> parent Agent block
+---@field _orphan_thread_events table<string, table[]> notifications from threads not yet mapped to a parent
 local Codex = {}
+
+--- A spawned subagent thread rendered as an Activity section under the
+--- parent's Agent block (the `subAgentActivity` item that announced it).
+---@class cc.CodexSubagent
+---@field parent_id string subAgentActivity item id; doubles as the Agent tool block id
+---@field agent_path string e.g. "/root/repo_scout"
+---@field items table<string, boolean> nested item ids started but not completed
+---@field last_text string? most recent agentMessage text
+---@field final_text string? agentMessage text with phase final_answer
+---@field completed boolean parent Output: rendered
 Codex.__index = Codex
 
 --- Build a Codex provider instance wired to one cc.Instance.
@@ -96,6 +108,8 @@ function M.attach(ctx)
     items = {},
     _open_prose = nil, -- { item_id, kind = 'text'|'thinking', streamed = n }
     _queued_sends = {},
+    _subagent_threads = {},
+    _orphan_thread_events = {},
   }, Codex)
   return self
 end
@@ -204,6 +218,11 @@ function Codex:_start_protocol()
       local params = { cwd = self.opts.cwd or vim.fn.getcwd() }
       if self.opts.approval_policy then params.approvalPolicy = self.opts.approval_policy end
       if self.opts.sandbox then params.sandbox = self.opts.sandbox end
+      -- The thread/start response is what seeds the session statusline. Pass
+      -- an explicit :CcNew model here, rather than waiting until turn/start,
+      -- so Codex creates the thread with the requested model instead of its
+      -- account default.
+      if self.opts.model then params.model = self.opts.model end
       self:request('thread/start', params, function(result, serr)
         if serr then
           self:_notify_error('thread/start failed', serr)
@@ -571,6 +590,14 @@ function Codex:_on_notification(method, params)
   -- Notifications cover streamed deltas, tool progress, approvals, and state
   -- changes, so they are the authoritative activity signal for this provider.
   self.session:touch()
+  -- app-server also streams every spawned subagent thread to us, tagged
+  -- with that thread's id. Those never touch our turn state; they render
+  -- nested under the parent's Agent block.
+  local thread_id = params.threadId
+  if type(thread_id) == 'string' and self.thread_id and thread_id ~= self.thread_id then
+    self:_on_foreign_thread_notification(thread_id, method, params)
+    return
+  end
   if method == 'turn/started' then
     self:_on_turn_started(params)
   elseif method == 'turn/completed' then
@@ -725,7 +752,9 @@ local function tool_for_item(item)
     if type(item.action) == 'table' then input.action = item.action end
     return 'WebSearch', input
   elseif t == 'collabAgentToolCall' then
-    return 'Agent', { prompt = item.prompt, model = item.model }
+    -- Collaboration ops on already-spawned agents (wait, send_input, close…).
+    -- The spawn itself surfaces as a subAgentActivity item, handled apart.
+    return 'Agent', { description = tostring(item.tool or 'collab'), prompt = item.prompt, model = item.model }
   elseif t == 'imageGeneration' then
     return 'ImageGeneration', { prompt = item.revisedPrompt }
   end
@@ -832,7 +861,7 @@ function Codex:_on_item_started(item)
   elseif t == 'contextCompaction' then
     self.output:render_notice('Compacting context...')
   elseif t == 'subAgentActivity' then
-    self.output:render_task('started', tostring(item.agentPath or item.kind or ''))
+    self:_on_subagent_activity(item, false)
   elseif t == 'enteredReviewMode' or t == 'exitedReviewMode' or t == 'sleep'
       or t == 'imageView' or t == 'hookPrompt' then
     return -- no useful progressive rendering
@@ -871,7 +900,7 @@ function Codex:_on_item_completed(item)
   elseif t == 'contextCompaction' then
     self.output:render_notice('Context Compacted')
   elseif t == 'subAgentActivity' then
-    self.output:render_task('done', tostring(item.agentPath or item.kind or ''))
+    self:_on_subagent_activity(item, false)
   elseif t == 'enteredReviewMode' or t == 'exitedReviewMode' or t == 'sleep'
       or t == 'imageView' or t == 'hookPrompt' then
     return
@@ -1232,7 +1261,7 @@ function Codex:_replay_item(item)
   elseif t == 'contextCompaction' then
     self.output:render_notice('Context Compacted')
   elseif t == 'subAgentActivity' then
-    self.output:render_task('done', tostring(item.agentPath or item.kind or ''))
+    self:_on_subagent_activity(item, true)
   elseif t == 'enteredReviewMode' or t == 'exitedReviewMode' or t == 'sleep'
       or t == 'imageView' or t == 'hookPrompt' then
     return
@@ -1246,6 +1275,161 @@ function Codex:_replay_item(item)
       self.output:render_tool_result(item.id, text, is_error)
     end
     self.items[item.id] = nil
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Subagent threads → nested Activity under the parent's Agent block
+--
+-- Spawning an agent produces a `subAgentActivity` item (kind=started) in the
+-- parent thread carrying the child's thread id and agent path. The child
+-- thread then streams its own turn/*, item/* and delta notifications, all
+-- tagged with its thread id. We render the subAgentActivity item as an Agent
+-- tool block and feed the child's completed items into the shared
+-- Output:subagent_* API, exactly like Claude's parent_tool_use_id messages.
+-- ---------------------------------------------------------------------------
+
+local ORPHAN_EVENT_CAP = 200
+
+--- Handle a subAgentActivity item from the parent thread.
+---@param item table
+---@param historical boolean replaying thread history (no timers, no Activity)
+function Codex:_on_subagent_activity(item, historical)
+  local thread_id = item.agentThreadId
+  local sub = type(thread_id) == 'string' and self._subagent_threads[thread_id] or nil
+  if item.kind == 'started' then
+    if sub or not item.id then return end
+    local path = tostring(item.agentPath or thread_id or '?')
+    self:_close_prose()
+    -- agentPath is an identifier, not a task description. Display the leaf
+    -- task name as words; keep the canonical path for thread bookkeeping.
+    local title = path:match('([^/]+)/?$') or path
+    title = title:gsub('[_%-]+', ' ')
+    title = title:gsub('^%l', string.upper)
+    self:_start_tool(item.id, 'Agent', { description = title }, historical)
+    if type(thread_id) ~= 'string' then return end
+    sub = {
+      parent_id = item.id,
+      agent_path = path,
+      items = {},
+      completed = false,
+    }
+    self._subagent_threads[thread_id] = sub
+    local queued = self._orphan_thread_events[thread_id]
+    self._orphan_thread_events[thread_id] = nil
+    for _, ev in ipairs(queued or {}) do
+      self:_on_subagent_notification(sub, ev.method, ev.params)
+    end
+  elseif item.kind == 'interrupted' and sub then
+    self:_finish_subagent(sub, 'interrupted', true)
+  end
+  -- kind=interacted (send_input etc.) needs no rendering of its own.
+end
+
+--- Render the parent Agent block's Output: once, from the child's final text.
+---@param sub cc.CodexSubagent
+---@param text string
+---@param is_error boolean
+function Codex:_finish_subagent(sub, text, is_error)
+  if sub.completed then return end
+  sub.completed = true
+  self.output:render_tool_result(sub.parent_id, text, is_error)
+  self.session:record_tool_result(sub.parent_id, text, is_error)
+end
+
+--- A notification for a thread other than ours: a spawned subagent's.
+---@param thread_id string
+---@param method string
+---@param params table
+function Codex:_on_foreign_thread_notification(thread_id, method, params)
+  local sub = self._subagent_threads[thread_id]
+  if sub then
+    self:_on_subagent_notification(sub, method, params)
+    return
+  end
+  -- The child's first notifications can precede the parent's
+  -- subAgentActivity item; hold a bounded backlog until it maps. Threads
+  -- that never map (review/compaction helpers) are simply dropped.
+  if method ~= 'item/started' and method ~= 'item/completed' and method ~= 'turn/completed' then
+    return
+  end
+  local queue = self._orphan_thread_events[thread_id] or {}
+  if #queue < ORPHAN_EVENT_CAP then
+    table.insert(queue, { method = method, params = params })
+  end
+  self._orphan_thread_events[thread_id] = queue
+end
+
+---@param sub cc.CodexSubagent
+---@param method string
+---@param params table
+function Codex:_on_subagent_notification(sub, method, params)
+  if method == 'item/started' then
+    self:_on_subagent_item(sub, params.item or {}, false)
+  elseif method == 'item/completed' then
+    self:_on_subagent_item(sub, params.item or {}, true)
+  elseif method == 'turn/completed' then
+    local turn = params.turn or {}
+    if turn.status == 'failed' then
+      local message = turn.error and turn.error.message or 'turn failed'
+      self:_finish_subagent(sub, tostring(message), true)
+    elseif turn.status == 'interrupted' then
+      self:_finish_subagent(sub, 'interrupted', true)
+    else
+      self:_finish_subagent(sub, sub.final_text or sub.last_text or 'completed', false)
+    end
+  end
+  -- Deltas, turn/started, thread/status and tokenUsage are ignored: the
+  -- completed items carry everything rendered, and the child's usage is
+  -- not this session's.
+end
+
+--- Render one child-thread item into the parent's Activity section.
+---@param sub cc.CodexSubagent
+---@param item table
+---@param completed boolean
+function Codex:_on_subagent_item(sub, item, completed)
+  local t = item.type
+  local parent = sub.parent_id
+  if t == 'agentMessage' or t == 'plan' then
+    if completed and type(item.text) == 'string' and item.text ~= '' then
+      self.output:subagent_text(parent, item.text)
+      sub.last_text = item.text
+      if item.phase == 'final_answer' then sub.final_text = item.text end
+    end
+  elseif t == 'reasoning' then
+    if completed then
+      local parts = {}
+      for _, s in ipairs(item.summary or {}) do
+        if type(s) == 'string' and s ~= '' then table.insert(parts, s) end
+      end
+      if #parts > 0 then
+        self.output:subagent_thinking(parent, table.concat(parts, '\n\n'))
+      end
+    end
+  elseif t == 'userMessage' or t == 'subAgentActivity' or t == 'contextCompaction'
+      or t == 'enteredReviewMode' or t == 'exitedReviewMode' or t == 'sleep'
+      or t == 'imageView' or t == 'hookPrompt' then
+    return
+  else
+    local name, input = tool_for_item(item)
+    if not name or not item.id then return end
+    -- Nested headers keep their command summary: it is what the folded
+    -- Activity header shows while the child is working.
+    if type(input) == 'table' then input._display_summary = nil end
+    if not sub.items[item.id] then
+      self.output:subagent_tool_use(parent, { id = item.id, name = name, input = input })
+      sub.items[item.id] = true
+    end
+    if completed then
+      local text, is_error = tool_result_for_item(item)
+      if text ~= '' or is_error then
+        self.output:subagent_tool_result(parent, item.id, text, is_error)
+      else
+        self.output:stop_tool_timer(item.id)
+      end
+      sub.items[item.id] = nil
+    end
   end
 end
 

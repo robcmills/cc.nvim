@@ -558,14 +558,24 @@ end
 -- ---------------------------------------------------------------------------
 T['subagent_tasks'] = MiniTest.new_set()
 
-T['subagent_tasks']['renders task started'] = function()
+T['subagent_tasks']['renders nested Activity section instead of task notices'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
-  assert_any_line_matches(_G.child, 'Task started')
+  assert_any_line_matches(_G.child, '^    Activity:$')
+  assert_no_line_matches(_G.child, 'Task started')
+  assert_no_line_matches(_G.child, 'Task done')
 end
 
-T['subagent_tasks']['renders task done with summary'] = function()
+T['subagent_tasks']['renders parent result after the activity section'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
-  assert_any_line_matches(_G.child, 'Task done')
+  local lines = helpers.get_buffer_lines(_G.child)
+  local activity, output
+  for i, l in ipairs(lines) do
+    if l:match('^    Activity:$') then activity = i end
+    if l:match('^    Output:$') then output = i end
+  end
+  eq(activity ~= nil, true)
+  eq(output ~= nil, true)
+  eq(output > activity, true)
 end
 
 T['subagent_tasks']['renders Agent tool'] = function()

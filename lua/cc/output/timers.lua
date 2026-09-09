@@ -117,14 +117,12 @@ function M.update_elapsed(self, tool_use_id, elapsed_seconds)
     suffix = suffix .. string.format(' (timeout %ds)', math.floor(input.timeout / 1000))
   end
   self:_with_tail_anchor(function()
-    vim.bo[bufnr].modifiable = true
-    vim.api.nvim_buf_set_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false,
-      { base .. suffix })
-    vim.bo[bufnr].modifiable = false
+    -- In-place rewrite of a fold header: see Output:_set_line for why this
+    -- must not use nvim_buf_set_lines.
+    self:_set_line(meta.header_lnum, base .. suffix)
   end)
-  -- nvim_buf_set_lines drifts inline virt_text extmarks within the deleted
-  -- range down to the line below; refresh synchronously so the caret stays
-  -- visually anchored to the header.
+  -- Replacing the line moves the inline caret extmark; refresh synchronously
+  -- so the caret stays visually anchored to the header.
   output.refresh_carets(bufnr)
 end
 
