@@ -31,6 +31,7 @@ M.VERSION = '0.10.0'
 ---@field pending_session_name string? rename requested before transcript exists; flushed by `_flush_pending_rename`
 ---@field cwd string working directory captured when the instance was created
 ---@field awaiting_input boolean? true while provider UI is waiting for a user response
+---@field permission_winid integer? floating window of the open permission prompt, if any; set/cleared by cc.permission_prompt
 ---@field remote_control_active boolean?
 ---@field saved_output_view table? output winsaveview snapshot from the last close, restored on reopen
 ---@field saved_output_following_tail boolean? whether the output cursor was on the tail at the last close; reopen re-pins to the new tail instead of restoring saved_output_view
@@ -1558,6 +1559,13 @@ function M.focus_instance(output_bufnr)
   if not inst or not inst.output or inst.output.bufnr ~= output_bufnr
       or not vim.api.nvim_buf_is_valid(output_bufnr) then
     return false
+  end
+
+  -- A pending permission prompt resolves as deny on WinLeave, so focusing
+  -- the output window would answer it. Land on the float instead.
+  if inst.permission_winid and vim.api.nvim_win_is_valid(inst.permission_winid) then
+    vim.api.nvim_set_current_win(inst.permission_winid)
+    return true
   end
 
   if inst.output_winid and vim.api.nvim_win_is_valid(inst.output_winid)

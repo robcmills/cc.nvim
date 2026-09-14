@@ -231,6 +231,53 @@ T['focus_instance']['focuses the exact registered output buffer'] = function()
   eq(_G.child.lua_get('_G._fractional'), false)
 end
 
+T['focus_instance']['lands on a pending permission prompt instead of denying it'] = function()
+  _G.child.lua([[
+    local cc = require('cc')
+    require('cc.config').setup({})
+    local output = vim.api.nvim_create_buf(false, true)
+    local prompt = vim.api.nvim_create_buf(false, true)
+    vim.cmd('enew')
+    local output_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_buf(output_win, output)
+    local inst = {
+      output = { bufnr = output }, prompt = { bufnr = prompt },
+      output_winid = output_win,
+    }
+    cc._register_test_instance(output, inst)
+
+    _G._perm_choice = nil
+    local float = require('cc.permission_prompt').ask(
+      'Bash', { command = 'make test' },
+      function(behavior, variant)
+        _G._perm_choice = { behavior = behavior, variant = variant }
+      end,
+      { provider = 'claude', instance = inst })
+    _G._perm_winid = float.winid
+    _G._perm_recorded = inst.permission_winid
+
+    -- The float has focus. An external switcher calling focus_instance
+    -- over --remote-expr must not move focus to the output window.
+    _G._focus_ok = cc.focus_instance(output)
+    _G._current_win = vim.api.nvim_get_current_win()
+    vim.wait(50, function() return false end)
+    _G._choice_after_focus = _G._perm_choice
+    _G._float_valid = vim.api.nvim_win_is_valid(float.winid)
+
+    -- Answering still works and clears the recorded float.
+    vim.api.nvim_feedkeys('a', 'x', false)
+    vim.wait(100, function() return _G._perm_choice ~= nil end)
+    _G._cleared = inst.permission_winid
+  ]])
+  eq(_G.child.lua_get('_G._perm_recorded'), _G.child.lua_get('_G._perm_winid'))
+  eq(_G.child.lua_get('_G._focus_ok'), true)
+  eq(_G.child.lua_get('_G._current_win'), _G.child.lua_get('_G._perm_winid'))
+  eq(_G.child.lua_get('_G._choice_after_focus'), vim.NIL)
+  eq(_G.child.lua_get('_G._float_valid'), true)
+  eq(_G.child.lua_get('_G._perm_choice'), { behavior = 'allow', variant = 'allow_once' })
+  eq(_G.child.lua_get('_G._cleared'), vim.NIL)
+end
+
 T['focus_instance']['reopens a hidden fixture through companion-window restoration'] = function()
   _G.child.lua([[
     local cc = require('cc')

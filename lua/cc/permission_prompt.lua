@@ -187,10 +187,18 @@ function M.ask(tool_name, input, on_choice, context)
   vim.wo[winid].relativenumber = false
   vim.wo[winid].signcolumn = 'no'
 
+  -- Expose the float so `cc.focus_instance` can land on it instead of the
+  -- output window; focusing the output would fire WinLeave and deny.
+  local instance = context and context.instance
+  if instance then instance.permission_winid = winid end
+
   local resolved = false
   local function resolve(behavior, variant)
     if resolved then return end
     resolved = true
+    if instance and instance.permission_winid == winid then
+      instance.permission_winid = nil
+    end
     if winid and vim.api.nvim_win_is_valid(winid) then
       pcall(vim.api.nvim_win_close, winid, true)
     end
