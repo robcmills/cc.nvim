@@ -24,8 +24,8 @@ M.capabilities = {
 }
 
 --- Effective Claude options from Config.options.providers.claude. `model`
---- and `auto_rename_model` stay nil unless configured; the CLI then picks
---- its own defaults.
+--- stays nil unless configured; the CLI then picks its own default.
+--- `auto_rename_model` defaults to `haiku` (fast, cheap one-shot titles).
 ---@return { auto_rename_model: string?, cmd: string, effort: string, extra_args: string[], forward_subagent_text: boolean, model: string?, permission_mode: string? }
 function M.options()
   local p = (Config.options.providers or {}).claude or {}

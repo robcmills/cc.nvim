@@ -257,7 +257,7 @@ require('cc').setup({
 
   providers = {
     claude = {
-      auto_rename_model = nil, -- one-shot session-title model; nil → CLI default
+      auto_rename_model = 'haiku', -- one-shot session-title model; nil → CLI default
       -- Bare names also resolve Bash login aliases (for example,
       -- alias cc='claude --chrome').
       cmd = 'claude',
@@ -669,8 +669,8 @@ between the two. The new title surfaces in:
 ### Auto-rename
 
 The first prompt of a brand-new session is fed to a one-shot provider
-invocation (`claude -p`, using Haiku by default, or ephemeral `codex exec`)
-that returns a short descriptive title.
+invocation (`claude -p --model haiku` or ephemeral `codex exec`) that
+returns a short descriptive title.
 The result is applied through the same `/rename` code path, so the
 generated name is persisted as a `custom-title` record and round-trips
 with the upstream TUI. Skipped on resumed sessions (they already have a
@@ -684,9 +684,9 @@ via `auto_rename` — flip `enabled = false` to turn it off, or rewrite
 `prompt` to ask for CamelCase / sentence case / a different style. The
 `validate` hook gives you final say over the model's output before it
 lands. Configure the naming model with
-`providers.<provider>.auto_rename_model`; unset, the CLI's default model
-does the naming. Setting a small model (for example `haiku`) makes
-renames faster and cheaper.
+`providers.<provider>.auto_rename_model`. Claude defaults to `haiku`;
+Codex defaults to nil, so the CLI's default model does the naming. A small
+model keeps renames fast and cheap.
 
 ## Codex CLI support
 

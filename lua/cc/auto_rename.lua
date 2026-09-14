@@ -30,9 +30,10 @@ function M.render_prompt(template, prompt_text)
   return (template:gsub('%${prompt}', function() return prompt_text or '' end))
 end
 
---- Default sanitizer for the model's stdout: trim, strip surrounding quotes,
---- drop everything after the first newline (some models append explanatory
---- text on subsequent lines), cap at 64 chars. Returns nil for empty input.
+--- Default sanitizer for the model's stdout: trim, strip surrounding quotes
+--- or backticks (Haiku 4.5 wraps the name in markdown code spans), drop
+--- everything after the first newline (some models append explanatory text
+--- on subsequent lines), cap at 64 chars. Returns nil for empty input.
 ---@param raw string?
 ---@return string?
 function M.default_validate(raw)
@@ -40,8 +41,7 @@ function M.default_validate(raw)
   local s = raw:match('^%s*(.-)%s*$') or ''
   s = s:match('^[^\r\n]*') or s
   s = s:match('^%s*(.-)%s*$') or s
-  if s:sub(1, 1) == '"' or s:sub(1, 1) == "'" then s = s:sub(2) end
-  if s:sub(-1) == '"' or s:sub(-1) == "'" then s = s:sub(1, -2) end
+  s = s:match('^[`"\']*(.-)[`"\']*$') or s
   s = s:match('^%s*(.-)%s*$') or s
   if s == '' then return nil end
   if #s > 64 then s = s:sub(1, 64) end

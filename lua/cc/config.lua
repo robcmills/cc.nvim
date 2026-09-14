@@ -106,7 +106,7 @@ local defaults = {
 
   providers = {
     claude = {
-      auto_rename_model = nil, -- one-shot session-title model; nil → the CLI's default
+      auto_rename_model = 'haiku', -- one-shot session-title model; nil → the CLI's default
       cmd = 'claude',
       effort = 'medium', -- 'low'|'medium'|'high'|'xhigh'|'max'|'auto'
       extra_args = {},

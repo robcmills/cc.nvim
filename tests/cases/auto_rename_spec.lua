@@ -67,6 +67,18 @@ T['default_validate']['strips surrounding single quotes'] = function()
   eq(validate(_G.child, "'fix-login-bug'"), 'fix-login-bug')
 end
 
+T['default_validate']['strips surrounding backticks'] = function()
+  eq(validate(_G.child, '`fix-login-bug`'), 'fix-login-bug')
+end
+
+T['default_validate']['strips nested quote and backtick wrappers'] = function()
+  eq(validate(_G.child, '`"fix-login-bug"`\n'), 'fix-login-bug')
+end
+
+T['default_validate']['keeps interior quotes and backticks'] = function()
+  eq(validate(_G.child, "fix-`login`-bug"), 'fix-`login`-bug')
+end
+
 T['default_validate']['caps length at 64'] = function()
   local long = string.rep('a', 100)
   local out = validate(_G.child, long)

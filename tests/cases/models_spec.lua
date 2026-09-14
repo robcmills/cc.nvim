@@ -51,12 +51,13 @@ T['cache']['cached() reads entries from models_path'] = function()
   eq(#codex, 6)
 end
 
-T['cache']['missing cache yields no candidates'] = function()
+T['cache']['missing cache yields only configured candidates'] = function()
   _G.child.lua([[require('cc.config').setup({
     models_path = '/nonexistent/cc-models-test.json',
   })]])
   eq(_G.child.lua_get([[require('cc.models').cached('claude')]]), {})
-  eq(_G.child.lua_get([[require('cc.model').complete('')]]), {})
+  -- The default Claude auto_rename_model is the only configured model.
+  eq(_G.child.lua_get([[require('cc.model').complete('')]]), { 'haiku' })
 end
 
 --- Run cc.models.update in the child against a fake CLI and wait for it.

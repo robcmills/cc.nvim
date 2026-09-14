@@ -195,6 +195,16 @@ T['options']['claude options resolve only from providers.claude'] = function()
   eq(opts.extra_args, { '--foo' })
 end
 
+T['options']['claude auto-rename defaults to haiku'] = function()
+  _G.child.lua([[require('cc.config').setup({})]])
+  local opts = _G.child.lua_get([[(function()
+    local o = require('cc.providers.claude').options()
+    return { auto_rename_model = o.auto_rename_model, model = o.model or 'nil' }
+  end)()]])
+  eq(opts.auto_rename_model, 'haiku')
+  eq(opts.model, 'nil')
+end
+
 T['options']['codex model and auto-rename default to the CLI'] = function()
   _G.child.lua([[require('cc.config').setup({ provider = 'codex' })]])
   local opts = _G.child.lua_get([[(function()
