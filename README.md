@@ -233,6 +233,8 @@ require('cc').setup({
 
   layout = 'horizontal',
 
+  limits_log = nil,
+
   line_numbers = {
     output = false,
     prompt = false,
@@ -345,6 +347,12 @@ require('cc').setup({
   },
 })
 ```
+
+Set `limits_log = '~/cc-limits.jsonl'` to append rate-limit readings from both
+providers, with one JSON row per window containing `ts`, `provider`, `window`,
+`used_pct`, `resets_at`, `status`, and `plan` when available.
+Logging defaults to off (`nil`, `false`, or `''`); unchanged usage, reset time,
+and status are deduplicated per provider and window.
 
 Invalid streaming values are ignored with a warning and fall back to the
 defaults shown above. Delta rendering and Markdown highlighting are throttled

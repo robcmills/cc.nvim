@@ -11,6 +11,7 @@ local M = {}
 ---@field input table?
 
 ---@class cc.Config
+---@field limits_log string|false|nil
 local defaults = {
   -- Auto-rename: on the first prompt of a new session, ask the active
   -- provider for a short descriptive title and apply it via `/rename`.
@@ -59,6 +60,11 @@ local defaults = {
   },
 
   layout = 'horizontal', -- 'horizontal' | 'vertical'
+
+  -- Append every rate-limit reading from either provider to this JSONL
+  -- file (one line per window: ts, provider, window, used_pct, resets_at,
+  -- status, plan). nil → off.
+  limits_log = nil,
 
   line_numbers = {
     output = false,

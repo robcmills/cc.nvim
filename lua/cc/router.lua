@@ -318,6 +318,7 @@ end
 function Router:_handle_rate_limit(msg)
   local info = msg.rate_limit_info
   if type(info) ~= 'table' then return end
+  require('cc.limits_log').record_claude(info)
   local key = table.concat({
     tostring(info.status), tostring(info.rateLimitType), tostring(info.resetsAt),
     tostring(info.isUsingOverage),

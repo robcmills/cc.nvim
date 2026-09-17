@@ -617,6 +617,8 @@ function Codex:_on_notification(method, params)
     end
   elseif method == 'thread/tokenUsage/updated' then
     self:_on_token_usage(params)
+  elseif method == 'account/rateLimits/updated' then
+    require('cc.limits_log').record_codex(params.rateLimits)
   elseif method == 'turn/plan/updated' then
     self.output:render_plan(params.plan or {}, params.explanation)
   elseif method == 'thread/compacted' then
@@ -636,7 +638,7 @@ function Codex:_on_notification(method, params)
     local text = params.message or (params.notice and params.notice.message)
     if text then self.output:render_notice('codex: ' .. tostring(text)) end
   end
-  -- Everything else (thread/status/changed, account/*, mcpServer/*, fs/*,
+  -- Everything else (thread/status/changed, other account/*, mcpServer/*, fs/*,
   -- realtime, fuzzyFileSearch, …) is intentionally a no-op.
 end
 
