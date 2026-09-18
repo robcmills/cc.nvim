@@ -59,6 +59,7 @@ function Process:spawn()
     '--output-format', 'stream-json',
     '--permission-prompt-tool', 'stdio',
     '--include-partial-messages',
+    '--replay-user-messages', -- Remote Control prompts are only visible via the replay.
     '--include-hook-events',
     '--verbose',
     '--append-system-prompt', table.concat({
@@ -248,6 +249,19 @@ function Process:send_control_set_permission_mode(mode)
   return self:_send_control(
     'set_permission_mode',
     { subtype = 'set_permission_mode', mode = mode })
+end
+
+--- Enable or disable the live Remote Control bridge without restarting.
+---@param enabled boolean
+---@param name string? explicit session title; nil/empty uses the CLI default
+---@param callback fun(ok: boolean, response: table?)?
+---@return string? request_id nil when the process is not alive
+function Process:set_remote_control(enabled, name, callback)
+  return self:_send_control('remote_control', {
+    subtype = 'remote_control',
+    enabled = enabled,
+    name = name ~= '' and name or nil,
+  }, callback)
 end
 
 --- Change the model used for subsequent turns.

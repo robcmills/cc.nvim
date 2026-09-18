@@ -1,0 +1,3 @@
+{"type":"system","subtype":"bridge_state","state":"ready","uuid":"1b241232-6325-4f83-86ee-5209e94abc11","session_id":"65fb089a-17c9-4973-b5e5-18468226be99"}
+{"type":"control_response","response":{"subtype":"success","request_id":"REMOTE_REQUEST_ID","response":{"session_url":"https://claude.ai/code/session_01TLKUiPoDxXmcyfLagdvLev","connect_url":"https://claude.ai/code?environment=","environment_id":"","bridge_epoch":1,"bridge_session_id":"cse_01TLKUiPoDxXmcyfLagdvLev"}}}
+{"type":"system","subtype":"bridge_state","state":"connected","bridge_epoch":1,"uuid":"4183114b-951b-461e-8cb2-cf4d302dd387","session_id":"65fb089a-17c9-4973-b5e5-18468226be99"}

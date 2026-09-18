@@ -21,6 +21,7 @@ M.capabilities = {
   auto_rename = true,
   local_history = true,
   plan_mode = true,
+  remote_control = true,
 }
 
 --- Effective Claude options from Config.options.providers.claude. `model`
@@ -48,11 +49,12 @@ end
 ---@field instance cc.Instance?
 ---@field session cc.Session
 ---@field output cc.Output
+---@field remote boolean|string?
 ---@field resume_id string?
 local Claude = {}
 Claude.__index = Claude
 
---- Generate a v4-ish UUID for the one-shot naming subprocess.
+--- Generate a v4-ish UUID for naming sessions and correlating prompt replays.
 ---@return string
 local function gen_uuid()
   local function h(n) return string.format('%0' .. n .. 'x', math.random(0, 16 ^ n - 1)) end
@@ -79,6 +81,7 @@ end
 ---@field permission_mode string? explicit permission mode (Claude-only)
 ---@field model string? per-session model override
 ---@field effort string? per-session effort override
+---@field remote boolean|string?
 ---@field on_session_id fun(id: string)?
 ---@field on_exit fun(code: integer, signal: integer)?
 ---@field cwd string?
@@ -98,6 +101,7 @@ function M.attach(ctx)
     session = ctx.session,
     output = ctx.output,
     resume_id = ctx.resume_id,
+    remote = ctx.remote,
   }, Claude)
 
   -- Seed the session's permission_mode so the statusline reflects the
@@ -165,6 +169,9 @@ end
 
 function Claude:spawn()
   self.process:spawn()
+  if self.remote then
+    self:set_remote_control(true, type(self.remote) == 'string' and self.remote or nil)
+  end
   -- Seed explicit effort through the live settings layer. A process-level
   -- environment/CLI pin outranks apply_flag_settings and would prevent later
   -- /effort changes from taking effect.
@@ -194,8 +201,11 @@ end
 
 ---@param text string
 function Claude:send(text)
+  local uuid = gen_uuid()
+  if self.session then self.session:note_sent_prompt(uuid) end
   self.process:write({
     type = 'user',
+    uuid = uuid,
     session_id = (self.instance and self.instance.last_session_id) or '',
     message = { role = 'user', content = text },
     parent_tool_use_id = vim.NIL,
@@ -238,6 +248,18 @@ function Claude:set_effort(effort, cb)
       if self.session then self.session.resolved_effort = nil end
       self.process:send_control_get_settings()
     end
+    if cb then cb(ok, ok and nil or (resp and resp.error)) end
+  end)
+  if not request_id and cb then cb(false, 'process not alive') end
+  return request_id
+end
+
+---@param enabled boolean
+---@param name string?
+---@param cb fun(ok: boolean, err: string?)?
+---@return string? request_id
+function Claude:set_remote_control(enabled, name, cb)
+  local request_id = self.process:set_remote_control(enabled, name, function(ok, resp)
     if cb then cb(ok, ok and nil or (resp and resp.error)) end
   end)
   if not request_id and cb then cb(false, 'process not alive') end

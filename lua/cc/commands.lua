@@ -2,40 +2,69 @@
 
 local M = {}
 
+--- Parse position-independent Remote Control keywords and positional model/effort.
+---@param fargs string[]
+---@return { model: string?, effort: string?, remote: boolean|string? }? opts
+---@return string? err
+function M.parse_new_args(fargs)
+  local positional, remote = {}, nil
+  for _, arg in ipairs(fargs) do
+    local name = arg:match('^remote=(.*)$')
+    if arg == 'remote' or name ~= nil then
+      remote = name and name ~= '' and name or true
+    else
+      table.insert(positional, arg)
+    end
+  end
+  if #positional > 2 then
+    return nil, 'cc.nvim: :CcNew [model] [effort] [remote[=name]]'
+  end
+  local model, effort = positional[1], positional[2]
+  if effort and not require('cc.effort').is_valid(effort) then
+    return nil, 'cc.nvim: invalid effort "' .. effort .. '". Use one of: '
+      .. table.concat(require('cc.effort').levels(), ', ')
+  end
+  return { model = model, effort = effort, remote = remote }
+end
+
 function M.create()
   local cc = require('cc')
 
   vim.api.nvim_create_user_command('CcNew', function(opts)
-    if #opts.fargs > 2 then
-      vim.notify('cc.nvim: :CcNew [model] [effort]', vim.log.levels.WARN)
+    local parsed, err = M.parse_new_args(opts.fargs)
+    if not parsed then
+      vim.notify(err, vim.log.levels.WARN)
       return
     end
-    local model, effort = opts.fargs[1], opts.fargs[2]
-    if effort and not require('cc.effort').is_valid(effort) then
-      vim.notify(
-        'cc.nvim: invalid effort "' .. effort .. '". Use one of: '
-        .. table.concat(require('cc.effort').levels(), ', '),
-        vim.log.levels.WARN)
-      return
-    end
-    cc.open({ model = model, effort = effort })
+    cc.open(parsed)
   end, {
     nargs = '*',
     complete = function(arg_lead, cmd_line, cursor_pos)
       local before = cmd_line:sub(1, cursor_pos)
       local args = before:match('^%s*CcNew%s+(.*)$') or ''
-      local _, rest = args:match('^(%S+)%s+(.*)$')
-      if rest == nil then
-        return require('cc.model').complete(arg_lead)
+      local positional, has_remote = 0, false
+      for arg in args:gmatch('(%S+)%s+') do
+        if arg == 'remote' or arg:match('^remote=') then
+          has_remote = true
+        else
+          positional = positional + 1
+        end
       end
-      if rest:find('%s') then return {} end
       local out = {}
-      for _, level in ipairs(require('cc.effort').levels()) do
-        if level:sub(1, #arg_lead) == arg_lead then table.insert(out, level) end
+      if positional == 0 then
+        out = require('cc.model').complete(arg_lead)
+      elseif positional == 1 then
+        for _, level in ipairs(require('cc.effort').levels()) do
+          if level:sub(1, #arg_lead) == arg_lead then table.insert(out, level) end
+        end
+      end
+      if positional <= 2 and not has_remote
+          and ('remote'):sub(1, #arg_lead) == arg_lead then
+        table.insert(out, 'remote')
       end
       return out
     end,
-    desc = 'Open cc.nvim with optional model and reasoning effort',
+    desc = 'Open cc.nvim with optional model, reasoning effort, and Remote Control',
   })
 
   vim.api.nvim_create_user_command('CcClose', function() cc.close() end,
@@ -161,6 +190,10 @@ function M.create()
     end,
     desc = 'Set permission mode (acceptEdits|auto|bypassPermissions|default|dontAsk|plan); no arg opens a picker with one-line descriptions',
   })
+
+  vim.api.nvim_create_user_command('CcRemote', function(opts)
+    cc.remote_control(opts.args)
+  end, { nargs = '?', desc = 'Toggle Claude Remote Control (optional title shown in claude.ai)' })
 
   vim.api.nvim_create_user_command('CcPromptAutosize', function(opts)
     local arg = (opts.args or ''):lower()

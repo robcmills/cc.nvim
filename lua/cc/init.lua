@@ -32,7 +32,7 @@ M.VERSION = '0.11.0'
 ---@field cwd string working directory captured when the instance was created
 ---@field awaiting_input boolean? true while provider UI is waiting for a user response
 ---@field permission_winid integer? floating window of the open permission prompt, if any; set/cleared by cc.permission_prompt
----@field remote_control_active boolean?
+---@field awaiting_permission boolean?
 ---@field saved_output_view table? output winsaveview snapshot from the last close, restored on reopen
 ---@field saved_output_following_tail boolean? whether the output cursor was on the tail at the last close; reopen re-pins to the new tail instead of restoring saved_output_view
 ---@field saved_prompt_view table? prompt winsaveview snapshot from the last close, restored on reopen
@@ -44,6 +44,8 @@ M.VERSION = '0.11.0'
 
 local instances = {} -- keyed by output bufnr
 local next_instance_id = 1
+---@type boolean|string?
+local pending_remote
 
 -- Kill claude subprocesses on exit so shada writes complete (avoids E138 .shada.tmp.* orphans).
 vim.api.nvim_create_autocmd('VimLeavePre', {
@@ -340,6 +342,7 @@ local function create_instance(opts)
     pending_session_name = nil,
     cwd = vim.fn.getcwd(),
     awaiting_input = false,
+    awaiting_permission = false,
     autosize_disabled = false,
     expected_prompt_height = Config.options.prompt_height,
   }
@@ -546,7 +549,7 @@ end
 --- Build, wire, and spawn the configured provider for an instance. Shared
 --- by open, new_session, and resume so lifecycle handling lives in one place.
 ---@param inst cc.Instance
----@param opts { resume_id: string?, permission_mode: string?, provider: string?, model: string?, effort: string? }?
+---@param opts { resume_id: string?, permission_mode: string?, provider: string?, model: string?, effort: string?, remote: boolean|string? }?
 ---@return boolean ok
 local function attach_provider(inst, opts)
   opts = opts or {}
@@ -568,6 +571,7 @@ local function attach_provider(inst, opts)
     permission_mode = opts.permission_mode,
     model = opts.model,
     effort = opts.effort,
+    remote = opts.remote,
     cwd = inst.cwd,
     on_session_id = function(id)
       inst.last_session_id = id
@@ -614,7 +618,7 @@ function M.is_open()
 end
 
 --- Public: open a new cc.nvim session.
----@param opts { permission_mode: string?, model: string?, effort: string? }?
+---@param opts { permission_mode: string?, model: string?, effort: string?, remote: boolean|string? }?
 function M.open(opts)
   opts = opts or {}
   if opts.effort and not require('cc.effort').is_valid(opts.effort) then
@@ -643,6 +647,11 @@ function M.open(opts)
     end
   end
 
+  if opts.remote == nil then
+    opts = vim.tbl_extend('force', {}, opts, { remote = pending_remote })
+    pending_remote = nil
+  end
+
   local inst = create_instance()
   require('cc.splash').render(inst.output.bufnr)
   attach_provider(inst, {
@@ -652,6 +661,7 @@ function M.open(opts)
       or Providers.current_name(),
     model = model,
     effort = opts.effort,
+    remote = opts.remote,
   })
 end
 
@@ -939,8 +949,12 @@ function M.submit()
   else
     -- Test stubs register instances with a bare process; keep the legacy
     -- direct-write path working for them.
+    local function h(n) return string.format('%0' .. n .. 'x', math.random(0, 16 ^ n - 1)) end
+    local uuid = h(8) .. '-' .. h(4) .. '-4' .. h(3) .. '-' .. h(4) .. '-' .. h(8) .. h(4)
+    if inst.session then inst.session:note_sent_prompt(uuid) end
     inst.process:write({
       type = 'user',
+      uuid = uuid,
       session_id = inst.last_session_id or '',
       message = { role = 'user', content = text },
       parent_tool_use_id = vim.NIL,
@@ -1178,6 +1192,39 @@ local function apply_permission_mode(mode)
   vim.notify(
     'cc.nvim: permission_mode set to ' .. mode .. ' (applies to next :Cc / :CcNew)',
     vim.log.levels.INFO)
+end
+
+--- Public: toggle the live Claude bridge, or arm the next new session.
+---@param name string? explicit title shown in claude.ai
+function M.remote_control(name)
+  local inst = get_current_instance()
+  local live = inst and inst.process and inst.process:is_alive()
+  local P = live and inst.provider or Providers.current()
+  if P and P.capabilities.remote_control == false then
+    vim.notify('cc.nvim: remote control is Claude-specific. Use the claude provider.',
+      vim.log.levels.WARN)
+    return
+  end
+  if live then
+    local state = inst.session and inst.session.remote_control_state
+    local enabled = state ~= 'ready' and state ~= 'connected' and state ~= 'reconnecting'
+    local request_id = inst.provider:set_remote_control(enabled, name, function()
+      -- The router renders and notifies failures before invoking this callback.
+      require('cc.statusline').refresh(inst)
+    end)
+    if request_id then
+      vim.notify('cc.nvim: remote control → ' .. (enabled and 'enabling' or 'disabling')
+        .. ' (requested)', vim.log.levels.INFO)
+    end
+    return
+  end
+  if pending_remote ~= nil then
+    pending_remote = nil
+    vim.notify('cc.nvim: remote control disabled for next :CcNew', vim.log.levels.INFO)
+  else
+    pending_remote = name and name ~= '' and name or true
+    vim.notify('cc.nvim: remote control enabled for next :CcNew', vim.log.levels.INFO)
+  end
 end
 
 --- Cycle order matches the upstream Claude Code TUI's Shift+Tab handler for

@@ -134,6 +134,13 @@ local defaults = {
     },
   },
 
+  remote_control = {
+    content_block_format = '[%s]', -- non-text prompt attachment type
+    notice_format = 'Remote Control: %s', -- session_url
+    disabled_notice = 'Remote Control disabled',
+    error_format = 'Remote Control failed: %s', -- error/detail
+  },
+
   show_thinking = true,
 
   show_turn_cost = true,
@@ -166,6 +173,7 @@ local defaults = {
       'session_name',
       'remote_control',
     },
+    remote_control_labels = { connected = 'remote', reconnecting = 'remote…' },
     spinner = {
       frames = nil,
       frames_nerdfont = {

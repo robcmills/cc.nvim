@@ -229,7 +229,9 @@ local function default_format(state)
     add('session_name', HL_SESSION .. display_name)
   end
   if state.remote_control then
-    add('remote_control', HL_LINE .. '⚡')
+    local labels = require('cc.config').options.statusline.remote_control_labels
+    local label = labels[state.remote_control_state]
+    if label and label ~= '' then add('remote_control', HL_LINE .. label) end
   end
   segments = fit_segments(segments, state.window_width)
   -- %= pushes all content to the right; the left side is filled with the
@@ -325,7 +327,10 @@ function M.build_state(instance, winid)
     session_name = instance and instance.session_name or nil,
     pending_session_name = instance and instance.pending_session_name or nil,
     session_id = instance and instance.last_session_id or nil,
-    remote_control = instance and instance.remote_control_active == true,
+    awaiting_permission = instance and instance.awaiting_permission == true or false,
+    remote_control = session ~= nil and (session.remote_control_state == 'connected'
+      or session.remote_control_state == 'reconnecting'),
+    remote_control_state = session and session.remote_control_state or nil,
     window_width = window_width,
   }
 end
