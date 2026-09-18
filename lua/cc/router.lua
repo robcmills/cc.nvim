@@ -474,15 +474,17 @@ function Router:_handle_control_response(msg)
       if inner.session_url then
         self.session.remote_control_url = inner.session_url
         self.session.remote_control_bridge_id = inner.bridge_session_id
-        self.output:render_notice(string.format(cfg.notice_format, inner.session_url))
+        if not pending.silent then
+          self.output:render_notice(string.format(cfg.notice_format, inner.session_url))
+        end
       else
         self.session.remote_control_state = nil
         self.session.remote_control_detail = nil
         self.session.remote_control_url = nil
         self.session.remote_control_bridge_id = nil
-        self.output:render_notice(cfg.disabled_notice)
+        if not pending.silent then self.output:render_notice(cfg.disabled_notice) end
       end
-    else
+    elseif not pending.silent then
       local text = string.format(cfg.error_format, resp.error or 'control_response error')
       self.output:render_notice(text)
       vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)

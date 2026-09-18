@@ -21,7 +21,7 @@ local M = {}
 ---@field on_exit fun(code: integer, signal: integer)?
 ---@field alive boolean
 ---@field _tee_fd userdata? file descriptor for NDJSON dump
----@field _pending_controls table<string, { subtype: string, callback: function? }> request id -> metadata
+---@field _pending_controls table<string, { subtype: string, callback: function?, silent: boolean? }> request id -> metadata
 ---@field _stdout_marker string? delimiter emitted after Bash login-shell startup
 ---@field _stdout_prefix string? bytes buffered while waiting for the delimiter
 local Process = {}
@@ -212,13 +212,15 @@ end
 ---@param subtype string
 ---@param request table
 ---@param callback fun(ok: boolean, response: table?)?
+---@param opts { silent: boolean? }?
 ---@return string?
-function Process:_send_control(subtype, request, callback)
+function Process:_send_control(subtype, request, callback, opts)
   if not self.alive or not self.stdin then return nil end
   local request_id = gen_uuid()
   self._pending_controls[request_id] = {
     subtype = subtype,
     callback = callback,
+    silent = opts and opts.silent == true or nil,
   }
   self:write({
     type = 'control_request',
@@ -255,13 +257,14 @@ end
 ---@param enabled boolean
 ---@param name string? explicit session title; nil/empty uses the CLI default
 ---@param callback fun(ok: boolean, response: table?)?
+---@param opts { silent: boolean? }?
 ---@return string? request_id nil when the process is not alive
-function Process:set_remote_control(enabled, name, callback)
+function Process:set_remote_control(enabled, name, callback, opts)
   return self:_send_control('remote_control', {
     subtype = 'remote_control',
     enabled = enabled,
     name = name ~= '' and name or nil,
-  }, callback)
+  }, callback, opts)
 end
 
 --- Change the model used for subsequent turns.

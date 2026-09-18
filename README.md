@@ -285,6 +285,7 @@ require('cc').setup({
   remote_control = {
     notice_format = 'Remote Control: %s', -- session_url
     disabled_notice = 'Remote Control disabled',
+    resync_notice = 'Remote Control: re-creating the claude.ai session so history syncs',
     error_format = 'Remote Control failed: %s', -- error/detail
   },
 
@@ -544,6 +545,14 @@ The claude.ai session URL is printed as a notice in the output buffer. The
 statusline shows `remote` while connected and `remote…` while reconnecting.
 Requires the Claude CLI to be logged in to claude.ai. An optional name sets
 the title shown there; otherwise the CLI chooses `<hostname>-<two-word-slug>`.
+
+If you resume a session that still had Remote Control on when it last exited,
+the CLI reattaches to the old claude.ai session on the next enable and skips
+its history flush, so turns made in between never reach the phone
+([claude-code#95437](https://github.com/anthropics/claude-code/issues/95437)).
+cc.nvim detects this from the transcript and cycles the bridge off and on
+once, which creates a fresh claude.ai session with the full history. The
+notice it prints is `remote_control.resync_notice`.
 
 Prompts sent from the phone appear in the output buffer as user turns.
 cc.nvim launches the CLI with `--replay-user-messages` and drops the echoes

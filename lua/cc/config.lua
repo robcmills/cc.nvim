@@ -138,6 +138,7 @@ local defaults = {
     content_block_format = '[%s]', -- non-text prompt attachment type
     notice_format = 'Remote Control: %s', -- session_url
     disabled_notice = 'Remote Control disabled',
+    resync_notice = 'Remote Control: re-creating the claude.ai session so history syncs',
     error_format = 'Remote Control failed: %s', -- error/detail
   },
 

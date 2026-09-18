@@ -39,6 +39,200 @@ local function assert_output(text)
   eq(lines:find(text, 1, true) ~= nil, true)
 end
 
+T['history.last_bridge_session reads the last binding and tolerates missing files'] = function()
+  _G.child.lua([[
+    local history = require('cc.history')
+    local path = vim.fn.tempname()
+    local lines = {
+      '{"type":"user","message":{"content":"hello"}}',
+      '{"type":"bridge-session","bridgeSessionId":"cse_A"}',
+      '{"type":"bridge-session","bridgeSessionId":""}',
+      '{"type": "bridge-session","bridgeSessionId":"cse_B"}',
+    }
+    vim.fn.writefile(lines, path)
+    local decode = vim.json.decode
+    local decoded = 0
+    vim.json.decode = function(...)
+      decoded = decoded + 1
+      return decode(...)
+    end
+    _G._test_last = history.last_bridge_session(path)
+    vim.json.decode = decode
+    _G._test_decoded = decoded
+    table.remove(lines)
+    vim.fn.writefile(lines, path)
+    _G._test_cleared = history.last_bridge_session(path)
+    vim.fn.writefile({ lines[1] }, path)
+    _G._test_none = history.last_bridge_session(path) == nil
+    vim.fn.delete(path)
+    _G._test_missing = history.last_bridge_session(path) == nil
+  ]])
+  eq(_G.child.lua_get('_G._test_last'), 'cse_B')
+  eq(_G.child.lua_get('_G._test_decoded'), 3)
+  eq(_G.child.lua_get('_G._test_cleared'), '')
+  eq(_G.child.lua_get('_G._test_none'), true)
+  eq(_G.child.lua_get('_G._test_missing'), true)
+end
+
+local function setup_resumed_provider(binding, resumed)
+  setup_pipeline()
+  _G.child.lua(([==[
+    local cwd = vim.fn.tempname()
+    vim.fn.mkdir(cwd, 'p')
+    local provider = require('cc.providers.claude').attach({
+      session = _G._test_session, output = _G._test_output,
+      resume_id = %s, cwd = cwd,
+    })
+    _G._test_process.opts.cwd = provider.process.opts.cwd
+    provider.process = _G._test_process
+    _G._test_provider = provider
+    _G._test_binding = %s
+    _G._test_reads = 0
+    _G._test_paths = {}
+    _G._test_callbacks = {}
+    _G._test_enable = function()
+      local history = require('cc.history')
+      local session_path, last_bridge_session = history.session_path, history.last_bridge_session
+      history.session_path = function(id, dir)
+        assert(dir == cwd)
+        table.insert(_G._test_paths, id)
+        if _G._test_missing_current and id ~= 'resumed-id' then return nil end
+        return cwd .. '/' .. id .. '.jsonl'
+      end
+      history.last_bridge_session = function(path)
+        _G._test_reads = _G._test_reads + 1
+        _G._test_read_path = path
+        if _G._test_read_error then error('read failed') end
+        return _G._test_binding
+      end
+      local ok, id = pcall(function()
+        return provider:set_remote_control(true, 'phone', function(success, err)
+          table.insert(_G._test_callbacks, { ok = success, error = err })
+        end)
+      end)
+      history.session_path, history.last_bridge_session = session_path, last_bridge_session
+      if not ok then error(id) end
+      return id
+    end
+    _G._test_respond = function(index, response, err)
+      _G._test_feed(vim.json.encode({ type = 'control_response', response = {
+        subtype = err and 'error' or 'success', request_id = _G._test_sent[index].request_id,
+        response = response or {}, error = err,
+      } }))
+    end
+    vim.fn.delete(cwd, 'd')
+  ]==]):format(resumed == false and 'nil' or "'resumed-id'", vim.inspect(binding)))
+end
+
+T['resumed stale bridge cycles silently and subsequent enable sends one request'] = function()
+  setup_resumed_provider('cse_old')
+  _G.child.lua([[
+    _G._test_first_id = _G._test_enable()
+    assert(_G._test_first_id == _G._test_sent[1].request_id)
+    assert(_G._test_process._pending_controls[_G._test_first_id].silent == true)
+    _G._test_respond(1, { session_url = 'old', bridge_session_id = 'cse_old' })
+  ]])
+  eq(_G.child.lua_get('_G._test_session.remote_control_url'), 'old')
+  eq(_G.child.lua_get('#_G._test_callbacks'), 0)
+  _G.child.lua('_G._test_respond(2)')
+  eq(_G.child.lua_get('_G._test_session.remote_control_url == nil'), true)
+  eq(_G.child.lua_get('_G._test_provider._bridge_binding_cleared'), true)
+  eq(_G.child.lua_get('#_G._test_callbacks'), 0)
+  _G.child.lua(([==[
+    _G._test_respond(3, { session_url = %q, bridge_session_id = %q })
+  ]==]):format(URL, BRIDGE_ID))
+  local sent = _G.child.lua_get('_G._test_sent')
+  eq(#sent, 3)
+  eq(sent[1].request, { subtype = 'remote_control', enabled = true })
+  eq(sent[2].request, { subtype = 'remote_control', enabled = false })
+  eq(sent[3].request, { subtype = 'remote_control', enabled = true, name = 'phone' })
+  assert_output('Remote Control: re-creating the claude.ai session so history syncs')
+  assert_output('Remote Control: ' .. URL)
+  local lines = table.concat(helpers.get_buffer_lines(_G.child), '\n')
+  eq(lines:find('Remote Control: old', 1, true), nil)
+  eq(lines:find('Remote Control disabled', 1, true), nil)
+  eq(_G.child.lua_get('_G._test_session.remote_control_url'), URL)
+  eq(_G.child.lua_get('_G._test_session.remote_control_bridge_id'), BRIDGE_ID)
+  eq(_G.child.lua_get('_G._test_callbacks'), { { ok = true } })
+  _G.child.lua('_G._test_enable()')
+  eq(_G.child.lua_get('#_G._test_sent'), 4)
+  eq(_G.child.lua_get('_G._test_sent[4].request'), {
+    subtype = 'remote_control', enabled = true, name = 'phone',
+  })
+  eq(_G.child.lua_get('_G._test_reads'), 1)
+end
+
+T['resumed cleared binding enables once and skips later transcript reads'] = function()
+  setup_resumed_provider('')
+  _G.child.lua([[
+    _G._test_enable()
+    _G._test_respond(1, { session_url = 'fresh' })
+    _G._test_enable()
+  ]])
+  eq(_G.child.lua_get('#_G._test_sent'), 2)
+  eq(_G.child.lua_get('_G._test_reads'), 1)
+  eq(_G.child.lua_get('_G._test_provider._bridge_binding_cleared'), true)
+  eq(_G.child.lua_get('_G._test_callbacks'), { { ok = true } })
+  assert_output('Remote Control: fresh')
+end
+
+T['new provider never reads the transcript'] = function()
+  setup_resumed_provider('cse_old', false)
+  _G.child.lua('_G._test_read_error = true; _G._test_enable()')
+  eq(_G.child.lua_get('_G._test_reads'), 0)
+  eq(_G.child.lua_get('_G._test_paths'), {})
+  eq(_G.child.lua_get('#_G._test_sent'), 1)
+end
+
+T['transcript read failure falls through to a normal enable'] = function()
+  setup_resumed_provider('cse_old')
+  _G.child.lua('_G._test_read_error = true; _G._test_enable()')
+  eq(_G.child.lua_get('#_G._test_sent'), 1)
+  eq(_G.child.lua_get('_G._test_sent[1].request.name'), 'phone')
+  eq(_G.child.lua_get('_G._test_process._pending_controls[_G._test_sent[1].request_id].silent == nil'), true)
+end
+
+for _, missing in ipairs({ false, true }) do
+  T['resumed bridge resolves current session path with fallback: ' .. tostring(missing)] = function()
+    setup_resumed_provider('cse_old')
+    _G.child.lua(([==[
+      _G._test_provider.instance = { last_session_id = 'current-id' }
+      _G._test_missing_current = %s
+      _G._test_enable()
+    ]==]):format(tostring(missing)))
+    eq(_G.child.lua_get('_G._test_paths'), missing and { 'current-id', 'resumed-id' } or { 'current-id' })
+    eq(_G.child.lua_get('_G._test_read_path == _G._test_process.opts.cwd .. "/" .. _G._test_paths[#_G._test_paths] .. ".jsonl"'), true)
+    eq(_G.child.lua_get('_G._test_sent[1].request.name == nil'), true)
+  end
+end
+
+for _, step in ipairs({ 1, 2 }) do
+  T['resync failure at step ' .. step .. ' reports once and stops the cycle'] = function()
+    setup_resumed_provider('cse_old')
+    _G.child.lua(([==[
+      require('cc.config').setup({ remote_control = { resync_notice = 'Syncing history', error_format = 'Problem: %%s' } })
+      _G._test_enable()
+      if %d == 2 then _G._test_respond(1, { session_url = 'old' }) end
+      local notify = vim.notify
+      _G._test_notices = {}
+      vim.notify = function(msg, level) table.insert(_G._test_notices, { msg = msg, level = level }) end
+      _G._test_respond(%d, nil, 'bridge unavailable')
+      vim.notify = notify
+    ]==]):format(step, step))
+    eq(_G.child.lua_get('#_G._test_sent'), step)
+    eq(_G.child.lua_get('_G._test_callbacks'), { { ok = false, error = 'bridge unavailable' } })
+    eq(_G.child.lua_get('_G._test_provider._bridge_binding_cleared == nil'), true)
+    eq(_G.child.lua_get('_G._test_notices'), { {
+      msg = 'cc.nvim: Problem: bridge unavailable', level = vim.log.levels.WARN,
+    } })
+    assert_output('Syncing history')
+    assert_output('Problem: bridge unavailable')
+    local lines = table.concat(helpers.get_buffer_lines(_G.child), '\n')
+    local _, count = lines:gsub('Problem: bridge unavailable', '')
+    eq(count, 1)
+  end
+end
+
 T['streaming fixture correlates the enable response and updates bridge state'] = function()
   setup_pipeline()
   _G.child.lua(([==[
