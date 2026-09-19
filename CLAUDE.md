@@ -44,11 +44,29 @@ verified against codex-cli 0.144.5.
 - NDJSON protocol reference (when extending message handling):
   `~/src/claude-code/src/entrypoints/sdk/coreSchemas.ts` and
   `~/src/claude-code/src/cli/structuredIO.ts`. **Caveat:** this local copy
-  is a snapshot from around March 2026 and will never be updated. Treat any
-  determination made from it as suspect and verify against the running CLI
-  before relying on it. The further we get from that snapshot date, the more
-  likely the source has drifted, and the more we'll have to reverse-engineer
-  observed CLI behavior when it doesn't match what the source predicts.
+  is a snapshot from around March 2026 and will never be updated. It is the
+  only place with original names, types, and comments, so start there, but
+  verify anything it says against the shipping CLI before relying on it.
+- The shipping CLI is ground truth, and it is readable. `claude` is a Bun
+  single-file binary (`readlink -f "$(which claude)"` →
+  `~/.local/share/claude/versions/<ver>`; older versions stay there too)
+  whose payload embeds the full minified JS source of every code-split
+  chunk next to its JSC bytecode. Identifiers are mangled, but string
+  literals survive: message `type`/`subtype` values, JSON field names, Zod
+  schemas, env var names, prompts.
+  - Quick literal check, no extraction:
+    `grep -a -o '"task_notification"' "$(readlink -f "$(which claude)")" | wc -l`
+  - Read the code: `scripts/extract-claude-src.py` writes each module
+    (~1,700 chunks, ~35 MB) to `/tmp/claude-src/<ver>/` under Bun's
+    original chunk names; `cli.js` is the entry point. Then
+    `grep -l '<literal>' /tmp/claude-src/<ver>/*.js` and
+    `npx prettier@3 --parser babel <chunk> > /tmp/x.js` to read the owning
+    chunk. `--assets` also dumps embedded skills and READMEs; `--prettier`
+    formats every chunk up front (a few minutes).
+  - To recover original names, find the literal in the extracted chunk,
+    then grep the same string in the snapshot and read around it there.
+    Diffing extractions of two versions shows what changed between
+    releases.
 
 ## Testing
 
