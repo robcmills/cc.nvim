@@ -21,6 +21,7 @@ M.capabilities = {
   auto_rename = true,
   local_history = true,
   plan_mode = true,
+  remote_control = true,
 }
 
 --- Effective Claude options from Config.options.providers.claude. `model`
@@ -48,11 +49,13 @@ end
 ---@field instance cc.Instance?
 ---@field session cc.Session
 ---@field output cc.Output
+---@field remote boolean|string?
 ---@field resume_id string?
+---@field _bridge_binding_cleared boolean?
 local Claude = {}
 Claude.__index = Claude
 
---- Generate a v4-ish UUID for the one-shot naming subprocess.
+--- Generate a v4-ish UUID for naming sessions and correlating prompt replays.
 ---@return string
 local function gen_uuid()
   local function h(n) return string.format('%0' .. n .. 'x', math.random(0, 16 ^ n - 1)) end
@@ -79,6 +82,7 @@ end
 ---@field permission_mode string? explicit permission mode (Claude-only)
 ---@field model string? per-session model override
 ---@field effort string? per-session effort override
+---@field remote boolean|string?
 ---@field on_session_id fun(id: string)?
 ---@field on_exit fun(code: integer, signal: integer)?
 ---@field cwd string?
@@ -98,6 +102,7 @@ function M.attach(ctx)
     session = ctx.session,
     output = ctx.output,
     resume_id = ctx.resume_id,
+    remote = ctx.remote,
   }, Claude)
 
   -- Seed the session's permission_mode so the statusline reflects the
@@ -165,6 +170,9 @@ end
 
 function Claude:spawn()
   self.process:spawn()
+  if self.remote then
+    self:set_remote_control(true, type(self.remote) == 'string' and self.remote or nil)
+  end
   -- Seed explicit effort through the live settings layer. A process-level
   -- environment/CLI pin outranks apply_flag_settings and would prevent later
   -- /effort changes from taking effect.
@@ -194,8 +202,11 @@ end
 
 ---@param text string
 function Claude:send(text)
+  local uuid = gen_uuid()
+  if self.session then self.session:note_sent_prompt(uuid) end
   self.process:write({
     type = 'user',
+    uuid = uuid,
     session_id = (self.instance and self.instance.last_session_id) or '',
     message = { role = 'user', content = text },
     parent_tool_use_id = vim.NIL,
@@ -238,6 +249,56 @@ function Claude:set_effort(effort, cb)
       if self.session then self.session.resolved_effort = nil end
       self.process:send_control_get_settings()
     end
+    if cb then cb(ok, ok and nil or (resp and resp.error)) end
+  end)
+  if not request_id and cb then cb(false, 'process not alive') end
+  return request_id
+end
+
+---@param enabled boolean
+---@param name string?
+---@param cb fun(ok: boolean, err: string?)?
+---@return string? request_id
+function Claude:set_remote_control(enabled, name, cb)
+  if enabled and self.resume_id and not self._bridge_binding_cleared then
+    local ok, binding = pcall(function()
+      local History = require('cc.history')
+      local session_id = (self.instance and self.instance.last_session_id) or self.resume_id
+      local cwd = self.process.opts.cwd
+      local path = History.session_path(session_id, cwd)
+      if not path and session_id ~= self.resume_id then
+        path = History.session_path(self.resume_id, cwd)
+      end
+      if path then return History.last_bridge_session(path) end
+    end)
+    if ok and type(binding) == 'string' and binding ~= '' then
+      local cfg = Config.options.remote_control
+      self.output:render_notice(cfg.resync_notice)
+      -- A disable alone is a CLI no-op until this process has attached to
+      -- the old bridge. Attach first, then tear it down before enabling anew.
+      local function fail(err)
+        local text = string.format(cfg.error_format, err or 'control_response error')
+        self.output:render_notice(text)
+        vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
+        if cb then cb(false, err) end
+      end
+      local function send_silent(value, on_success)
+        local id = self.process:set_remote_control(value, nil, function(success, resp)
+          if success then on_success() else fail(resp and resp.error) end
+        end, { silent = true })
+        if not id then fail('process not alive') end
+        return id
+      end
+      return send_silent(true, function()
+        send_silent(false, function()
+          self._bridge_binding_cleared = true
+          self:set_remote_control(true, name, cb)
+        end)
+      end)
+    end
+  end
+  local request_id = self.process:set_remote_control(enabled, name, function(ok, resp)
+    if ok and enabled and self.resume_id then self._bridge_binding_cleared = true end
     if cb then cb(ok, ok and nil or (resp and resp.error)) end
   end)
   if not request_id and cb then cb(false, 'process not alive') end

@@ -8,6 +8,7 @@
 --   d       Deny
 --   q/<Esc> Cancel (treated as Deny)
 -- Closing the window externally (BufWipeout) also resolves as Deny.
+-- The returned handle's dismiss() closes it without answering when resolved remotely.
 
 local M = {}
 
@@ -145,6 +146,7 @@ end
 ---@param input table?
 ---@param on_choice fun(behavior: 'allow'|'deny', variant: 'allow_once'|'allow_always'|'deny'|'cancel')
 ---@param context? { provider: string?, instance: cc.Instance? }
+---@return { bufnr: integer, winid: integer, dismiss: fun() }
 function M.ask(tool_name, input, on_choice, context)
   local lines = body_lines(tool_name, input)
   local title = build_title(tool_name, input)
@@ -193,15 +195,24 @@ function M.ask(tool_name, input, on_choice, context)
   if instance then instance.permission_winid = winid end
 
   local resolved = false
-  local function resolve(behavior, variant)
-    if resolved then return end
-    resolved = true
+  local function close()
     if instance and instance.permission_winid == winid then
       instance.permission_winid = nil
     end
     if winid and vim.api.nvim_win_is_valid(winid) then
       pcall(vim.api.nvim_win_close, winid, true)
     end
+  end
+
+  local function dismiss()
+    if resolved then return end
+    resolved = true
+    close()
+  end
+
+  local function resolve(behavior, variant)
+    if resolved then return end
+    dismiss()
     vim.schedule(function() on_choice(behavior, variant) end)
   end
 
@@ -231,7 +242,7 @@ function M.ask(tool_name, input, on_choice, context)
 
   notify_callback(tool_name, input, context)
 
-  return { bufnr = bufnr, winid = winid }
+  return { bufnr = bufnr, winid = winid, dismiss = dismiss }
 end
 
 return M

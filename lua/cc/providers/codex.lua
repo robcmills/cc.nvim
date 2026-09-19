@@ -27,6 +27,7 @@ M.capabilities = {
   auto_rename = true,
   local_history = false,
   plan_mode = false,
+  remote_control = false,
 }
 
 --- Effective codex options from Config.options.providers.codex. `model`

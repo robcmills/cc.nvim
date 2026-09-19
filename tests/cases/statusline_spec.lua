@@ -60,11 +60,12 @@ T['build_state']['reads session + instance fields'] = function()
     session.input_tokens = 1000
     session.output_tokens = 250
     session.cost_usd = 0.42
+    session.remote_control_state = 'connected'
     local inst = {
       session = session,
       last_session_id = 'abc123',
       session_name = 'refactor',
-      remote_control_active = true,
+      awaiting_permission = true,
     }
     _G._state = require('cc.statusline').build_state(inst)
   ]])
@@ -78,6 +79,8 @@ T['build_state']['reads session + instance fields'] = function()
   eq(_G.child.lua_get('_G._state.session_id'), 'abc123')
   eq(_G.child.lua_get('_G._state.session_name'), 'refactor')
   eq(_G.child.lua_get('_G._state.remote_control'), true)
+  eq(_G.child.lua_get('_G._state.remote_control_state'), 'connected')
+  eq(_G.child.lua_get('_G._state.awaiting_permission'), true)
 end
 
 T['build_state']['empty session defaults'] = function()
@@ -240,6 +243,7 @@ T['default_format']['shows permission, tokens, branch+pr, session name, remote']
       pr = '#42',
       session_name = 'refactor-auth',
       remote_control = true,
+      remote_control_state = 'connected',
     })
   ]])
   local out = _G.child.lua_get('_G._out')
@@ -250,7 +254,7 @@ T['default_format']['shows permission, tokens, branch+pr, session name, remote']
   eq(out:find('#42', 1, true) ~= nil, true)
   eq(out:find(' ── ', 1, true) ~= nil, true)
   eq(out:find('refactor-auth', 1, true) ~= nil, true)
-  eq(out:find('⚡', 1, true) ~= nil, true)
+  eq(out:find('remote', 1, true) ~= nil, true)
   -- Right-aligned via %=
   eq(out:find('%=', 1, true) ~= nil, true)
 end
@@ -368,6 +372,7 @@ T['default_format']['wide windows preserve every component and visual order'] = 
       pr = '#12',
       session_name = 'SESSION',
       remote_control = true,
+      remote_control_state = 'connected',
       window_width = 1000,
     })
   ]])
@@ -379,7 +384,7 @@ T['default_format']['wide windows preserve every component and visual order'] = 
   local effort_at = assert(out:find('high', 1, true))
   local git_at = assert(out:find('BRANCH', 1, true))
   local session_at = assert(out:find('SESSION', 1, true))
-  local remote_at = assert(out:find('⚡', 1, true))
+  local remote_at = assert(out:find('remote', 1, true))
   eq(
     activity_at < tokens_at
       and tokens_at < mode_at
@@ -408,6 +413,7 @@ T['default_format']['narrow windows retain the highest-priority component'] = fu
       branch = 'BRANCH',
       session_name = 'SESSION',
       remote_control = true,
+      remote_control_state = 'connected',
       window_width = 1,
     })
   ]])
@@ -419,7 +425,7 @@ T['default_format']['narrow windows retain the highest-priority component'] = fu
   eq(out:find('high', 1, true) == nil, true)
   eq(out:find('BRANCH', 1, true) == nil, true)
   eq(out:find('SESSION', 1, true) == nil, true)
-  eq(out:find('⚡', 1, true) == nil, true)
+  eq(out:find('remote', 1, true) == nil, true)
 end
 
 T['default_format']['custom priorities change which component survives'] = function()
@@ -451,13 +457,79 @@ T['default_format']['custom priorities change which component survives'] = funct
       branch = 'BRANCH',
       session_name = 'SESSION',
       remote_control = true,
+      remote_control_state = 'connected',
       window_width = 1,
     })
   ]])
   local out = _G.child.lua_get('_G._out')
-  eq(out:find('⚡', 1, true) ~= nil, true)
+  eq(out:find('remote', 1, true) ~= nil, true)
   eq(out:find('10', 1, true) == nil, true)
   eq(out:find('SESSION', 1, true) == nil, true)
+end
+
+T['default_format']['bridge state controls the remote label'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({})
+    local Statusline = require('cc.statusline')
+    local session = require('cc.session').new()
+    _G._bridge_states = {}
+    for _, value in ipairs({ 'connected', 'reconnecting', 'ready', 'failed' }) do
+      session.remote_control_state = value
+      local state = Statusline.build_state({ session = session })
+      _G._bridge_states[value] = {
+        active = state.remote_control,
+        raw = state.remote_control_state,
+        text = Statusline._default_format({
+          remote_control = state.remote_control,
+          remote_control_state = state.remote_control_state,
+        }),
+      }
+    end
+  ]])
+  local states = _G.child.lua_get('_G._bridge_states')
+  for _, value in ipairs({ 'connected', 'reconnecting', 'ready', 'failed' }) do
+    eq(states[value].raw, value)
+    eq(states[value].active, value == 'connected' or value == 'reconnecting')
+  end
+  eq(states.connected.text, '%#CcStl#%= %#CcStl#remote%#CcStl# ')
+  eq(states.reconnecting.text, '%#CcStl#%= %#CcStl#remote…%#CcStl# ')
+  eq(states.ready.text, '%#CcStl#%=─')
+  eq(states.failed.text, '%#CcStl#%=─')
+end
+
+T['default_format']['permission waiting has no remote indicator'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({})
+    local Statusline = require('cc.statusline')
+    local state = Statusline.build_state({
+      session = require('cc.session').new(),
+      awaiting_permission = true,
+      awaiting_input = true,
+      process = { is_alive = function() return true end },
+    })
+    _G._state = state
+    state.branch, state.pr = nil, nil
+    _G._out = Statusline._default_format(state)
+  ]])
+  eq(_G.child.lua_get('_G._state.awaiting_permission'), true)
+  eq(_G.child.lua_get('_G._state.remote_control'), false)
+  local out = _G.child.lua_get('_G._out')
+  eq(out:find('waiting', 1, true) ~= nil, true)
+  eq(out:find('⚡', 1, true), nil)
+  eq(out:find('remote', 1, true), nil)
+end
+
+T['default_format']['remote labels can be overridden'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({
+      statusline = { remote_control_labels = { connected = 'phone', reconnecting = 'retry' } },
+    })
+    _G._out = require('cc.statusline')._default_format({
+      remote_control = true,
+      remote_control_state = 'reconnecting',
+    })
+  ]])
+  eq(_G.child.lua_get('_G._out'), '%#CcStl#%= %#CcStl#retry%#CcStl# ')
 end
 
 -- ---------------------------------------------------------------------------

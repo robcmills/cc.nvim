@@ -126,6 +126,30 @@ function M.session_path(session_id, cwd)
   return nil
 end
 
+--- Read the last bridge binding; an empty string means it was cleared.
+---@param path string
+---@return string? bridge_session_id
+function M.last_bridge_session(path)
+  local f = io.open(path, 'r')
+  if not f then return nil end
+  local last
+  local ok = pcall(function()
+    for line in f:lines() do
+      if line:find('"type":"bridge-session"', 1, true)
+        or line:find('"type": "bridge-session"', 1, true) then
+        local decoded, rec = pcall(vim.json.decode, line)
+        if decoded and type(rec) == 'table' and rec.type == 'bridge-session'
+          and type(rec.bridgeSessionId) == 'string' then
+          last = rec.bridgeSessionId
+        end
+      end
+    end
+  end)
+  f:close()
+  if ok then return last end
+  return nil
+end
+
 --- Suggest a session title that does not collide with any existing title in
 --- the project at `cwd`. Checks every session's `custom_title` and `ai_title`
 --- on disk, plus any in-memory names supplied via `extra_taken` (used to

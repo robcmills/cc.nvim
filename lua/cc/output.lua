@@ -1574,12 +1574,16 @@ function Output:render_permission_request(tool_name, input)
   self:_append({ text }, { 1 }, false)
 end
 
----@param behavior string
+---@param behavior 'allow'|'deny'|'remote'
 ---@param tool_name string
 function Output:render_permission_outcome(behavior, tool_name)
   self:flush_pending_delta()
   local icon = behavior == 'allow' and '✓' or '✗'
   local verb = behavior == 'allow' and 'Allowed' or 'Denied'
+  if behavior == 'remote' then
+    icon = '⇄'
+    verb = 'Answered remotely'
+  end
   local bufnr = self:ensure_buffer()
   self:_with_tail_anchor(function()
     local line_count = vim.api.nvim_buf_line_count(bufnr)
