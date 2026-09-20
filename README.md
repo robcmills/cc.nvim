@@ -288,7 +288,9 @@ require('cc').setup({
     notice_format = 'Remote Control: %s', -- session_url
     disabled_notice = 'Remote Control disabled',
     resync_notice = 'Remote Control: re-creating the claude.ai session so history syncs',
-    error_format = 'Remote Control failed: %s', -- error/detail
+    error_format = 'Remote Control failed: %s', -- CLI error text for a refused request
+    failed_format = 'Remote Control failed: %s (:CcRemote to retry)', -- bridge_state failed/policy_disabled
+    interrupted_notice = 'Interrupted remotely', -- turn aborted from claude.ai
     rename_error_format = 'Rename failed: %s', -- rename_session control error
     resume = 'off', -- 'auto' re-enables on :CcResume when the session exited with it on
   },
@@ -580,12 +582,28 @@ of its own prompts.
 Permission prompts can be answered from either side: answering in cc.nvim
 dismisses the prompt on the phone; answering on the phone closes cc.nvim's
 floating prompt and marks the tool `Answered remotely` in the transcript.
-Plan-mode and AskUserQuestion dialogs, which use `vim.ui.select`, are not
-dismissed yet.
+The same applies to the plan-mode, AskUserQuestion, and MCP elicitation
+dialogs, which now use cc.nvim's own floating picker instead of
+`vim.ui.select` so a remote answer can close them at any step.
 
-The CLI may print a stderr warning starting
-`[bridge] no session-anchored default-branch evidence` when the repo has no
-`refs/remotes/origin/HEAD`. It is harmless for local work;
+Stopping a turn from the phone renders `remote_control.interrupted_notice`
+with the turn's timing and no cost line, the same as a local interrupt. A
+permission-mode change from the phone shows in the statusline immediately.
+A model change from the phone shows up only when the next turn starts; the
+CLI emits nothing on stdout at switch time.
+
+`bridge_state` can end in `failed` or `policy_disabled`. Both are terminal:
+the output shows `remote_control.failed_format` with the CLI's detail, the
+statusline label clears, and `:CcRemote` enables again in one step.
+`reconnecting` recovers on its own and shows as `remote…`. Disabling Remote
+Control mid-turn leaves the running tool and any open permission prompt
+untouched.
+
+The CLI writes informational lines to stderr with a `[bridge]` prefix, for
+example `[bridge] no session-anchored default-branch evidence` when the repo
+has no `refs/remotes/origin/HEAD`. cc.nvim renders these as notices in the
+output buffer rather than popups (`remote_control.stderr_notice = false`
+restores the popups). That particular one is harmless for local work;
 `git remote set-head origin -a` in the repo silences it.
 
 ## Peeking at running Bash
