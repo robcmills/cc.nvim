@@ -1,0 +1,4 @@
+{"type":"system","subtype":"bridge_state","state":"ready","uuid":"932b9ba9-9762-4739-b657-b3e2e2e4a028","session_id":"a1232dea-379d-497e-b6bb-02a9af7259d2"}
+{"type":"system","subtype":"background_tasks_changed","tasks":[],"uuid":"ab079c92-94d0-4051-a936-2e2e992b2657","session_id":"a1232dea-379d-497e-b6bb-02a9af7259d2"}
+{"type":"control_response","response":{"subtype":"success","request_id":"REMOTE_REQUEST_ID","response":{"session_url":"https://claude.ai/code/session_01DmprhJfXiFS57SvfcZDmTa","connect_url":"https://claude.ai/code?environment=","environment_id":"","bridge_epoch":1,"bridge_session_id":"cse_01DmprhJfXiFS57SvfcZDmTa"}}}
+{"type":"system","subtype":"bridge_state","state":"connected","bridge_epoch":1,"uuid":"1642a262-c108-4edd-ab07-a742011d4633","session_id":"a1232dea-379d-497e-b6bb-02a9af7259d2"}

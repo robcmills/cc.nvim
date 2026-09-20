@@ -52,6 +52,7 @@ end
 ---@field remote boolean|string?
 ---@field resume_id string?
 ---@field _bridge_binding_cleared boolean?
+---@field _bridge_binding { id: string, stale: boolean }? transcript read at spawn, consumed by the first enable
 local Claude = {}
 Claude.__index = Claude
 
@@ -170,6 +171,14 @@ end
 
 function Claude:spawn()
   self.process:spawn()
+  if self.remote == nil and self.resume_id
+    and Config.options.remote_control.resume == 'auto' then
+    local binding, stale = self:_resumed_bridge_binding()
+    if binding and binding ~= '' then
+      self.remote = true
+      self._bridge_binding = { id = binding, stale = stale }
+    end
+  end
   if self.remote then
     self:set_remote_control(true, type(self.remote) == 'string' and self.remote or nil)
   end
@@ -255,23 +264,44 @@ function Claude:set_effort(effort, cb)
   return request_id
 end
 
+--- Read the resumed transcript's last bridge binding. The result is cached
+--- for the enable that follows spawn and dropped once consumed, so a later
+--- enable sees turns made in the meantime.
+---@return string? binding empty string when Remote Control was disabled before exit
+---@return boolean stale true when turns follow the binding, i.e. the bridge never saw them
+function Claude:_resumed_bridge_binding()
+  local cached = self._bridge_binding
+  if cached then
+    self._bridge_binding = nil
+    return cached.id, cached.stale
+  end
+  local ok, binding, stale = pcall(function()
+    local History = require('cc.history')
+    local session_id = (self.instance and self.instance.last_session_id) or self.resume_id
+    local cwd = self.process.opts.cwd
+    local path = History.session_path(session_id, cwd)
+    if not path and session_id ~= self.resume_id then
+      path = History.session_path(self.resume_id, cwd)
+    end
+    if path then return History.last_bridge_session(path) end
+  end)
+  if not ok or type(binding) ~= 'string' then return nil, false end
+  return binding, stale == true
+end
+
 ---@param enabled boolean
 ---@param name string?
 ---@param cb fun(ok: boolean, err: string?)?
 ---@return string? request_id
 function Claude:set_remote_control(enabled, name, cb)
   if enabled and self.resume_id and not self._bridge_binding_cleared then
-    local ok, binding = pcall(function()
-      local History = require('cc.history')
-      local session_id = (self.instance and self.instance.last_session_id) or self.resume_id
-      local cwd = self.process.opts.cwd
-      local path = History.session_path(session_id, cwd)
-      if not path and session_id ~= self.resume_id then
-        path = History.session_path(self.resume_id, cwd)
-      end
-      if path then return History.last_bridge_session(path) end
-    end)
-    if ok and type(binding) == 'string' and binding ~= '' then
+    local binding, stale = self:_resumed_bridge_binding()
+    -- With a non-empty binding the CLI reattaches to the recorded claude.ai
+    -- session on a plain enable (same URL, history intact) but skips its
+    -- history flush. That is the right outcome when the bridge saw every
+    -- turn. When turns follow the binding, cycle the bridge instead so a
+    -- fresh session gets the full history (anthropics/claude-code#95437).
+    if binding and binding ~= '' and stale then
       local cfg = Config.options.remote_control
       self.output:render_notice(cfg.resync_notice)
       -- A disable alone is a CLI no-op until this process has attached to

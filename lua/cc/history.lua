@@ -127,12 +127,16 @@ function M.session_path(session_id, cwd)
 end
 
 --- Read the last bridge binding; an empty string means it was cleared.
+--- The CLI rewrites the `bridge-session` record whenever the bridge attaches,
+--- finishes a turn, or tears down, so `stale` is true when a user or
+--- assistant record follows the last binding: turns the bridge never saw.
 ---@param path string
 ---@return string? bridge_session_id
+---@return boolean stale
 function M.last_bridge_session(path)
   local f = io.open(path, 'r')
-  if not f then return nil end
-  local last
+  if not f then return nil, false end
+  local last, stale = nil, false
   local ok = pcall(function()
     for line in f:lines() do
       if line:find('"type":"bridge-session"', 1, true)
@@ -141,13 +145,21 @@ function M.last_bridge_session(path)
         if decoded and type(rec) == 'table' and rec.type == 'bridge-session'
           and type(rec.bridgeSessionId) == 'string' then
           last = rec.bridgeSessionId
+          stale = false
+        end
+      elseif last and not stale
+        and (line:find('"type":"user"', 1, true) or line:find('"type":"assistant"', 1, true)
+          or line:find('"type": "user"', 1, true) or line:find('"type": "assistant"', 1, true)) then
+        local decoded, rec = pcall(vim.json.decode, line)
+        if decoded and type(rec) == 'table' and (rec.type == 'user' or rec.type == 'assistant') then
+          stale = true
         end
       end
     end
   end)
   f:close()
-  if ok then return last end
-  return nil
+  if ok then return last, last ~= nil and stale end
+  return nil, false
 end
 
 --- Suggest a session title that does not collide with any existing title in

@@ -74,7 +74,9 @@ T['history.last_bridge_session reads the last binding and tolerates missing file
   eq(_G.child.lua_get('_G._test_missing'), true)
 end
 
-local function setup_resumed_provider(binding, resumed)
+--- `stale` mirrors history.last_bridge_session's second return: true when
+--- turns follow the binding. Defaults to true so the dance is exercised.
+local function setup_resumed_provider(binding, resumed, stale)
   setup_pipeline()
   _G.child.lua(([==[
     local cwd = vim.fn.tempname()
@@ -87,6 +89,7 @@ local function setup_resumed_provider(binding, resumed)
     provider.process = _G._test_process
     _G._test_provider = provider
     _G._test_binding = %s
+    _G._test_stale = %s
     _G._test_reads = 0
     _G._test_paths = {}
     _G._test_callbacks = {}
@@ -103,7 +106,7 @@ local function setup_resumed_provider(binding, resumed)
         _G._test_reads = _G._test_reads + 1
         _G._test_read_path = path
         if _G._test_read_error then error('read failed') end
-        return _G._test_binding
+        return _G._test_binding, _G._test_stale
       end
       local ok, id = pcall(function()
         return provider:set_remote_control(true, 'phone', function(success, err)
@@ -121,7 +124,8 @@ local function setup_resumed_provider(binding, resumed)
       } }))
     end
     vim.fn.delete(cwd, 'd')
-  ]==]):format(resumed == false and 'nil' or "'resumed-id'", vim.inspect(binding)))
+  ]==]):format(resumed == false and 'nil' or "'resumed-id'", vim.inspect(binding),
+    tostring(stale ~= false)))
 end
 
 T['resumed stale bridge cycles silently and subsequent enable sends one request'] = function()
@@ -231,6 +235,272 @@ for _, step in ipairs({ 1, 2 }) do
     local _, count = lines:gsub('Problem: bridge unavailable', '')
     eq(count, 1)
   end
+end
+
+-- Captured from `claude --resume` of a session that exited with the bridge on:
+-- a plain enable reattaches to the recorded claude.ai session.
+local REATTACH_URL = 'https://claude.ai/code/session_01DmprhJfXiFS57SvfcZDmTa'
+local REATTACH_BRIDGE_ID = 'cse_01DmprhJfXiFS57SvfcZDmTa'
+
+T['resumed binding with no later turns reattaches with one plain enable'] = function()
+  setup_resumed_provider(REATTACH_BRIDGE_ID, true, false)
+  _G.child.lua(([==[
+    _G._test_first_id = _G._test_enable()
+    assert(_G._test_first_id == _G._test_sent[1].request_id)
+    assert(_G._test_process._pending_controls[_G._test_first_id].silent == nil)
+    _G._test_fixture = vim.fn.readfile(%q)
+    for i, line in ipairs(_G._test_fixture) do
+      _G._test_fixture[i] = line:gsub('REMOTE_REQUEST_ID', _G._test_first_id)
+    end
+    _G._test_feed(_G._test_fixture[1])
+    _G._test_feed(_G._test_fixture[2])
+  ]==]):format(helpers.ndjson_fixtures_dir .. '/remote_control_reattach.ndjson'))
+  eq(_G.child.lua_get('#_G._test_sent'), 1)
+  eq(_G.child.lua_get('_G._test_sent[1].request'), {
+    subtype = 'remote_control', enabled = true, name = 'phone',
+  })
+  eq(_G.child.lua_get('_G._test_session.remote_control_state'), 'ready')
+  eq(_G.child.lua_get('_G._test_session.remote_control_url == nil'), true)
+  _G.child.lua('_G._test_feed(_G._test_fixture[3])')
+  eq(_G.child.lua_get('_G._test_session.remote_control_url'), REATTACH_URL)
+  eq(_G.child.lua_get('_G._test_session.remote_control_bridge_id'), REATTACH_BRIDGE_ID)
+  eq(_G.child.lua_get('_G._test_provider._bridge_binding_cleared'), true)
+  eq(_G.child.lua_get('_G._test_callbacks'), { { ok = true } })
+  assert_output('Remote Control: ' .. REATTACH_URL)
+  local lines = table.concat(helpers.get_buffer_lines(_G.child), '\n')
+  eq(lines:find('re-creating the claude.ai session', 1, true), nil)
+  eq(lines:find('Remote Control disabled', 1, true), nil)
+  _G.child.lua('_G._test_feed(_G._test_fixture[4])')
+  eq(_G.child.lua_get('_G._test_session.remote_control_state'), 'connected')
+  _G.child.lua('_G._test_enable()')
+  eq(_G.child.lua_get('#_G._test_sent'), 2)
+  eq(_G.child.lua_get('_G._test_reads'), 1)
+end
+
+--- Attach a resumed (or new) Claude provider over the stub process and spawn
+--- it, capturing every remote_control request the spawn produced.
+---@param cfg { resume: string, binding: string?, stale: boolean?, remote: boolean|string?, resumed: boolean? }
+local function spawn_provider(cfg)
+  setup_pipeline()
+  _G.child.lua(([==[
+    require('cc.config').setup({ remote_control = { resume = %q } })
+    local history = require('cc.history')
+    local session_path, last_bridge_session = history.session_path, history.last_bridge_session
+    _G._test_reads = 0
+    history.session_path = function(id, dir) return dir .. '/' .. id .. '.jsonl' end
+    history.last_bridge_session = function()
+      _G._test_reads = _G._test_reads + 1
+      return %s, %s
+    end
+    local provider = require('cc.providers.claude').attach({
+      session = _G._test_session, output = _G._test_output,
+      resume_id = %s, remote = %s, cwd = '/tmp/cc-test',
+    })
+    _G._test_process.opts.cwd = provider.process.opts.cwd
+    provider.process = _G._test_process
+    provider.process.spawn = function() end
+    provider.opts.effort = 'auto'
+    provider:spawn()
+    history.session_path, history.last_bridge_session = session_path, last_bridge_session
+    _G._test_provider = provider
+    _G._test_requests = {}
+    for _, msg in ipairs(_G._test_sent) do
+      if msg.type == 'control_request' and msg.request.subtype == 'remote_control' then
+        table.insert(_G._test_requests, {
+          request = msg.request,
+          silent = _G._test_process._pending_controls[msg.request_id].silent,
+        })
+      end
+    end
+  ]==]):format(cfg.resume, vim.inspect(cfg.binding), tostring(cfg.stale == true),
+    cfg.resumed == false and 'nil' or "'resumed-id'", vim.inspect(cfg.remote)))
+  return _G.child.lua_get('_G._test_requests')
+end
+
+T['resume auto re-enables a bound transcript with one plain request'] = function()
+  local requests = spawn_provider({ resume = 'auto', binding = 'cse_old' })
+  eq(requests, { { request = { subtype = 'remote_control', enabled = true } } })
+  eq(_G.child.lua_get('_G._test_provider.remote'), true)
+  eq(_G.child.lua_get('_G._test_reads'), 1)
+  local lines = table.concat(helpers.get_buffer_lines(_G.child), '\n')
+  eq(lines:find('re-creating the claude.ai session', 1, true), nil)
+end
+
+T['failed auto enable drops the spawn-time read so a later enable re-reads the transcript'] = function()
+  spawn_provider({ resume = 'auto', binding = 'cse_old' })
+  _G.child.lua([[
+    local notify = vim.notify
+    vim.notify = function() end
+    _G._test_feed(vim.json.encode({ type = 'control_response', response = {
+      subtype = 'error', request_id = _G._test_sent[1].request_id, error = 'not logged in',
+    } }))
+    vim.notify = notify
+    local history = require('cc.history')
+    local session_path, last_bridge_session = history.session_path, history.last_bridge_session
+    _G._test_later_reads = 0
+    history.session_path = function(id, dir) return dir .. '/' .. id .. '.jsonl' end
+    history.last_bridge_session = function()
+      _G._test_later_reads = _G._test_later_reads + 1
+      return 'cse_old', true
+    end
+    _G._test_provider:set_remote_control(true)
+    history.session_path, history.last_bridge_session = session_path, last_bridge_session
+    _G._test_remote = {}
+    for _, msg in ipairs(_G._test_sent) do
+      if msg.type == 'control_request' and msg.request.subtype == 'remote_control' then
+        local pending = _G._test_process._pending_controls[msg.request_id]
+        table.insert(_G._test_remote, { request = msg.request, silent = pending and pending.silent })
+      end
+    end
+  ]])
+  eq(_G.child.lua_get('_G._test_provider._bridge_binding_cleared == nil'), true)
+  eq(_G.child.lua_get('_G._test_later_reads'), 1)
+  eq(_G.child.lua_get('_G._test_remote'), {
+    { request = { subtype = 'remote_control', enabled = true } },
+    { request = { subtype = 'remote_control', enabled = true }, silent = true },
+  })
+  assert_output('Remote Control: re-creating the claude.ai session so history syncs')
+end
+
+T['resume auto starts the resync cycle when turns follow the binding'] = function()
+  local requests = spawn_provider({ resume = 'auto', binding = 'cse_old', stale = true })
+  eq(requests, { { request = { subtype = 'remote_control', enabled = true }, silent = true } })
+  assert_output('Remote Control: re-creating the claude.ai session so history syncs')
+  eq(_G.child.lua_get('_G._test_reads'), 1)
+end
+
+for _, case in ipairs({
+  { name = 'cleared binding', cfg = { resume = 'auto', binding = '' } },
+  { name = 'no transcript', cfg = { resume = 'auto', binding = nil } },
+  { name = 'resume off', cfg = { resume = 'off', binding = 'cse_old' } },
+  { name = 'new session', cfg = { resume = 'auto', binding = 'cse_old', resumed = false } },
+}) do
+  T['resume never enables silently: ' .. case.name] = function()
+    eq(spawn_provider(case.cfg), {})
+    eq(_G.child.lua_get('_G._test_provider.remote == nil'), true)
+    if case.name == 'resume off' or case.name == 'new session' then
+      eq(_G.child.lua_get('_G._test_reads'), 0)
+    end
+  end
+end
+
+for _, case in ipairs({
+  { cfg = { resume = 'off', binding = 'cse_old', remote = 'phone' },
+    request = { subtype = 'remote_control', enabled = true, name = 'phone' } },
+  { cfg = { resume = 'off', binding = '', remote = true },
+    request = { subtype = 'remote_control', enabled = true } },
+}) do
+  T['explicit remote on resume enables regardless of resume setting: ' .. vim.inspect(case.cfg.remote)] = function()
+    eq(spawn_provider(case.cfg), { { request = case.request } })
+  end
+end
+
+T['resume threads remote through the provider context'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({ splash = false, statusline = { enabled = false } })
+    local P = require('cc.providers.claude')
+    local attach, prerender = P.attach, P.prerender_resume
+    _G._test_ctxs = {}
+    P.prerender_resume = function() end
+    P.attach = function(ctx)
+      table.insert(_G._test_ctxs, { resume_id = ctx.resume_id, remote = ctx.remote })
+      return { spawn = function() end, is_alive = function() return false end, close = function() end }
+    end
+    local cc = require('cc')
+    cc.resume('sess-1', 'claude', { remote = 'phone' })
+    cc.resume('sess-2', 'claude')
+    P.attach, P.prerender_resume = attach, prerender
+  ]])
+  eq(_G.child.lua_get('_G._test_ctxs'), {
+    { resume_id = 'sess-1', remote = 'phone' },
+    { resume_id = 'sess-2' },
+  })
+end
+
+T['CcResume forwards remote to resume and to the picker'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    require('cc.commands').create()
+    local cc = require('cc')
+    local history, resume = cc.history, cc.resume
+    _G._test_calls = {}
+    cc.history = function(all, provider, opts)
+      table.insert(_G._test_calls, { kind = 'history', all = all, provider = provider, opts = opts })
+    end
+    cc.resume = function(id, provider, opts)
+      table.insert(_G._test_calls, { kind = 'resume', id = id, provider = provider, opts = opts })
+    end
+    local notify = vim.notify
+    _G._test_notices = {}
+    vim.notify = function(msg, level) table.insert(_G._test_notices, { msg = msg, level = level }) end
+    vim.cmd('CcResume abc remote=phone')
+    vim.cmd('CcResume remote abc')
+    vim.cmd('CcResume claude remote')
+    vim.cmd('CcResume remote')
+    vim.cmd('CcResume abc')
+    vim.cmd('CcResume abc def')
+    vim.notify = notify
+    cc.history, cc.resume = history, resume
+  ]==])
+  eq(_G.child.lua_get('_G._test_calls'), {
+    { kind = 'resume', id = 'abc', opts = { remote = 'phone' } },
+    { kind = 'resume', id = 'abc', opts = { remote = true } },
+    { kind = 'history', all = false, provider = 'claude', opts = { remote = true } },
+    { kind = 'history', all = false, opts = { remote = true } },
+    { kind = 'resume', id = 'abc', opts = {} },
+  })
+  eq(_G.child.lua_get('_G._test_notices'), { {
+    msg = 'cc.nvim: :CcResume [id|claude|codex] [remote[=name]]', level = vim.log.levels.WARN,
+  } })
+end
+
+T['CcResume completion offers providers, then remote once'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({})
+    local create = vim.api.nvim_create_user_command
+    local complete
+    vim.api.nvim_create_user_command = function(name, _, opts)
+      if name == 'CcResume' then complete = opts.complete end
+    end
+    require('cc.commands').create()
+    vim.api.nvim_create_user_command = create
+    _G._test_completions = {}
+    for _, line in ipairs({
+      'CcResume ', 'CcResume c', 'CcResume rem', 'CcResume abc ', 'CcResume remote ',
+      'CcResume abc remote ', 'CcResume remote=phone c',
+    }) do
+      local lead = line:match('(%S+)$') or ''
+      _G._test_completions[line] = complete(lead, line, #line)
+    end
+  ]])
+  local completions = _G.child.lua_get('_G._test_completions')
+  eq(completions['CcResume '], { 'claude', 'codex', 'remote' })
+  eq(completions['CcResume c'], { 'claude', 'codex' })
+  eq(completions['CcResume rem'], { 'remote' })
+  eq(completions['CcResume abc '], { 'remote' })
+  eq(completions['CcResume remote '], { 'claude', 'codex' })
+  eq(completions['CcResume abc remote '], {})
+  eq(completions['CcResume remote=phone c'], { 'claude', 'codex' })
+end
+
+T['resume argument parser'] = MiniTest.new_set()
+for _, case in ipairs({
+  { {}, {} },
+  { { 'abc' }, { target = 'abc' } },
+  { { 'claude', 'remote' }, { target = 'claude', remote = true } },
+  { { 'remote=phone', 'abc' }, { target = 'abc', remote = 'phone' } },
+  { { 'remote=' }, { remote = true } },
+}) do
+  T['resume argument parser'][vim.inspect(case[1])] = function()
+    _G.child.lua(('_G._test_args = %s'):format(vim.inspect(case[1])))
+    eq(_G.child.lua_get("require('cc.commands').parse_resume_args(_G._test_args)"), case[2])
+  end
+end
+
+T['resume argument parser']['rejects two positional args'] = function()
+  eq(_G.child.lua_get("({ require('cc.commands').parse_resume_args({ 'a', 'b', 'remote' }) })"), {
+    vim.NIL, 'cc.nvim: :CcResume [id|claude|codex] [remote[=name]]',
+  })
 end
 
 T['streaming fixture correlates the enable response and updates bridge state'] = function()
