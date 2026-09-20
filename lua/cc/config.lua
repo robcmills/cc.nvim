@@ -135,6 +135,8 @@ local defaults = {
   },
 
   remote_control = {
+    stderr_notice = true, -- route `[bridge…]` stderr lines to the output buffer; false keeps WARN popups
+    stderr_notice_format = 'claude: %s', -- stderr line, prefix intact
     content_block_format = '[%s]', -- non-text prompt attachment type
     notice_format = 'Remote Control: %s', -- session_url
     disabled_notice = 'Remote Control disabled',

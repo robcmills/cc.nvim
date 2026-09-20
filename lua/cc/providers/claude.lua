@@ -122,6 +122,19 @@ function M.attach(ctx)
     on_session_id = ctx.on_session_id,
   })
 
+  local stderr_buffer = ''
+  ---@param line string
+  local function stderr_line(line)
+    if line == '' then return end
+    local cfg = Config.options.remote_control
+    if cfg.stderr_notice and (line:match('^%[bridge[^%]]*%]') or line:match('^%[remote%-bridge%]')) then
+      local notice = string.format(cfg.stderr_notice_format, line)
+      vim.schedule(function() self.output:render_notice(notice) end)
+    else
+      vim.notify('cc.nvim [stderr]: ' .. line, vim.log.levels.WARN)
+    end
+  end
+
   self.process = Process.new({
     cmd = opts.cmd,
     cwd = ctx.cwd or vim.fn.getcwd(),
@@ -132,9 +145,20 @@ function M.attach(ctx)
     forward_subagent_text = opts.forward_subagent_text,
     on_message = function(msg) self.router:dispatch(msg) end,
     on_stderr = function(data)
-      vim.notify('cc.nvim [stderr]: ' .. data, vim.log.levels.WARN)
+      stderr_buffer = stderr_buffer .. data
+      while true do
+        local newline = stderr_buffer:find('\n', 1, true)
+        if not newline then break end
+        local line = stderr_buffer:sub(1, newline - 1)
+        stderr_buffer = stderr_buffer:sub(newline + 1)
+        stderr_line(line)
+      end
     end,
-    on_exit = ctx.on_exit,
+    on_exit = function(code, signal)
+      stderr_line(stderr_buffer)
+      stderr_buffer = ''
+      if ctx.on_exit then ctx.on_exit(code, signal) end
+    end,
   })
   self.router:set_process(self.process)
 

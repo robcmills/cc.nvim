@@ -283,6 +283,8 @@ require('cc').setup({
   },
 
   remote_control = {
+    stderr_notice = true, -- route `[bridge…]` stderr lines to the output buffer; false keeps WARN popups
+    stderr_notice_format = 'claude: %s', -- stderr line, prefix intact
     notice_format = 'Remote Control: %s', -- session_url
     disabled_notice = 'Remote Control disabled',
     resync_notice = 'Remote Control: re-creating the claude.ai session so history syncs',
