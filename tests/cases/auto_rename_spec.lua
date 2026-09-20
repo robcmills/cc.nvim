@@ -288,4 +288,47 @@ T['provider_worker']['reads and cleans provider output file'] = function()
   eq(out.output_removed, true)
 end
 
+T['provider_worker']['applies the title through rename_session on a live Claude process'] = function()
+  local out = _G.child.lua_get([[(function()
+    require('cc.config').setup({
+      auto_rename = { enabled = true, prompt = '${prompt}', placeholder = 'naming...' },
+    })
+    local inst
+    local history = require('cc.history')
+    local append = history.append_custom_title
+    local appends = 0
+    history.append_custom_title = function() appends = appends + 1; return true end
+    local provider = {
+      auto_rename_spec = function()
+        return { cmd = 'sh', args = { '-c', 'printf cc-title-sync-auto' } }
+      end,
+      rename_session = function(_, title)
+        inst.applied_name = title
+        return 'req-1'
+      end,
+    }
+    inst = {
+      provider = provider,
+      process = { is_alive = function() return true end },
+      session = { turns = {} }, prompt = {},
+    }
+    require('cc.auto_rename').start(inst, 'ignored')
+    local placeholder = inst.pending_session_name
+    vim.wait(2000, function() return inst.auto_rename_in_flight == false end, 10)
+    history.append_custom_title = append
+    return {
+      placeholder = placeholder,
+      applied = inst.applied_name,
+      session_name = inst.session_name,
+      pending = inst.pending_session_name,
+      appends = appends,
+    }
+  end)()]])
+  eq(out.placeholder, 'naming...')
+  eq(out.applied, 'cc-title-sync-auto')
+  eq(out.session_name, 'cc-title-sync-auto')
+  eq(out.pending, nil)
+  eq(out.appends, 0)
+end
+
 return T

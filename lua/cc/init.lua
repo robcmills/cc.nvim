@@ -27,7 +27,7 @@ M.VERSION = '0.11.0'
 ---@field prompt_winid integer?
 ---@field last_session_id string?
 ---@field last_plan_file string?
----@field session_name string? user-set session title (set via /rename)
+---@field session_name string? session title (set via /rename, `remote=<name>`, or auto-rename)
 ---@field pending_session_name string? rename requested before transcript exists; flushed by `_flush_pending_rename`
 ---@field cwd string working directory captured when the instance was created
 ---@field awaiting_input boolean? true while provider UI is waiting for a user response
@@ -603,6 +603,12 @@ local function attach_provider(inst, opts)
     inst.provider = nil
     inst.process = nil
     return false
+  end
+  -- `remote=<name>` names the cc.nvim session as well. The rename goes
+  -- through the live CLI, so the claude.ai title follows the (deduped)
+  -- cc.nvim name and auto-rename sees a named session and stays quiet.
+  if type(opts.remote) == 'string' and opts.remote ~= '' then
+    M._handle_rename(inst, opts.remote, { silent = true })
   end
   return true
 end
@@ -1208,6 +1214,11 @@ function M.remote_control(name)
   if live then
     local state = inst.session and inst.session.remote_control_state
     local enabled = state ~= 'ready' and state ~= 'connected' and state ~= 'reconnecting'
+    -- An already-named session hands its name to the bridge so claude.ai
+    -- never shows the CLI's generated slug for a session cc.nvim has named.
+    if enabled and (not name or name == '') then
+      name = M._current_session_name(inst)
+    end
     local request_id = inst.provider:set_remote_control(enabled, name, function()
       -- The router renders and notifies failures before invoking this callback.
       require('cc.statusline').refresh(inst)
@@ -1303,6 +1314,38 @@ function M._apply_session_buf_names(inst, name)
   end
 end
 
+--- The instance's effective title: the persisted name, else a queued
+--- (non-placeholder) rename. Nil when the session is unnamed.
+---@param inst cc.Instance
+---@return string?
+function M._current_session_name(inst)
+  if inst.session_name and inst.session_name ~= '' then return inst.session_name end
+  if inst.pending_session_name and inst.pending_session_name ~= ''
+      and not inst.transient_rename_active then
+    return inst.pending_session_name
+  end
+  return nil
+end
+
+--- Send a rename through the live Claude process. The CLI's `rename_session`
+--- writes the `custom-title` transcript record itself and pushes the title to
+--- the claude.ai session when a Remote Control bridge is up, so the caller
+--- must not also append the record. Returns false when no live process with
+--- that capability exists (codex, exited process, test stubs), in which case
+--- the caller persists the record directly.
+---@param inst cc.Instance
+---@param name string non-empty, already deduped title
+---@return boolean sent
+local function send_live_rename(inst, name)
+  local provider = inst.provider
+  if not provider or type(provider.rename_session) ~= 'function' then return false end
+  local process = inst.process
+  if not process or type(process.is_alive) ~= 'function' or not process:is_alive() then
+    return false
+  end
+  return provider:rename_session(name) ~= nil
+end
+
 --- Collect session names from every live instance except `exclude`. Used by
 --- the rename path to dedupe against in-memory titles that aren't yet on
 --- disk (two queued sessions racing before either has a transcript).
@@ -1324,11 +1367,13 @@ function M._live_taken_names(exclude)
   return out
 end
 
---- Persist a user-chosen session title. Matches Claude Code's on-disk format
---- (a `custom-title` JSONL record) so renames are visible from the TUI too.
---- If invoked before the transcript exists (fresh session, no first turn yet),
---- the name is stashed on the instance and flushed by `_flush_pending_rename`
---- once the JSONL appears on disk.
+--- Persist a user-chosen session title. With a live Claude process the
+--- rename is sent as a `rename_session` control request: the CLI writes the
+--- `custom-title` JSONL record (the same format the TUI uses) and, when
+--- Remote Control is on, retitles the claude.ai session too. Without a live
+--- process the record is appended directly; if the transcript does not exist
+--- yet the name is stashed on the instance and flushed by
+--- `_flush_pending_rename` once the JSONL appears on disk.
 ---
 --- `opts.silent` suppresses user-facing notifications. `opts.transient` makes
 --- the call display-only: the placeholder is shown in the statusline via
@@ -1402,8 +1447,22 @@ function M._handle_rename(inst, args, opts)
 
   -- Resolve a unique title before persisting or naming the buffer. Without
   -- this, two sessions sharing a name collide both in the picker and in the
-  -- `cc-<title>` buffer namespace (E95 from nvim_buf_set_name).
-  name = history.find_unique_session_name(name, nil, session_id, M._live_taken_names(inst))
+  -- `cc-<title>` buffer namespace (E95 from nvim_buf_set_name). Re-applying
+  -- the current name skips the check: pre-init the session id is unknown,
+  -- so the on-disk copy of our own title would otherwise read as taken.
+  if name ~= inst.session_name then
+    name = history.find_unique_session_name(name, nil, session_id, M._live_taken_names(inst))
+  end
+  if send_live_rename(inst, name) then
+    inst.session_name = name
+    inst.pending_session_name = nil
+    M._apply_session_buf_names(inst, name)
+    if not opts.silent then
+      vim.notify('cc.nvim: session renamed to "' .. name .. '"', vim.log.levels.INFO)
+    end
+    require('cc.statusline').refresh(inst)
+    return
+  end
   local path = session_id and session_id ~= '' and history.session_path(session_id) or nil
   if not path then
     -- Pre-begin or transcript not yet flushed: stash the name and rename the
@@ -1455,13 +1514,20 @@ function M._flush_pending_rename(inst)
     return
   end
   local session_id = inst.last_session_id
-  if not session_id or session_id == '' then return end
   local history = require('cc.history')
-  local path = history.session_path(session_id)
-  if not path then return end
   -- Re-dedupe at flush time: other sessions may have claimed the queued name
   -- between the original `/rename` and now.
   name = history.find_unique_session_name(name, nil, session_id, M._live_taken_names(inst))
+  if send_live_rename(inst, name) then
+    inst.session_name = name
+    inst.pending_session_name = nil
+    M._apply_session_buf_names(inst, name)
+    require('cc.statusline').refresh(inst)
+    return
+  end
+  if not session_id or session_id == '' then return end
+  local path = history.session_path(session_id)
+  if not path then return end
   local ok, err = history.append_custom_title(path, session_id, name)
   if not ok then
     vim.notify('cc.nvim /rename: failed to write queued title: ' .. tostring(err), vim.log.levels.ERROR)
@@ -1475,9 +1541,10 @@ function M._flush_pending_rename(inst)
 end
 
 --- Public: rename the current session (same code path as `/rename <name>`).
---- Writes a `custom-title` JSONL record so the rename round-trips with the
---- upstream Claude Code TUI. Passing an empty/nil name reports the current
---- title instead of erroring.
+--- Persists a `custom-title` JSONL record (via the CLI when a Claude process
+--- is live, else directly) so the rename round-trips with the upstream TUI,
+--- and retitles the claude.ai session when Remote Control is on. Passing an
+--- empty/nil name reports the current title instead of erroring.
 ---@param name string?
 function M.rename(name)
   local inst = get_current_instance()

@@ -142,6 +142,7 @@ local defaults = {
     disabled_notice = 'Remote Control disabled',
     resync_notice = 'Remote Control: re-creating the claude.ai session so history syncs',
     error_format = 'Remote Control failed: %s', -- error/detail
+    rename_error_format = 'Rename failed: %s', -- rename_session control error
   },
 
   show_thinking = true,

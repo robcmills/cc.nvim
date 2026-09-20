@@ -951,4 +951,246 @@ T['remote cancel suppresses a queued text input answer'] = function()
   assert_output('⇄ Answered remotely: elicitation')
 end
 
+-- ---------------------------------------------------------------------------
+-- Title sync: the cc.nvim session name is authoritative and the claude.ai
+-- title follows it through the CLI's `rename_session` control request.
+-- ---------------------------------------------------------------------------
+
+T['process rename_session writes the host-sourced control request'] = function()
+  setup_pipeline()
+  _G.child.lua([[ _G._test_id = _G._test_process:rename_session('phone title') ]])
+  local sent = _G.child.lua_get('_G._test_sent')
+  eq(#sent, 1)
+  eq(sent[1].type, 'control_request')
+  eq(sent[1].request_id, _G.child.lua_get('_G._test_id'))
+  eq(sent[1].request, { subtype = 'rename_session', title = 'phone title', source = 'host' })
+end
+
+T['rename_session fixture: success is silent, error renders and warns'] = function()
+  setup_pipeline()
+  _G.child.lua(([==[
+    _G._test_fixture = vim.fn.readfile(%q)
+    _G._test_results = {}
+    local id = _G._test_process:rename_session('ok-title', function(ok, resp)
+      table.insert(_G._test_results, { ok = ok, error = resp.error })
+    end)
+    _G._test_feed((_G._test_fixture[1]:gsub('RENAME_REQUEST_ID', id)))
+    _G._test_lines_after_success = #vim.api.nvim_buf_get_lines(_G._test_bufnr, 0, -1, false)
+    local notify = vim.notify
+    _G._test_notices = {}
+    vim.notify = function(msg, level) table.insert(_G._test_notices, { msg = msg, level = level }) end
+    id = _G._test_process:rename_session('   ', function(ok, resp)
+      table.insert(_G._test_results, { ok = ok, error = resp.error })
+    end)
+    _G._test_feed((_G._test_fixture[2]:gsub('RENAME_REQUEST_ID', id)))
+    vim.notify = notify
+  ]==]):format(helpers.ndjson_fixtures_dir .. '/rename_session.ndjson'))
+  eq(_G.child.lua_get('_G._test_results'), {
+    { ok = true },
+    { ok = false, error = 'title must be non-empty' },
+  })
+  eq(_G.child.lua_get('next(_G._test_process._pending_controls) == nil'), true)
+  -- Success renders nothing: the CLI owns the record and the bridge push.
+  eq(_G.child.lua_get('_G._test_lines_after_success'), 1)
+  assert_output('Rename failed: title must be non-empty')
+  eq(_G.child.lua_get('_G._test_notices'), {
+    { msg = 'cc.nvim: Rename failed: title must be non-empty', level = vim.log.levels.WARN },
+  })
+end
+
+T['rename error notice honors rename_error_format'] = function()
+  setup_pipeline()
+  _G.child.lua([[
+    require('cc.config').setup({ remote_control = { rename_error_format = 'nope: %s' } })
+    local notify = vim.notify
+    vim.notify = function() end
+    local id = _G._test_process:rename_session('x')
+    _G._test_feed(vim.json.encode({ type = 'control_response', response = {
+      subtype = 'error', request_id = id, error = 'session_id is not the current session',
+    } }))
+    vim.notify = notify
+  ]])
+  assert_output('nope: session_id is not the current session')
+end
+
+--- Register a live Claude instance backed by the stub process, then run
+--- `body` (Lua source) with `inst` in scope and vim.notify captured.
+local function with_live_claude(fields, body)
+  _G.child.lua(([==[
+    local P = require('cc.providers.claude')
+    local provider = P.attach({ session = _G._test_session, output = _G._test_output })
+    provider.process = _G._test_process
+    local inst = vim.tbl_extend('force', {
+      provider = provider, process = provider.process, session = _G._test_session,
+      output = _G._test_output,
+    }, %s)
+    provider.instance = inst
+    require('cc')._register_test_instance(_G._test_bufnr, inst)
+    require('cc.commands').create()
+    local notify = vim.notify
+    _G._test_notices = {}
+    vim.notify = function(msg, level) table.insert(_G._test_notices, { msg = msg, level = level }) end
+    %s
+    vim.notify = notify
+  ]==]):format(fields, body))
+end
+
+T['CcRemote without a name enables with the session name'] = function()
+  setup_pipeline()
+  with_live_claude("{ session_name = 'cc-title-sync-named' }", [[
+    vim.cmd('CcRemote')
+    _G._test_session.remote_control_state = 'connected'
+    vim.cmd('CcRemote')
+    _G._test_session.remote_control_state = nil
+    vim.cmd('CcRemote explicit')
+  ]])
+  local sent = _G.child.lua_get('_G._test_sent')
+  eq(#sent, 3)
+  eq(sent[1].request, { subtype = 'remote_control', enabled = true, name = 'cc-title-sync-named' })
+  -- Disable never carries a name; an explicit argument still wins.
+  eq(sent[2].request, { subtype = 'remote_control', enabled = false })
+  eq(sent[3].request, { subtype = 'remote_control', enabled = true, name = 'explicit' })
+end
+
+T['CcRemote without a name uses a queued rename'] = function()
+  setup_pipeline()
+  with_live_claude("{ pending_session_name = 'queued-name' }", [[ vim.cmd('CcRemote') ]])
+  eq(_G.child.lua_get('_G._test_sent[1].request'),
+    { subtype = 'remote_control', enabled = true, name = 'queued-name' })
+end
+
+T['CcRemote without a name ignores the auto-rename placeholder'] = function()
+  setup_pipeline()
+  with_live_claude("{ pending_session_name = 'naming...', transient_rename_active = true }",
+    [[ vim.cmd('CcRemote') ]])
+  eq(_G.child.lua_get('_G._test_sent[1].request'), { subtype = 'remote_control', enabled = true })
+end
+
+T['live rename sends rename_session and leaves the transcript to the CLI'] = function()
+  setup_pipeline()
+  with_live_claude("{ last_session_id = 'cc-title-sync-sid' }", [[
+    local history = require('cc.history')
+    local append = history.append_custom_title
+    _G._test_appends = 0
+    history.append_custom_title = function() _G._test_appends = _G._test_appends + 1; return true end
+    vim.cmd('CcRename cc-title-sync-live')
+    -- Re-applying the current name pre-init must not pick up a -2 suffix.
+    require('cc')._handle_rename(inst, 'cc-title-sync-live')
+    history.append_custom_title = append
+    _G._test_inst_name = inst.session_name
+    _G._test_inst_pending = inst.pending_session_name
+  ]])
+  local sent = _G.child.lua_get('_G._test_sent')
+  eq(#sent, 2)
+  for _, msg in ipairs(sent) do
+    eq(msg.request, { subtype = 'rename_session', title = 'cc-title-sync-live', source = 'host' })
+  end
+  eq(_G.child.lua_get('_G._test_appends'), 0)
+  eq(_G.child.lua_get('_G._test_inst_name'), 'cc-title-sync-live')
+  eq(_G.child.lua_get('_G._test_inst_pending == nil'), true)
+  eq(_G.child.lua_get('_G._test_notices[1]'),
+    { msg = 'cc.nvim: session renamed to "cc-title-sync-live"', level = vim.log.levels.INFO })
+  eq(_G.child.lua_get(
+    'vim.api.nvim_buf_get_name(_G._test_bufnr):match("cc%-cc%-title%-sync%-live$") ~= nil'), true)
+end
+
+T['dead Claude process falls back to the direct transcript write'] = function()
+  setup_pipeline()
+  with_live_claude("{ last_session_id = 'cc-title-sync-dead' }", [[
+    _G._test_process.alive = false
+    local history = require('cc.history')
+    local path = vim.fn.tempname() .. '.jsonl'
+    vim.fn.writefile({
+      '{"type":"user","sessionId":"cc-title-sync-dead","message":{"role":"user","content":"seed"}}',
+    }, path)
+    local session_path = history.session_path
+    history.session_path = function(sid) if sid == 'cc-title-sync-dead' then return path end end
+    require('cc')._handle_rename(inst, 'cc-title-sync-offline')
+    history.session_path = session_path
+    local lines = vim.fn.readfile(path)
+    _G._test_last = vim.json.decode(lines[#lines])
+    _G._test_inst_name = inst.session_name
+  ]])
+  eq(_G.child.lua_get('#_G._test_sent'), 0)
+  eq(_G.child.lua_get('_G._test_last'), {
+    type = 'custom-title', customTitle = 'cc-title-sync-offline', sessionId = 'cc-title-sync-dead',
+  })
+  eq(_G.child.lua_get('_G._test_inst_name'), 'cc-title-sync-offline')
+end
+
+T['pending rename flushes through rename_session on a live process'] = function()
+  setup_pipeline()
+  with_live_claude("{ pending_session_name = 'cc-title-sync-queued', last_session_id = 'sid-q' }", [[
+    require('cc')._flush_pending_rename(inst)
+    _G._test_inst_name = inst.session_name
+    _G._test_inst_pending = inst.pending_session_name
+  ]])
+  eq(_G.child.lua_get('_G._test_sent[1].request'),
+    { subtype = 'rename_session', title = 'cc-title-sync-queued', source = 'host' })
+  eq(_G.child.lua_get('_G._test_inst_name'), 'cc-title-sync-queued')
+  eq(_G.child.lua_get('_G._test_inst_pending == nil'), true)
+end
+
+T['CcNew remote=name names the session, seeds the bridge, skips auto-rename'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({ splash = false, statusline = { enabled = false } })
+    local P = require('cc.providers.claude')
+    local attach = P.attach
+    _G._test_calls = {}
+    P.attach = function(ctx)
+      return {
+        name = 'claude', capabilities = P.capabilities,
+        spawn = function() table.insert(_G._test_calls, { 'remote_control', ctx.remote }) end,
+        is_alive = function() return true end,
+        close = function() end,
+        rename_session = function(_, title)
+          table.insert(_G._test_calls, { 'rename_session', title })
+          return 'req-1'
+        end,
+      }
+    end
+    require('cc').open({ remote = 'cc-title-sync-phone' })
+    P.attach = attach
+    local inst = require('cc')._get_instance()
+    _G._test_state = {
+      session_name = inst.session_name,
+      should_run = require('cc.auto_rename').should_run(inst),
+      buf_name = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(inst.output.bufnr), ':t'),
+    }
+  ]])
+  eq(_G.child.lua_get('_G._test_calls'), {
+    { 'remote_control', 'cc-title-sync-phone' },
+    { 'rename_session', 'cc-title-sync-phone' },
+  })
+  eq(_G.child.lua_get('_G._test_state'), {
+    session_name = 'cc-title-sync-phone',
+    should_run = false,
+    buf_name = 'cc-cc-title-sync-phone',
+  })
+end
+
+T['CcNew remote without a name leaves the session unnamed for auto-rename'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({ splash = false, statusline = { enabled = false } })
+    local P = require('cc.providers.claude')
+    local attach = P.attach
+    _G._test_renames = 0
+    P.attach = function()
+      return {
+        name = 'claude', capabilities = P.capabilities,
+        spawn = function() end, is_alive = function() return true end, close = function() end,
+        rename_session = function() _G._test_renames = _G._test_renames + 1; return 'id' end,
+      }
+    end
+    require('cc').open({ remote = true })
+    P.attach = attach
+    local inst = require('cc')._get_instance()
+    _G._test_state = {
+      session_name = inst.session_name, should_run = require('cc.auto_rename').should_run(inst),
+    }
+  ]])
+  eq(_G.child.lua_get('_G._test_renames'), 0)
+  eq(_G.child.lua_get('_G._test_state'), { should_run = true })
+end
+
 return T
