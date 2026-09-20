@@ -439,6 +439,11 @@ T['permission and interactive responses clear awaiting_permission'] = function()
     _G._test_router:dispatch({ type = 'control_request', request_id = 'plan', request = {
       subtype = 'can_use_tool', tool_name = 'EnterPlanMode', input = {},
     } })
+  ]])
+  _G.child.type_keys('<CR>')
+  _G.child.lua([[
+    vim.wait(100, function() return not _G._test_router.instance.awaiting_permission end)
+    local inst = _G._test_router.instance
     _G._test_interactive_cleared = not inst.awaiting_permission and not inst.awaiting_input
   ]])
   eq(_G.child.lua_get('_G._test_waiting'), true)
@@ -838,6 +843,112 @@ T['process always spawns with prompt replay enabled'] = function()
     assert(not ok and err:find('test spawn stopped', 1, true))
   ]])
   eq(vim.tbl_contains(_G.child.lua_get('_G._test_spawn_args'), '--replay-user-messages'), true)
+end
+
+T['interactive remote dismissal'] = MiniTest.new_set()
+local prompt_cases = dofile('tests/fixtures/interactive_prompts.lua')
+for _, case in ipairs(prompt_cases) do
+  if case.basic or case.before_cancel then
+    T['interactive remote dismissal'][case.name] = function()
+      setup_pipeline()
+      _G.child.lua(([==[
+        local router = _G._test_router
+        router.instance = { session = _G._test_session, process = _G._test_process }
+        _G._test_feed(vim.json.encode({ type = 'control_request', request_id = 'interactive', request = %s }))
+      ]==]):format(vim.inspect(case.request)))
+      for _, key in ipairs(case.before_cancel or {}) do _G.child.type_keys(key) end
+      eq(_G.child.lua_get('_G._test_router.open_prompts.interactive ~= nil'), true)
+      _G.child.lua([[
+        _G._test_windows = vim.tbl_filter(function(w)
+          return vim.api.nvim_win_get_config(w).relative ~= ''
+        end, vim.api.nvim_list_wins())
+        assert(#_G._test_windows > 0)
+        -- Retain a stale key callback to simulate a late local answer.
+        for _, map in ipairs(vim.api.nvim_buf_get_keymap(0, 'n')) do
+          if map.lhs == '<CR>' then _G._test_late_choice = map.callback; break end
+        end
+        local dismiss = _G._test_router.open_prompts.interactive.dismiss
+        _G._test_feed('{"type":"control_cancel_request","request_id":"interactive"}')
+        assert(not _G._test_router.instance.awaiting_permission)
+        assert(not _G._test_router.instance.awaiting_input)
+        -- A new request may already be waiting when a stale callback runs.
+        _G._test_router.instance.awaiting_permission = true
+        _G._test_router.instance.awaiting_input = true
+        -- Dismissing twice must neither answer nor reset these flags.
+        dismiss()
+        assert(_G._test_late_choice)
+        _G._test_late_choice()
+        vim.wait(30)
+      ]])
+      eq(_G.child.lua_get('_G._test_sent'), {})
+      eq(_G.child.lua_get('next(_G._test_router.open_prompts) == nil'), true)
+      eq(_G.child.lua_get([[vim.tbl_filter(vim.api.nvim_win_is_valid, _G._test_windows)]]), {})
+      eq(_G.child.lua_get([[vim.tbl_filter(function(w)
+        return vim.api.nvim_win_get_config(w).relative ~= ''
+      end, vim.api.nvim_list_wins())]]), {})
+      eq(_G.child.lua_get('_G._test_router.instance.awaiting_permission'), true)
+      eq(_G.child.lua_get('_G._test_router.instance.awaiting_input'), true)
+      assert_output('⇄ Answered remotely: ' .. (case.request.tool_name or 'elicitation'))
+    end
+  end
+end
+
+for _, case in ipairs(vim.tbl_filter(function(c) return c.basic end, prompt_cases)) do
+  T['interactive remote dismissal'][case.name .. ' queued choice and echoed response'] = function()
+    setup_pipeline()
+    _G.child.lua(([==[
+      local router = _G._test_router
+      router.instance = { session = _G._test_session, process = _G._test_process }
+      router:dispatch({ type = 'control_request', request_id = 'interactive', request = %s })
+      -- Invoke the mapping synchronously so its scheduled callback is still
+      -- pending when the echoed remote response reaches the router.
+      for _, map in ipairs(vim.api.nvim_buf_get_keymap(0, 'n')) do
+        if map.lhs == '<CR>' then map.callback(); break end
+      end
+      _G._test_feed('{"type":"control_response","response":{"subtype":"success","request_id":"interactive","response":{}}}')
+      router.instance.awaiting_permission = true
+      router.instance.awaiting_input = true
+      vim.wait(30)
+    ]==]):format(vim.inspect(case.request)))
+    eq(_G.child.lua_get('_G._test_sent'), {})
+    eq(_G.child.lua_get('next(_G._test_router.open_prompts) == nil'), true)
+    eq(_G.child.lua_get('_G._test_router.instance.awaiting_permission'), true)
+    eq(_G.child.lua_get('_G._test_router.instance.awaiting_input'), true)
+    eq(_G.child.lua_get([[vim.tbl_filter(function(w)
+      return vim.api.nvim_win_get_config(w).relative ~= ''
+    end, vim.api.nvim_list_wins())]]), {})
+    assert_output('⇄ Answered remotely: ' .. (case.request.tool_name or 'elicitation'))
+  end
+end
+
+T['remote cancel suppresses a queued text input answer'] = function()
+  setup_pipeline()
+  _G.child.lua([[
+    local router = _G._test_router
+    router.instance = { session = _G._test_session, process = _G._test_process }
+    router:dispatch({ type = 'control_request', request_id = 'interactive', request = {
+      subtype = 'elicitation', message = 'Details',
+      requested_schema = { properties = { first = {}, second = {} } },
+    } })
+  ]])
+  _G.child.type_keys('One')
+  _G.child.lua([[
+    for _, map in ipairs(vim.api.nvim_buf_get_keymap(0, 'i')) do
+      if map.lhs == '<CR>' then map.callback(); break end
+    end
+    _G._test_feed('{"type":"control_cancel_request","request_id":"interactive"}')
+    _G._test_router.instance.awaiting_permission = true
+    _G._test_router.instance.awaiting_input = true
+    vim.wait(30)
+  ]])
+  eq(_G.child.lua_get('_G._test_sent'), {})
+  eq(_G.child.lua_get('next(_G._test_router.open_prompts) == nil'), true)
+  eq(_G.child.lua_get('_G._test_router.instance.awaiting_permission'), true)
+  eq(_G.child.lua_get('_G._test_router.instance.awaiting_input'), true)
+  eq(_G.child.lua_get([[vim.tbl_filter(function(w)
+    return vim.api.nvim_win_get_config(w).relative ~= ''
+  end, vim.api.nvim_list_wins())]]), {})
+  assert_output('⇄ Answered remotely: elicitation')
 end
 
 return T
