@@ -489,6 +489,15 @@ function Router:_handle_control_response(msg)
       self.output:render_notice(text)
       vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
     end
+  elseif subtype == 'rename_session' then
+    -- The CLI persists the title and pushes it to the bridge itself; only
+    -- failures need surfacing (empty title, session_id mismatch).
+    if resp.subtype ~= 'success' then
+      local text = string.format(Config.options.remote_control.rename_error_format,
+        resp.error or 'control_response error')
+      self.output:render_notice(text)
+      vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
+    end
   elseif subtype == 'get_settings' then
     if resp.subtype ~= 'success' then return end
     if not self.session then return end

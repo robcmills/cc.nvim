@@ -305,6 +305,21 @@ function Claude:set_remote_control(enabled, name, cb)
   return request_id
 end
 
+--- Rename through the CLI so the transcript record and any live claude.ai
+--- session title both follow the cc.nvim name. Returns nil (and reports
+--- through `cb`) when the process is not alive; callers fall back to
+--- writing the transcript record themselves.
+---@param title string non-empty session title
+---@param cb fun(ok: boolean, err: string?)?
+---@return string? request_id
+function Claude:rename_session(title, cb)
+  local request_id = self.process:rename_session(title, function(ok, resp)
+    if cb then cb(ok, ok and nil or (resp and resp.error)) end
+  end)
+  if not request_id and cb then cb(false, 'process not alive') end
+  return request_id
+end
+
 ---@param mode string
 ---@return string? request_id
 function Claude:set_permission_mode(mode)

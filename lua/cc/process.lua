@@ -267,6 +267,24 @@ function Process:set_remote_control(enabled, name, callback, opts)
   }, callback, opts)
 end
 
+--- Rename the live session through the CLI. With `source = 'host'` the CLI
+--- persists the title itself (a `custom-title` transcript record, the same
+--- one `history.append_custom_title` writes, plus its own `agent-name`
+--- record) and pushes it to the claude.ai session when a Remote Control
+--- bridge is up. A rename sent before the first turn is held by the CLI and
+--- written when the transcript is created. Callers must not also write the
+--- record locally. Verified against claude 2.1.270.
+---@param title string non-empty session title
+---@param callback fun(ok: boolean, response: table?)?
+---@return string? request_id nil when the process is not alive
+function Process:rename_session(title, callback)
+  return self:_send_control('rename_session', {
+    subtype = 'rename_session',
+    title = title,
+    source = 'host',
+  }, callback)
+end
+
 --- Change the model used for subsequent turns.
 ---@param model string
 ---@param callback fun(ok: boolean, response: table?)?

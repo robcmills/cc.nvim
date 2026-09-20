@@ -169,7 +169,7 @@ instead of being guessed.
 | `:CcFold {n}` | Set output fold level (0..3) |
 | `:CcPlan` | Open in plan mode (`--permission-mode plan`) |
 | `:CcPermissionMode [mode]` | Set permission mode (no arg = picker with one-line descriptions; tab-completes the six modes). Sent live to an active session via `set_permission_mode` control_request, else stored for the next `:Cc` / `:CcNew`. |
-| `:CcRemote [name]` | Toggle Claude Remote Control live, or for the next `:CcNew`; optional title shown in claude.ai |
+| `:CcRemote [name]` | Toggle Claude Remote Control live, or for the next `:CcNew`; optional name renames the session (shown in claude.ai too) |
 | `:CcPlanShow` | Open the most recent plan file |
 | `:CcResume [id\|claude\|codex]` | Resume by ID, or open the all-provider picker (optionally filtered by provider) |
 | `:CcContinue` | Resume the most recent session for the current cwd across providers |
@@ -287,6 +287,7 @@ require('cc').setup({
     disabled_notice = 'Remote Control disabled',
     resync_notice = 'Remote Control: re-creating the claude.ai session so history syncs',
     error_format = 'Remote Control failed: %s', -- error/detail
+    rename_error_format = 'Rename failed: %s', -- rename_session control error
   },
 
   show_thinking = true,
@@ -543,8 +544,15 @@ Remote Control for the next `:CcNew`.
 
 The claude.ai session URL is printed as a notice in the output buffer. The
 statusline shows `remote` while connected and `remote…` while reconnecting.
-Requires the Claude CLI to be logged in to claude.ai. An optional name sets
-the title shown there; otherwise the CLI chooses `<hostname>-<two-word-slug>`.
+Requires the Claude CLI to be logged in to claude.ai.
+
+The cc.nvim session name is the claude.ai title. `remote=<name>` renames the
+session the same way `/rename <name>` does, and `:CcRemote` on a session
+that already has a name hands that name to the bridge. Without a name the
+bridge comes up under the CLI's `<hostname>-<two-word-slug>` and follows
+whatever cc.nvim names the session later, whether from auto-rename or
+`/rename`, via the CLI's `rename_session` control request. If that request
+fails the output shows `remote_control.rename_error_format`.
 
 If you resume a session that still had Remote Control on when it last exited,
 the CLI reattaches to the old claude.ai session on the next enable and skips
@@ -711,9 +719,12 @@ Records are capped at `history_max_records` to keep long sessions snappy.
 Give the current session a custom title with either `/rename <name>` in
 the prompt buffer or `:CcRename <name>` from anywhere. The slash form is
 intercepted client-side (not forwarded to the agent); both share the same
-code path and append a `custom-title` record to the session's JSONL file —
-the same format the upstream Claude Code TUI uses, so renames round-trip
-between the two. The new title surfaces in:
+code path. With a live Claude process the rename is sent to the CLI as a
+`rename_session` control request, which appends a `custom-title` record to
+the session's JSONL file (the same format the upstream TUI uses, so renames
+round-trip between the two) and retitles the claude.ai session when Remote
+Control is on. Without a live process cc.nvim appends the record itself.
+The new title surfaces in:
 
 - the statusline `session_name` segment
 - the `:CcHistory` picker (preferring `custom-title` > `ai-title` > first
