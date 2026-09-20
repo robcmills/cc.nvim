@@ -602,6 +602,7 @@ T['notices honor config overrides'] = function()
   _G.child.lua([[
     require('cc.config').setup({ remote_control = {
       notice_format = 'Link: %s', disabled_notice = 'Off', error_format = 'Problem: %s',
+      failed_format = 'Down: %s',
     } })
     local id = _G._test_process:set_remote_control(true)
     _G._test_feed(vim.json.encode({ type = 'control_response', response = {
@@ -615,7 +616,9 @@ T['notices honor config overrides'] = function()
   ]])
   assert_output('Link: test-url')
   assert_output('Off')
-  assert_output('Problem: offline')
+  assert_output('Down: offline')
+  local lines = table.concat(helpers.get_buffer_lines(_G.child), '\n')
+  eq(lines:find('Problem: offline', 1, true), nil)
 end
 
 T['argument parser'] = MiniTest.new_set()
@@ -886,12 +889,14 @@ T['live Claude toggle sends enable, optional name, and disable for active states
       _G._test_session.remote_control_state = state
       vim.cmd('CcRemote')
     end
-    _G._test_session.remote_control_state = 'failed'
-    vim.cmd('CcRemote')
+    for _, state in ipairs({ 'failed', 'policy_disabled' }) do
+      _G._test_session.remote_control_state = state
+      vim.cmd('CcRemote')
+    end
     vim.notify = notify
   ]])
   local sent = _G.child.lua_get('_G._test_sent')
-  eq(#sent, 6)
+  eq(#sent, 7)
   for _, msg in ipairs(sent) do
     eq(msg.type, 'control_request')
     eq(type(msg.request_id), 'string')
@@ -899,7 +904,8 @@ T['live Claude toggle sends enable, optional name, and disable for active states
   eq(sent[1].request, { subtype = 'remote_control', enabled = true })
   eq(sent[2].request, { subtype = 'remote_control', enabled = true, name = 'phone' })
   for i = 3, 5 do eq(sent[i].request, { subtype = 'remote_control', enabled = false }) end
-  eq(sent[6].request.enabled, true)
+  -- Terminal bridge states are "not enabled": :CcRemote re-enables directly.
+  for i = 6, 7 do eq(sent[i].request, { subtype = 'remote_control', enabled = true }) end
   local notices = _G.child.lua_get('_G._test_notices')
   eq(notices[1], { msg = 'cc.nvim: remote control → enabling (requested)', level = vim.log.levels.INFO })
   eq(notices[3], { msg = 'cc.nvim: remote control → disabling (requested)', level = vim.log.levels.INFO })
@@ -1458,6 +1464,290 @@ T['CcNew remote without a name leaves the session unnamed for auto-rename'] = fu
   ]])
   eq(_G.child.lua_get('_G._test_renames'), 0)
   eq(_G.child.lua_get('_G._test_state'), { should_run = true })
+end
+
+-- ---------------------------------------------------------------------------
+-- Bridge lifecycle: state transitions, remote interrupts, disable mid-turn.
+-- Fixtures were captured from claude 2.1.270 (`remote_control_states` is
+-- synthetic; the CLI's own detail strings are used).
+-- ---------------------------------------------------------------------------
+
+local function capture_notify()
+  _G.child.lua([[
+    _G._test_notify = vim.notify
+    _G._test_notices = {}
+    vim.notify = function(msg, level) table.insert(_G._test_notices, { msg = msg, level = level }) end
+  ]])
+end
+
+local function restore_notify()
+  _G.child.lua('vim.notify = _G._test_notify')
+end
+
+local function count_output(text)
+  local lines = table.concat(helpers.get_buffer_lines(_G.child), '\n')
+  local _, n = lines:gsub(vim.pesc(text), '')
+  return n
+end
+
+--- Load an NDJSON fixture into the child, substituting REMOTE_REQUEST_ID with
+--- `id_expr` (a Lua expression) and recording the line that carried it.
+local function load_fixture(name, id_expr)
+  _G.child.lua(([==[
+    local id = %s
+    _G._test_fixture = vim.fn.readfile(%q)
+    _G._test_split = nil
+    for i, line in ipairs(_G._test_fixture) do
+      if line:find('REMOTE_REQUEST_ID', 1, true) then
+        _G._test_fixture[i] = (line:gsub('REMOTE_REQUEST_ID', id))
+        _G._test_split = i
+      end
+    end
+    _G._test_feed_range = function(from, to)
+      for i = from, to do _G._test_feed(_G._test_fixture[i]) end
+    end
+  ]==]):format(id_expr or 'nil', helpers.ndjson_fixtures_dir .. '/' .. name .. '.ndjson'))
+end
+
+T['bridge_state lifecycle drives the statusline label and terminal notices'] = function()
+  setup_pipeline()
+  capture_notify()
+  load_fixture('remote_control_states')
+  _G.child.lua([[
+    _G._test_statusline = function()
+      local statusline = require('cc.statusline')
+      local state = statusline.build_state({ session = _G._test_session })
+      return { shown = state.remote_control, label = statusline._default_format(state) }
+    end
+  ]])
+  local function step(i) _G.child.lua(('_G._test_feed(_G._test_fixture[%d])'):format(i)) end
+  step(1)
+  eq(_G.child.lua_get('_G._test_session.remote_control_state'), 'ready')
+  eq(_G.child.lua_get('_G._test_statusline().shown'), false)
+  step(2)
+  eq(_G.child.lua_get('_G._test_session.remote_control_state'), 'connected')
+  local sl = _G.child.lua_get('_G._test_statusline()')
+  eq(sl.shown, true)
+  eq(sl.label:find('remote', 1, true) ~= nil, true)
+  eq(sl.label:find('remote…', 1, true), nil)
+  step(3)
+  eq(_G.child.lua_get('_G._test_session.remote_control_state'), 'reconnecting')
+  eq(_G.child.lua_get('_G._test_session.remote_control_detail'), 'JWT expired — refreshing')
+  sl = _G.child.lua_get('_G._test_statusline()')
+  eq(sl.shown, true)
+  eq(sl.label:find('remote…', 1, true) ~= nil, true)
+  step(4)
+  eq(_G.child.lua_get('_G._test_session.remote_control_state'), 'connected')
+  eq(_G.child.lua_get('_G._test_session.remote_control_detail == nil'), true)
+  eq(_G.child.lua_get('_G._test_statusline().label'):find('remote…', 1, true), nil)
+  eq(_G.child.lua_get('_G._test_notices'), {})
+  eq(count_output('Remote Control failed'), 0)
+  step(5)
+  eq(_G.child.lua_get('_G._test_session.remote_control_state'), 'failed')
+  eq(_G.child.lua_get('_G._test_statusline().shown'), false)
+  assert_output('Remote Control failed: the session worker registration went stale'
+    .. ' — no active worker holds it (code 4090) (:CcRemote to retry)')
+  step(6)
+  eq(_G.child.lua_get('_G._test_session.remote_control_state'), 'policy_disabled')
+  eq(_G.child.lua_get('_G._test_statusline().shown'), false)
+  assert_output("Remote Control failed: Remote Control is disabled by your organization's policy"
+    .. ' (:CcRemote to retry)')
+  restore_notify()
+  local notices = _G.child.lua_get('_G._test_notices')
+  eq(#notices, 2)
+  for _, notice in ipairs(notices) do
+    eq(notice.level, vim.log.levels.WARN)
+    eq(notice.msg:find(':CcRemote to retry', 1, true) ~= nil, true)
+  end
+end
+
+T['bridge failure during enable is reported once with the retry hint'] = function()
+  setup_pipeline()
+  capture_notify()
+  _G.child.lua([[
+    local id = _G._test_process:set_remote_control(true, nil, function(ok, resp)
+      _G._test_callback = { ok = ok, error = resp.error }
+    end)
+    -- The CLI emits bridge_state failed from inside init, then answers the
+    -- enable request with the same detail as its error.
+    _G._test_feed('{"type":"system","subtype":"bridge_state","state":"failed","detail":"no OAuth tokens"}')
+    _G._test_feed(vim.json.encode({ type = 'control_response', response = {
+      subtype = 'error', request_id = id, error = 'no OAuth tokens',
+    } }))
+    id = _G._test_process:set_remote_control(true)
+    _G._test_feed(vim.json.encode({ type = 'control_response', response = {
+      subtype = 'error', request_id = id, error = 'conversation was cleared',
+    } }))
+  ]])
+  restore_notify()
+  eq(count_output('no OAuth tokens'), 1)
+  assert_output('Remote Control failed: no OAuth tokens (:CcRemote to retry)')
+  assert_output('Remote Control failed: conversation was cleared')
+  eq(_G.child.lua_get('_G._test_callback'), { ok = false, error = 'no OAuth tokens' })
+  eq(_G.child.lua_get('_G._test_session.remote_control_state'), 'failed')
+  local notices = _G.child.lua_get('_G._test_notices')
+  eq(#notices, 2)
+  eq(notices[1].msg, 'cc.nvim: Remote Control failed: no OAuth tokens (:CcRemote to retry)')
+  eq(notices[2].msg, 'cc.nvim: Remote Control failed: conversation was cleared')
+end
+
+T['remote interrupt fixture stamps the turn and absorbs the error result'] = function()
+  setup_pipeline()
+  capture_notify()
+  load_fixture('remote_control_interrupt')
+  _G.child.lua([[
+    for i, line in ipairs(_G._test_fixture) do
+      if line:find('[Request interrupted by user', 1, true) then _G._test_marker = i end
+    end
+    _G._test_feed_range(1, _G._test_marker - 1)
+  ]])
+  eq(_G.child.lua_get('_G._test_session.turn_active'), true)
+  eq(_G.child.lua_get('_G._test_session.remote_control_state'), 'connected')
+  eq(count_output('Interrupted'), 0)
+  _G.child.lua('_G._test_feed(_G._test_fixture[_G._test_marker])')
+  eq(_G.child.lua_get('_G._test_session.turn_active'), false)
+  eq(_G.child.lua_get('_G._test_session.is_streaming'), false)
+  eq(_G.child.lua_get('_G._test_router.interrupted_result_pending'), true)
+  eq(count_output('── Interrupted remotely ──'), 1)
+  _G.child.lua('_G._test_feed_range(_G._test_marker + 1, #_G._test_fixture)')
+  restore_notify()
+  eq(_G.child.lua_get('_G._test_router.interrupted_result_pending'), false)
+  eq(_G.child.lua_get('_G._test_session.cost_usd'), 0.015461)
+  eq(_G.child.lua_get('_G._test_notices'), {})
+  eq(count_output('error during execution'), 0)
+  eq(count_output('── Interrupted ──'), 0)
+  eq(count_output('$'), 0)
+  eq(_G.child.lua_get('next(_G._test_output._tool_timers) == nil'), true)
+end
+
+T['own interrupt marker arriving before the acknowledgement renders one plain notice'] = function()
+  setup_pipeline()
+  _G.child.lua([[
+    local s = _G._test_session
+    s.turn_active = true
+    s.is_streaming = true
+    s.turn_started_at = (vim.uv or vim.loop).now() - 2000
+    local rid = _G._test_process:send_control_interrupt()
+    s.interrupt_pending = true
+    _G._test_feed(vim.json.encode({ type = 'user', message = { role = 'user', content = {
+      { type = 'text', text = '[Request interrupted by user]' },
+    } } }))
+    _G._test_after_marker = { turn_active = s.turn_active, pending = _G._test_router.interrupted_result_pending }
+    _G._test_feed(vim.json.encode({ type = 'control_response', response = {
+      subtype = 'success', request_id = rid, response = { still_queued = {} },
+    } }))
+    _G._test_feed(vim.json.encode({ type = 'result', subtype = 'error_during_execution',
+      is_error = true, total_cost_usd = 0.5 }))
+  ]])
+  eq(_G.child.lua_get('_G._test_after_marker'), { turn_active = false, pending = true })
+  eq(count_output('── Interrupted ──'), 1)
+  eq(count_output('Interrupted remotely'), 0)
+  eq(count_output('error during execution'), 0)
+  eq(_G.child.lua_get('_G._test_session.interrupt_pending'), false)
+  eq(_G.child.lua_get('_G._test_router.interrupted_result_pending'), false)
+end
+
+T['interrupt marker without a live turn renders nothing'] = function()
+  setup_pipeline()
+  local lines = helpers.get_buffer_lines(_G.child)
+  _G.child.lua([[
+    _G._test_feed(vim.json.encode({ type = 'user', message = { role = 'user', content = {
+      { type = 'text', text = '[Request interrupted by user for tool use]' },
+    } } }))
+  ]])
+  eq(helpers.get_buffer_lines(_G.child), lines)
+  eq(_G.child.lua_get('_G._test_router.interrupted_result_pending'), false)
+end
+
+T['remote model change lands with the next init; permission mode lands immediately'] = function()
+  setup_pipeline()
+  load_fixture('remote_control_set_model')
+  _G.child.lua([[
+    local inits = 0
+    for _, line in ipairs(_G._test_fixture) do
+      _G._test_feed(line)
+      if line:find('"subtype":"init"', 1, true) then
+        inits = inits + 1
+        if inits == 1 then
+          _G._test_first = { model = _G._test_session.model, mode = _G._test_session.permission_mode }
+          _G._test_session.context_window = 200000
+        else
+          _G._test_second = {
+            model = _G._test_session.model,
+            context_cleared = _G._test_session.context_window == nil,
+          }
+        end
+      end
+    end
+  ]])
+  eq(_G.child.lua_get('_G._test_first'), { model = 'claude-fable-5-1', mode = 'auto' })
+  eq(_G.child.lua_get('_G._test_second'), { model = 'claude-sonnet-5', context_cleared = true })
+  eq(_G.child.lua_get('_G._test_session.permission_mode'), 'acceptEdits')
+  eq(_G.child.lua_get('_G._test_session.turn_active'), false)
+  eq(count_output('Set model to'), 0)
+end
+
+T['disable while a tool runs leaves the turn intact'] = function()
+  setup_pipeline()
+  load_fixture('remote_control_disable_tool',
+    '_G._test_process:set_remote_control(false, nil, function(ok) _G._test_callback_ok = ok end)')
+  _G.child.lua([[
+    _G._test_feed_range(1, _G._test_split)
+    _G._test_mid = {
+      turn_active = _G._test_session.turn_active,
+      state_cleared = _G._test_session.remote_control_state == nil,
+      timer_running = next(_G._test_output._tool_timers) ~= nil,
+    }
+    _G._test_feed_range(_G._test_split + 1, #_G._test_fixture)
+  ]])
+  eq(_G.child.lua_get('_G._test_mid'), { turn_active = true, state_cleared = true, timer_running = true })
+  eq(_G.child.lua_get('_G._test_callback_ok'), true)
+  eq(count_output('Remote Control disabled'), 1)
+  eq(count_output('Interrupted'), 0)
+  eq(_G.child.lua_get('_G._test_session.turn_active'), false)
+  eq(_G.child.lua_get('next(_G._test_output._tool_timers) == nil'), true)
+  local lines = table.concat(helpers.get_buffer_lines(_G.child), '\n')
+  local disabled = lines:find('Remote Control disabled', 1, true)
+  local cost = lines:find('$0.', 1, true)
+  eq(disabled ~= nil and cost ~= nil and disabled < cost, true)
+end
+
+T['disable while a permission prompt is pending keeps it answerable from stdin'] = function()
+  setup_pipeline()
+  load_fixture('remote_control_disable_permission', '_G._test_process:set_remote_control(false)')
+  _G.child.lua([[
+    local prompt = require('cc.permission_prompt')
+    local ask = prompt.ask
+    _G._test_dismissed = 0
+    prompt.ask = function(_tool, _input, on_choice)
+      _G._test_on_choice = on_choice
+      return { dismiss = function() _G._test_dismissed = _G._test_dismissed + 1 end }
+    end
+    _G._test_feed_range(1, _G._test_split)
+    _G._test_mid = {
+      turn_active = _G._test_session.turn_active,
+      state_cleared = _G._test_session.remote_control_state == nil,
+      open = vim.tbl_count(_G._test_router.open_prompts),
+      asked = _G._test_on_choice ~= nil,
+      sent = #_G._test_sent,
+    }
+    _G._test_on_choice('allow', 'allow_once')
+    _G._test_after = { open = vim.tbl_count(_G._test_router.open_prompts), sent = #_G._test_sent }
+    _G._test_feed_range(_G._test_split + 1, #_G._test_fixture)
+    prompt.ask = ask
+  ]])
+  eq(_G.child.lua_get('_G._test_mid'),
+    { turn_active = true, state_cleared = true, open = 1, asked = true, sent = 1 })
+  eq(_G.child.lua_get('_G._test_after'), { open = 0, sent = 2 })
+  local sent = _G.child.lua_get('_G._test_sent')
+  eq(sent[2].type, 'control_response')
+  eq(sent[2].response.request_id, '6f18059b-c6e9-4679-8e41-4c6cab173f92')
+  eq(sent[2].response.response.behavior, 'allow')
+  eq(_G.child.lua_get('_G._test_dismissed'), 0)
+  eq(count_output('Remote Control disabled'), 1)
+  eq(count_output('Allowed: Bash'), 1)
+  eq(count_output('Answered remotely'), 0)
+  eq(_G.child.lua_get('_G._test_session.turn_active'), false)
 end
 
 return T
