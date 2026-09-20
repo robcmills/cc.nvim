@@ -13,6 +13,7 @@ local M = {}
 ---@field open_prompts table<string, { tool_name: string, dismiss: fun() }>
 ---@field on_session_id fun(session_id: string)?
 ---@field interrupted_result_pending boolean true after an acknowledged interrupt until Claude's optional trailing result
+---@field remote_control_failure string? detail of the last bridge_state failure, so the CLI's matching control_response error is not shown twice
 ---@field rate_limit_status string? status of the last rendered rate_limit_event
 ---@field rate_limit_key string? dedupe key of the last rendered rate_limit_event
 ---@field last_error_text string? error notice shown for the in-flight turn, so its `result` echo is not repeated
@@ -63,6 +64,21 @@ local function launched_task_id(msg, block)
   local text = result_text(block.content)
   return text:match('background with ID:%s*([^%s%.]+)')
     or text:match('agentId:%s*([^%s%(]+)')
+end
+
+--- The CLI closes an aborted turn with a synthetic user message whose only
+--- content is the text "[Request interrupted by user]" (or "... for tool
+--- use]"). Both the stdin interrupt and a claude.ai interrupt abort with the
+--- same reason and emit it; a permission denial does not.
+---@param content table user message content blocks
+---@return boolean
+local function is_interrupt_marker(content)
+  local text
+  for _, block in ipairs(content) do
+    if type(block) ~= 'table' or block.type ~= 'text' then return false end
+    text = text or block.text
+  end
+  return type(text) == 'string' and text:find('^%[Request interrupted by user') ~= nil
 end
 
 ---@param msg table
@@ -167,9 +183,16 @@ function Router:_handle_system(msg)
   elseif sub == 'bridge_state' then
     self.session.remote_control_state = msg.state
     self.session.remote_control_detail = msg.detail
-    if msg.state == 'failed' then
-      local cfg = Config.options.remote_control
-      self.output:render_notice(string.format(cfg.error_format, msg.detail or 'bridge failed'))
+    self.remote_control_failure = nil
+    if msg.state == 'failed' or msg.state == 'policy_disabled' then
+      -- Terminal: the transport gave up (auth, superseded worker, version)
+      -- or the org policy refused the bridge. `reconnecting` is the only
+      -- state the CLI recovers from on its own; these need a new enable.
+      local detail = msg.detail or 'bridge failed'
+      self.remote_control_failure = detail
+      local text = string.format(Config.options.remote_control.failed_format, detail)
+      self.output:render_notice(text)
+      vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
     end
   elseif sub == 'compact_boundary' then
     self.output:render_notice('Context Compacted')
@@ -311,6 +334,10 @@ function Router:_handle_user(msg)
     return false
   end
   if type(content) ~= 'table' then return false end
+  if is_interrupt_marker(content) then
+    self:_on_interrupt_marker()
+    return false
+  end
   local changed = false
   for _, block in ipairs(content) do
     if type(block) == 'table' and block.type == 'tool_result' then
@@ -329,6 +356,31 @@ function Router:_handle_user(msg)
     end
   end
   return changed
+end
+
+--- Stamp the live turn as interrupted, once, whichever signal lands first:
+--- the control_response to our own interrupt or the CLI's interrupt marker.
+---@param text string? notice text; nil renders the default 'Interrupted'
+function Router:_finish_interrupted_turn(text)
+  if self.interrupted_result_pending then return end
+  self.output:stop_all_tool_timers()
+  -- Claude versions differ on whether they emit a trailing `result` (2.1.x
+  -- sends `error_during_execution`). Absorb it as state-only so neither an
+  -- error notice nor cumulative cost/usage is shown for this turn.
+  self.interrupted_result_pending = true
+  self.output:render_interrupted(self.session:finish_turn(), text)
+end
+
+--- A turn we did not ask to stop was aborted from claude.ai. When we did ask
+--- (interrupt_pending), the marker merely confirms it, possibly ahead of the
+--- control_response, and renders the plain notice.
+function Router:_on_interrupt_marker()
+  if not self.session.turn_active then return end
+  local text = nil
+  if not self.session.interrupt_pending then
+    text = Config.options.remote_control.interrupted_notice
+  end
+  self:_finish_interrupted_turn(text)
 end
 
 function Router:_handle_result(msg)
@@ -443,12 +495,7 @@ function Router:_handle_control_response(msg)
       self.session.turn_active = false
     end
     if resp.subtype == 'success' then
-      -- Claude versions differ on whether they emit a trailing `result`.
-      -- Stamp the acknowledged interrupt now, then absorb any such result as
-      -- state-only so cumulative cost/usage is never shown for this turn.
-      self.output:stop_all_tool_timers()
-      self.interrupted_result_pending = true
-      self.output:render_interrupted(self.session:finish_turn())
+      self:_finish_interrupted_turn()
     else
       local err = resp.error or 'control_response error'
       self.output:render_notice('Interrupt failed: ' .. tostring(err))
@@ -472,6 +519,7 @@ function Router:_handle_control_response(msg)
     if resp.subtype == 'success' then
       local inner = resp.response or {}
       if inner.session_url then
+        self.remote_control_failure = nil
         self.session.remote_control_url = inner.session_url
         self.session.remote_control_bridge_id = inner.bridge_session_id
         if not pending.silent then
@@ -485,9 +533,14 @@ function Router:_handle_control_response(msg)
         if not pending.silent then self.output:render_notice(cfg.disabled_notice) end
       end
     elseif not pending.silent then
-      local text = string.format(cfg.error_format, resp.error or 'control_response error')
-      self.output:render_notice(text)
-      vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
+      local err = resp.error or 'control_response error'
+      -- An enable that died inside the bridge init already reported itself
+      -- through bridge_state failed/policy_disabled with this same text.
+      if err ~= self.remote_control_failure then
+        local text = string.format(cfg.error_format, err)
+        self.output:render_notice(text)
+        vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
+      end
     end
   elseif subtype == 'get_settings' then
     if resp.subtype ~= 'success' then return end

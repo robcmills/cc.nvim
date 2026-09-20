@@ -1547,8 +1547,9 @@ M._default_turn_cost_format = require('cc.output.cost').default_format
 --- Providers must pass timing metadata only: cost and token usage are
 --- intentionally unreliable for interrupted turns.
 ---@param timing { turn_ended_at: integer, turn_elapsed_ms: integer? }
-function Output:render_interrupted(timing)
-  self:render_notice('Interrupted')
+---@param text string? notice text; defaults to 'Interrupted'
+function Output:render_interrupted(timing, text)
+  self:render_notice(text or 'Interrupted')
   self:render_result({
     turn_ended_at = timing.turn_ended_at,
     turn_elapsed_ms = timing.turn_elapsed_ms or 0,
@@ -1585,9 +1586,21 @@ function Output:render_permission_outcome(behavior, tool_name)
     verb = 'Answered remotely'
   end
   local bufnr = self:ensure_buffer()
+  local prefix = '  ⚠ Permission: ' .. tool_name
   self:_with_tail_anchor(function()
     local line_count = vim.api.nvim_buf_line_count(bufnr)
-    self:_set_line(line_count, '  ' .. icon .. ' ' .. verb .. ': ' .. tool_name)
+    -- The prompt line is normally the tail, but the tool body and notices
+    -- (e.g. Remote Control disabled while the prompt was open) can land
+    -- after it. Replace the prompt line itself, wherever it is.
+    local lnum = line_count
+    for i = line_count, 1, -1 do
+      local line = vim.api.nvim_buf_get_lines(bufnr, i - 1, i, false)[1]
+      if line == prefix or (line and line:sub(1, #prefix + 1) == prefix .. ' ') then
+        lnum = i
+        break
+      end
+    end
+    self:_set_line(lnum, '  ' .. icon .. ' ' .. verb .. ': ' .. tool_name)
   end)
 end
 

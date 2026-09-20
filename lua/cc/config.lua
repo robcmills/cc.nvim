@@ -139,7 +139,11 @@ local defaults = {
     notice_format = 'Remote Control: %s', -- session_url
     disabled_notice = 'Remote Control disabled',
     resync_notice = 'Remote Control: re-creating the claude.ai session so history syncs',
-    error_format = 'Remote Control failed: %s', -- error/detail
+    error_format = 'Remote Control failed: %s', -- CLI error text for a refused request
+    -- bridge_state failed/policy_disabled detail. The CLI does not retry a
+    -- dead bridge; only a fresh enable brings it back.
+    failed_format = 'Remote Control failed: %s (:CcRemote to retry)',
+    interrupted_notice = 'Interrupted remotely', -- turn aborted from claude.ai
   },
 
   show_thinking = true,
