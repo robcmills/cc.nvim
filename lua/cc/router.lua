@@ -544,8 +544,23 @@ function Router:_handle_control_request(msg)
   if req.subtype == 'can_use_tool' then
     self:_handle_permission_request(msg.request_id, req)
   elseif req.subtype == 'elicitation' then
-    require('cc.interactive').handle_elicitation(
-      self.process, self.output, msg.request_id, req, self.instance)
+    self:_handle_interactive_request(msg.request_id, req, 'elicitation', 'handle_elicitation')
+  end
+end
+
+---@param request_id string
+---@param req table
+---@param tool_name string
+---@param handler string
+function Router:_handle_interactive_request(request_id, req, tool_name, handler)
+  local answered = false
+  local handle = require('cc.interactive')[handler](
+    self.process, self.output, request_id, req, self.instance, function()
+      self.open_prompts[request_id] = nil
+      answered = true
+    end)
+  if not answered then
+    self.open_prompts[request_id] = { tool_name = tool_name, dismiss = handle.dismiss }
   end
 end
 
@@ -557,16 +572,13 @@ function Router:_handle_permission_request(request_id, req)
 
   -- Specialized handlers for interactive CC features.
   if tool_name == 'EnterPlanMode' then
-    require('cc.interactive').handle_enter_plan_mode(
-      self.process, self.output, request_id, req, self.instance)
+    self:_handle_interactive_request(request_id, req, tool_name, 'handle_enter_plan_mode')
     return
   elseif tool_name == 'ExitPlanMode' then
-    require('cc.interactive').handle_exit_plan_mode(
-      self.process, self.output, request_id, req, self.instance)
+    self:_handle_interactive_request(request_id, req, tool_name, 'handle_exit_plan_mode')
     return
   elseif tool_name == 'AskUserQuestion' then
-    require('cc.interactive').handle_ask_user_question(
-      self.process, self.output, request_id, req, self.instance)
+    self:_handle_interactive_request(request_id, req, tool_name, 'handle_ask_user_question')
     return
   end
 
