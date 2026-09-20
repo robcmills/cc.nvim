@@ -171,7 +171,7 @@ instead of being guessed.
 | `:CcPermissionMode [mode]` | Set permission mode (no arg = picker with one-line descriptions; tab-completes the six modes). Sent live to an active session via `set_permission_mode` control_request, else stored for the next `:Cc` / `:CcNew`. |
 | `:CcRemote [name]` | Toggle Claude Remote Control live, or for the next `:CcNew`; optional name renames the session (shown in claude.ai too) |
 | `:CcPlanShow` | Open the most recent plan file |
-| `:CcResume [id\|claude\|codex]` | Resume by ID, or open the all-provider picker (optionally filtered by provider) |
+| `:CcResume [id\|claude\|codex] [remote[=name]]` | Resume by ID, or open the all-provider picker (optionally filtered by provider); `remote` enables Remote Control on the resumed session |
 | `:CcContinue` | Resume the most recent session for the current cwd across providers |
 | `:CcHistory` / `:CcHistory!` | Pick a session across providers (! = all projects) |
 | `:CcRename [name]` | Rename the current session (no arg = show current title) |
@@ -290,6 +290,7 @@ require('cc').setup({
     resync_notice = 'Remote Control: re-creating the claude.ai session so history syncs',
     error_format = 'Remote Control failed: %s', -- error/detail
     rename_error_format = 'Rename failed: %s', -- rename_session control error
+    resume = 'off', -- 'auto' re-enables on :CcResume when the session exited with it on
   },
 
   show_thinking = true,
@@ -556,13 +557,21 @@ whatever cc.nvim names the session later, whether from auto-rename or
 `/rename`, via the CLI's `rename_session` control request. If that request
 fails the output shows `remote_control.rename_error_format`.
 
-If you resume a session that still had Remote Control on when it last exited,
-the CLI reattaches to the old claude.ai session on the next enable and skips
-its history flush, so turns made in between never reach the phone
+Remote Control is off after `:CcResume` unless you ask for it. Pass
+`remote[=name]` to `:CcResume` (with an id, a provider filter, or on its own
+before the picker) to enable it for that session, or set
+`remote_control.resume = 'auto'` to re-enable it whenever the resumed
+transcript shows the session exited with Remote Control on.
+
+When a resumed session's transcript still names a claude.ai session, the
+CLI reattaches to it on enable: same URL, phone history intact. The CLI
+skips its history flush on reattach, so turns made while Remote Control was
+off would never reach the phone
 ([claude-code#95437](https://github.com/anthropics/claude-code/issues/95437)).
-cc.nvim detects this from the transcript and cycles the bridge off and on
-once, which creates a fresh claude.ai session with the full history. The
-notice it prints is `remote_control.resync_notice`.
+cc.nvim checks the transcript for turns recorded after the last bridge
+binding; if there are any, it cycles the bridge off and on once instead,
+which creates a fresh claude.ai session with the full history and prints
+`remote_control.resync_notice`.
 
 Prompts sent from the phone appear in the output buffer as user turns.
 cc.nvim launches the CLI with `--replay-user-messages` and drops the echoes
@@ -711,6 +720,7 @@ show a provider column.
 - `:CcResume claude` / `:CcResume codex` filter the picker by provider
 - `:CcHistory!` opens a picker across every project and provider
 - `:CcResume <id>` jumps to a specific session
+- `:CcResume <id> remote[=name]` also enables Remote Control (see above)
 
 When resuming, the prior transcript is re-rendered into the output buffer
 (with inline diffs, tool calls, etc.) before the live session picks up.

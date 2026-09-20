@@ -805,7 +805,9 @@ end
 --- configured provider for backwards compatibility.
 ---@param session_id string
 ---@param provider_name 'claude'|'codex'?
-function M.resume(session_id, provider_name)
+---@param opts { remote: boolean|string? }? remote: enable Remote Control on the resumed session (string = title)
+function M.resume(session_id, provider_name, opts)
+  opts = opts or {}
   if not session_id or session_id == '' then
     vim.notify('cc.nvim: resume requires a session id', vim.log.levels.WARN)
     return
@@ -826,7 +828,7 @@ function M.resume(session_id, provider_name)
     P.prerender_resume(inst, session_id)
   end
   inst.last_session_id = session_id
-  attach_provider(inst, { resume_id = session_id, provider = P.name })
+  attach_provider(inst, { resume_id = session_id, provider = P.name, remote = opts.remote })
 end
 
 --- Public: resume most recent session for the current cwd.
@@ -843,7 +845,8 @@ end
 --- Public: pick a session to resume.
 ---@param all_projects boolean? if true, include sessions from other cwds
 ---@param provider_name 'claude'|'codex'? limit the picker to one provider
-function M.history(all_projects, provider_name)
+---@param resume_opts { remote: boolean|string? }? forwarded to M.resume for the chosen session
+function M.history(all_projects, provider_name, resume_opts)
   Providers.list_history({
     all = all_projects or false,
     provider = provider_name,
@@ -860,7 +863,7 @@ function M.history(all_projects, provider_name)
         return require('cc.history').format_entry(e, all_projects or false, true)
       end,
     }, function(choice)
-      if choice then M.resume(choice.session_id, choice.provider) end
+      if choice then M.resume(choice.session_id, choice.provider, resume_opts) end
     end)
   end)
 end

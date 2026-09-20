@@ -143,6 +143,11 @@ local defaults = {
     resync_notice = 'Remote Control: re-creating the claude.ai session so history syncs',
     error_format = 'Remote Control failed: %s', -- error/detail
     rename_error_format = 'Rename failed: %s', -- rename_session control error
+    -- 'auto' re-enables the bridge on :CcResume when the resumed transcript's
+    -- last bridge binding is non-empty (the session exited with Remote
+    -- Control on). 'off' never enables on resume unless :CcResume is given
+    -- `remote[=name]`.
+    resume = 'off', -- 'off' | 'auto'
   },
 
   show_thinking = true,
@@ -314,6 +319,16 @@ local function validate_statusline_options()
   statusline.priorities = vim.deepcopy(defaults.statusline.priorities)
 end
 
+local function validate_remote_control_options()
+  local remote_control = M.options.remote_control
+  if type(remote_control) ~= 'table' then return end
+  local resume = remote_control.resume
+  if resume == 'off' or resume == 'auto' then return end
+  warn_invalid('remote_control.resume', resume, defaults.remote_control.resume,
+    "'off' or 'auto'")
+  remote_control.resume = defaults.remote_control.resume
+end
+
 local REMOVED_CLAUDE_KEYS = {
   'claude_cmd',
   'extra_args',
@@ -326,6 +341,7 @@ function M.setup(opts)
   M.options = vim.tbl_deep_extend('force', vim.deepcopy(defaults), opts or {})
   validate_streaming_options()
   validate_statusline_options()
+  validate_remote_control_options()
   -- These former top-level Claude settings are intentionally unsupported.
   -- Drop them even if an old setup table still supplies them so no caller
   -- can accidentally observe or revive the compatibility path.

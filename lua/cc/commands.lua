@@ -2,11 +2,11 @@
 
 local M = {}
 
---- Parse position-independent Remote Control keywords and positional model/effort.
+--- Split the position-independent `remote[=name]` keyword from the rest.
 ---@param fargs string[]
----@return { model: string?, effort: string?, remote: boolean|string? }? opts
----@return string? err
-function M.parse_new_args(fargs)
+---@return string[] positional
+---@return boolean|string? remote
+local function split_remote(fargs)
   local positional, remote = {}, nil
   for _, arg in ipairs(fargs) do
     local name = arg:match('^remote=(.*)$')
@@ -16,6 +16,15 @@ function M.parse_new_args(fargs)
       table.insert(positional, arg)
     end
   end
+  return positional, remote
+end
+
+--- Parse position-independent Remote Control keywords and positional model/effort.
+---@param fargs string[]
+---@return { model: string?, effort: string?, remote: boolean|string? }? opts
+---@return string? err
+function M.parse_new_args(fargs)
+  local positional, remote = split_remote(fargs)
   if #positional > 2 then
     return nil, 'cc.nvim: :CcNew [model] [effort] [remote[=name]]'
   end
@@ -25,6 +34,19 @@ function M.parse_new_args(fargs)
       .. table.concat(require('cc.effort').levels(), ', ')
   end
   return { model = model, effort = effort, remote = remote }
+end
+
+--- Parse :CcResume arguments: an optional session id or provider filter plus
+--- the position-independent `remote[=name]` keyword.
+---@param fargs string[]
+---@return { target: string?, remote: boolean|string? }? opts
+---@return string? err
+function M.parse_resume_args(fargs)
+  local positional, remote = split_remote(fargs)
+  if #positional > 1 then
+    return nil, 'cc.nvim: :CcResume [id|claude|codex] [remote[=name]]'
+  end
+  return { target = positional[1], remote = remote }
 end
 
 function M.create()
@@ -98,23 +120,44 @@ function M.create()
     { desc = 'Show the most recent plan file (or pick from ~/.claude/plans)' })
 
   vim.api.nvim_create_user_command('CcResume', function(opts)
-    if opts.args == 'claude' or opts.args == 'codex' then
-      cc.history(false, opts.args)
-    elseif opts.args and opts.args ~= '' then
-      cc.resume(opts.args)
+    local parsed, err = M.parse_resume_args(opts.fargs)
+    if not parsed then
+      vim.notify(err, vim.log.levels.WARN)
+      return
+    end
+    local resume_opts = { remote = parsed.remote }
+    if parsed.target == 'claude' or parsed.target == 'codex' then
+      cc.history(false, parsed.target, resume_opts)
+    elseif parsed.target then
+      cc.resume(parsed.target, nil, resume_opts)
     else
-      cc.history(false)
+      cc.history(false, nil, resume_opts)
     end
   end, {
-    nargs = '?',
-    complete = function(arg_lead)
+    nargs = '*',
+    complete = function(arg_lead, cmd_line, cursor_pos)
+      local before = cmd_line:sub(1, cursor_pos)
+      local args = before:match('^%s*CcResume%s+(.*)$') or ''
+      local positional, has_remote = 0, false
+      for arg in args:gmatch('(%S+)%s+') do
+        if arg == 'remote' or arg:match('^remote=') then
+          has_remote = true
+        else
+          positional = positional + 1
+        end
+      end
       local out = {}
-      for _, provider in ipairs({ 'claude', 'codex' }) do
-        if provider:sub(1, #arg_lead) == arg_lead then table.insert(out, provider) end
+      if positional == 0 then
+        for _, provider in ipairs({ 'claude', 'codex' }) do
+          if provider:sub(1, #arg_lead) == arg_lead then table.insert(out, provider) end
+        end
+      end
+      if not has_remote and ('remote'):sub(1, #arg_lead) == arg_lead then
+        table.insert(out, 'remote')
       end
       return out
     end,
-    desc = 'Resume a cc.nvim session (picker accepts optional provider filter)',
+    desc = 'Resume a cc.nvim session (optional id or provider filter, and remote[=name])',
   })
 
   vim.api.nvim_create_user_command('CcContinue', function() cc.continue_last() end,
