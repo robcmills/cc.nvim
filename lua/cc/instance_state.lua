@@ -4,7 +4,7 @@
 
 local M = {}
 
----@alias cc.InstanceState 'waiting'|'interrupting'|'working'|'monitoring'|'starting'|'ready'|'exited'
+---@alias cc.InstanceState 'waiting'|'interrupting'|'working'|'monitoring'|'unread'|'starting'|'ready'|'exited'
 
 ---@param inst cc.Instance?
 ---@return cc.InstanceState
@@ -18,6 +18,7 @@ function M.get(inst)
   if session and session.turn_active then return 'working' end
   if session and session.background_task_count
       and session:background_task_count() > 0 then return 'monitoring' end
+  if require('cc.seen').has_unseen_output(inst) then return 'unread' end
   local session_id = inst.last_session_id or (session and session.id)
   if not session_id or session_id == '' then return 'starting' end
   return 'ready'

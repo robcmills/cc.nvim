@@ -208,6 +208,109 @@ T['list_instances']['Codex approvals set and clear awaiting_input'] = function()
   eq(_G.child.lua_get('_G._codex_waiting_after'), false)
 end
 
+T['unread'] = MiniTest.new_set({ hooks = {
+  pre_case = function()
+    _G.child.lua([[
+      vim.api.nvim_set_current_buf(vim.api.nvim_create_buf(false, true))
+      _G._unread_output = vim.api.nvim_create_buf(false, true)
+    ]])
+    register(_G.child, _G.child.lua_get('_G._unread_output'), { session_id = true })
+    _G.child.lua([[
+      _G._unread_inst = require('cc').find_instance(_G._unread_output)
+      vim.api.nvim_exec_autocmds('FocusGained', {})
+    ]])
+  end,
+} })
+
+T['unread']['finish stamps wall time and appears in inventory'] = function()
+  eq(_G.child.lua_get('_G._unread_inst.session.turn_finished_at == nil'), true)
+  eq(_G.child.lua_get('_G._unread_inst.output_seen_at == nil'), true)
+  _G.child.lua([[
+    local s = _G._unread_inst.session
+    s:add_user_turn('hello')
+    s:finish_turn()
+    local seconds, microseconds = (vim.uv or vim.loop).gettimeofday()
+    _G._finish_age = seconds * 1000 + math.floor(microseconds / 1000) - s.turn_finished_at
+  ]])
+  eq(_G.child.lua_get('type(_G._unread_inst.session.turn_finished_at)'), 'number')
+  eq(_G.child.lua_get('_G._finish_age >= 0 and _G._finish_age < 1000'), true)
+  eq(_G.child.lua_get('require("cc.instance_state").get(_G._unread_inst)'), 'unread')
+  eq(_G.child.lua_get('require("cc").list_instances()[1].state'), 'unread')
+end
+
+for _, buffer in ipairs({ 'output', 'prompt' }) do
+  T['unread']['entering ' .. buffer .. ' marks output seen even without focus'] = function()
+    _G.child.lua([[
+      _G._unread_inst.session:finish_turn()
+      vim.api.nvim_exec_autocmds('FocusLost', {})
+    ]])
+    eq(_G.child.lua_get('require("cc.instance_state").get(_G._unread_inst)'), 'unread')
+    _G.child.lua('vim.api.nvim_set_current_buf(_G._unread_inst.' .. buffer .. '.bufnr)')
+    local state = _G.child.lua_get('require("cc.instance_state").get(_G._unread_inst)')
+    _G.child.lua("vim.api.nvim_exec_autocmds('FocusGained', {})")
+    eq(state, 'ready')
+  end
+end
+
+T['unread']['finishing while viewing stays ready'] = function()
+  _G.child.lua([[
+    local inst = _G._unread_inst
+    vim.api.nvim_set_current_buf(inst.output.bufnr)
+    inst.session:add_user_turn('hello')
+    vim.wait(5)
+    inst.session:finish_turn()
+    require('cc.seen').on_turn_finished(inst)
+  ]])
+  eq(_G.child.lua_get('require("cc.instance_state").get(_G._unread_inst)'), 'ready')
+end
+
+T['unread']['focus loss preserves unread until focus returns'] = function()
+  _G.child.lua([[
+    local inst = _G._unread_inst
+    vim.api.nvim_set_current_buf(inst.output.bufnr)
+    vim.api.nvim_exec_autocmds('FocusLost', {})
+    inst.session:add_user_turn('hello')
+    vim.wait(5)
+    inst.session:finish_turn()
+    require('cc.seen').on_turn_finished(inst)
+    _G._unfocused_state = require('cc.instance_state').get(inst)
+    vim.api.nvim_exec_autocmds('FocusGained', {})
+  ]])
+  eq(_G.child.lua_get('_G._unfocused_state'), 'unread')
+  eq(_G.child.lua_get('require("cc.instance_state").get(_G._unread_inst)'), 'ready')
+end
+
+T['unread']['a second finished turn becomes unread after leaving'] = function()
+  _G.child.lua([[
+    local inst = _G._unread_inst
+    inst.session:finish_turn()
+    vim.api.nvim_set_current_buf(inst.prompt.bufnr)
+    _G._first_seen_state = require('cc.instance_state').get(inst)
+    vim.api.nvim_set_current_buf(vim.api.nvim_create_buf(false, true))
+    inst.session:add_user_turn('again')
+    _G._second_active_state = require('cc.instance_state').get(inst)
+    vim.wait(5)
+    inst.session:finish_turn()
+    require('cc.seen').on_turn_finished(inst)
+  ]])
+  eq(_G.child.lua_get('_G._first_seen_state'), 'ready')
+  eq(_G.child.lua_get('_G._second_active_state'), 'working')
+  eq(_G.child.lua_get('require("cc.instance_state").get(_G._unread_inst)'), 'unread')
+end
+
+T['unread']['monitoring takes precedence and unread precedes starting'] = function()
+  _G.child.lua([[
+    local inst = _G._unread_inst
+    inst.session.id = nil
+    inst.session:finish_turn()
+    inst.session:begin_background_task('tool-1', 'task-1')
+    _G._monitoring_state = require('cc.instance_state').get(inst)
+    inst.session:finish_background_task('tool-1')
+  ]])
+  eq(_G.child.lua_get('_G._monitoring_state'), 'monitoring')
+  eq(_G.child.lua_get('require("cc.instance_state").get(_G._unread_inst)'), 'unread')
+end
+
 T['focus_instance'] = MiniTest.new_set()
 
 T['focus_instance']['focuses the exact registered output buffer'] = function()

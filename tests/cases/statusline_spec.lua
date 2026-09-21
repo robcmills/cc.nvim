@@ -532,6 +532,13 @@ T['default_format']['remote labels can be overridden'] = function()
   eq(_G.child.lua_get('_G._out'), '%#CcStl#%= %#CcStl#retry%#CcStl# ')
 end
 
+T['default_format']['unread uses the activity highlight'] = function()
+  _G.child.lua([[
+    _G._out = require('cc.statusline')._default_format({ state = 'unread' })
+  ]])
+  eq(_G.child.lua_get('_G._out'), '%#CcStl#%= %#CcStl#unread%#CcStl# ')
+end
+
 -- ---------------------------------------------------------------------------
 -- fmt_tokens
 -- ---------------------------------------------------------------------------

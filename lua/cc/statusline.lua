@@ -167,6 +167,8 @@ local function default_format(state)
   end
   if lifecycle == 'waiting' then
     add('activity', HL_LINE .. 'waiting')
+  elseif lifecycle == 'unread' then
+    add('activity', HL_LINE .. 'unread')
   elseif lifecycle == 'interrupting' then
     add('activity', HL_LINE .. 'interrupting…')
   elseif lifecycle == 'working' then

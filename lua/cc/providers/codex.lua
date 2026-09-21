@@ -663,6 +663,7 @@ function Codex:_on_turn_completed(params)
   self.output:stop_all_tool_timers()
 
   local result = s:finish_turn(turn.durationMs)
+  require('cc.seen').on_turn_finished(self.instance)
   result.usage = self:_turn_usage_delta()
 
   if turn.status == 'interrupted' then
