@@ -291,6 +291,7 @@ function Router:_handle_result(msg)
   local interrupted = self.interrupted_result_pending
   self.interrupted_result_pending = false
   self.session:on_result(msg, interrupted)
+  if not interrupted then require('cc.seen').on_turn_finished(self.instance) end
   -- A `result` is the terminal message of a turn; every tool should have
   -- completed by now. Any timer still running is orphaned (its tool_result
   -- never arrived), so stop it before the cost line lands.
@@ -375,7 +376,9 @@ function Router:_handle_control_response(msg)
       -- state-only so cumulative cost/usage is never shown for this turn.
       self.output:stop_all_tool_timers()
       self.interrupted_result_pending = true
-      self.output:render_interrupted(self.session:finish_turn())
+      local timing = self.session:finish_turn()
+      require('cc.seen').on_turn_finished(self.instance)
+      self.output:render_interrupted(timing)
     else
       local err = resp.error or 'control_response error'
       self.output:render_notice('Interrupt failed: ' .. tostring(err))

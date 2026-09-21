@@ -25,6 +25,7 @@ M.VERSION = '0.11.0'
 ---@field prompt cc.Prompt?
 ---@field output_winid integer?
 ---@field prompt_winid integer?
+---@field output_seen_at integer? epoch-ms timestamp when the user last viewed this instance
 ---@field last_session_id string?
 ---@field last_plan_file string?
 ---@field session_name string? user-set session title (set via /rename)
@@ -135,6 +136,7 @@ local function setup_buffer_autocmds(inst)
   local output_bufnr = inst.output.bufnr
   local prompt_bufnr = inst.prompt.bufnr
   local group = vim.api.nvim_create_augroup('cc.buffer_integration.' .. output_bufnr, { clear = true })
+  require('cc.seen').attach(inst)
 
   -- Record last-focused cc buffer so reopen can restore the user's window
   -- choice. BufLeave fires when leaving the buffer (including hops between
@@ -1617,6 +1619,9 @@ end
 ---@param inst table
 function M._register_test_instance(bufnr, inst)
   instances[bufnr] = inst
+  if inst.output and inst.output.bufnr and inst.prompt and inst.prompt.bufnr then
+    pcall(function() require('cc.seen').attach(inst) end)
+  end
 end
 
 return M

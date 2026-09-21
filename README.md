@@ -612,6 +612,7 @@ cc.nvim sets automatically when attaching). The default format shows:
   working — active from user submit through the final `result` message,
   covering tool calls and permission prompts. Shows `interrupting…` while
   a `:CcStop` is in flight and awaiting the CLI's acknowledgement.
+- `unread` when the last turn finished and you have not viewed the instance since.
 - Cumulative session tokens (input + output)
 - Permission mode
 - Current model, with a provider-aware icon
@@ -627,8 +628,8 @@ visual order does not change. A valid list contains each of `activity`,
 `remote_control` exactly once.
 
 Provide `statusline.format = function(state) ... end` to build your own.
-The `state` table exposes `provider`, `is_thinking`, `spinner_frame`,
-`interrupt_pending`, `total_tokens`, `input_tokens`, `output_tokens`,
+The `state` table exposes `state` (lifecycle below), `provider`, `is_thinking`,
+`spinner_frame`, `interrupt_pending`, `total_tokens`, `input_tokens`, `output_tokens`,
 `cost_usd`, `mode`, `branch`, `pr`, `model`, `cli_version`, `session_name`,
 `session_id`, `remote_control`, and the current output `window_width`. Custom
 formatters are not shortened automatically; they can use `window_width` to
@@ -641,6 +642,28 @@ statusline syntax.
 For either provider, the end-of-turn stamp includes the timestamp and elapsed
 time, but omits cost and token counts because interrupted-turn usage is not
 reliable.
+
+### Instance lifecycle and external agents
+
+`require('cc').list_instances()` returns JSON-safe snapshots for external
+agent tools, including callers using `nvim --remote-expr`. The snapshot's
+`state`, `:CcStatus`, and statusline lifecycle share this precedence:
+
+| State | Meaning |
+| --- | --- |
+| `exited` | The provider process is no longer alive. |
+| `waiting` | The agent needs user input. |
+| `interrupting` | A turn interruption is pending. |
+| `working` | A turn is active. |
+| `monitoring` | Background tasks are still running. |
+| `unread` | The last turn finished and you have not viewed the instance since. |
+| `starting` | The agent has no session ID yet. |
+| `ready` | The agent is idle with no unseen finished turn. |
+
+Entering either the output or prompt buffer marks the instance seen, including
+navigation through `require('cc').focus_instance(output_bufnr)`. A turn finishing
+in the current instance is seen immediately while Neovim is focused; returning
+focus also marks that instance seen.
 
 ## Session history
 

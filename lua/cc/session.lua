@@ -17,6 +17,7 @@ local M = {}
 ---@field is_streaming boolean
 ---@field turn_active boolean true from user submit through the final result
 ---@field turn_started_at integer? ms timestamp from vim.uv.now() while turn_active
+---@field turn_finished_at integer? epoch-ms timestamp of the latest finished turn
 ---@field background_tasks table<string, { task_id: string? }> background tools awaiting completion notification, keyed by tool-use id
 ---@field last_modified_at integer epoch-ms timestamp of the latest conversation activity
 ---@field interrupt_pending boolean
@@ -55,6 +56,7 @@ function M.new()
     is_streaming = false,
     turn_active = false,
     turn_started_at = nil,
+    turn_finished_at = nil,
     background_tasks = {},
     last_modified_at = wall_time_ms(),
     interrupt_pending = false,
@@ -282,6 +284,7 @@ end
 ---@param elapsed_ms integer? authoritative provider-reported duration
 ---@return { turn_ended_at: integer, turn_elapsed_ms: integer? }
 function Session:finish_turn(elapsed_ms)
+  self.turn_finished_at = wall_time_ms()
   self.interrupt_pending = false
   self.turn_active = false
   self.is_streaming = false
