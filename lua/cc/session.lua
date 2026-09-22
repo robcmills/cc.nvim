@@ -308,6 +308,40 @@ function Session:end_message()
   self.is_streaming = false
 end
 
+--- Record a complete assistant text reply that did not stream through
+--- begin_message/end_message (Codex delivers whole `agentMessage` items).
+--- Stored in the same turn shape as streamed replies so
+--- `last_assistant_text` is provider-neutral.
+---@param text string
+function Session:add_assistant_text(text)
+  if type(text) ~= 'string' or text == '' then return end
+  self:touch()
+  table.insert(self.turns, {
+    role = 'assistant',
+    message = { role = 'assistant', blocks = { { type = 'text', text = text } } },
+  })
+end
+
+--- Plain text of the most recent assistant message that contains text.
+--- Multiple text blocks in one message are joined with a blank line.
+--- Tool-only messages are skipped. Nil when no reply has been recorded.
+---@return string?
+function Session:last_assistant_text()
+  for i = #self.turns, 1, -1 do
+    local turn = self.turns[i]
+    if turn.role == 'assistant' and turn.message then
+      local parts = {}
+      for _, block in ipairs(turn.message.blocks or {}) do
+        if block.type == 'text' and type(block.text) == 'string' and block.text ~= '' then
+          table.insert(parts, block.text)
+        end
+      end
+      if #parts > 0 then return table.concat(parts, '\n\n') end
+    end
+  end
+  return nil
+end
+
 --- Finish the active turn and return provider-neutral timing metadata for its
 --- end-of-turn stamp.
 ---@param elapsed_ms integer? authoritative provider-reported duration
