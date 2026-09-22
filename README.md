@@ -81,7 +81,8 @@ Nearly every visible element is configurable:
   syntax. The `state` table hands you `is_thinking`, `spinner_frame`,
   `interrupt_pending`, `total_tokens`, `input_tokens`, `output_tokens`,
   `cost_usd`, `mode`, `branch`, `pr`, `model`, `cli_version`,
-  `session_name`, `session_id`, `remote_control`, and `window_width` — build
+  `session_name`, `session_id`, `remote_control`, `remote_control_state`,
+  `awaiting_permission`, and `window_width` — build
   your own layout around any subset.
 - **Per-tool input rendering.** `tool_input_format = function(tool_name,
   input) -> string | nil` lets you decide exactly how each tool's input
@@ -133,14 +134,14 @@ require('cc').setup()
 
 ```vim
 :CcNew
-:CcNew opus high
+:CcNew opus high remote
 ```
 
 This opens a horizontal split: output buffer on top, editable markdown prompt
 on the bottom. Type your message, then press `<CR>` in normal mode (or run
 `:CcSend`) to submit. The response streams into the output buffer. Optional
-`:CcNew [model] [effort]` arguments override the configured provider defaults
-for that session only. Recognized model families also select the provider:
+`:CcNew [model] [effort] [remote[=name]]` arguments override the configured
+provider defaults for that session only. Recognized model families also select the provider:
 `gpt-*`, `o3*`, `o4*`, `codex-*`, and `openai/*` use Codex; `claude-*`,
 `opus`, `sonnet`, `haiku`, and `fable` use Claude. Unknown model names use
 the configured provider.
@@ -159,7 +160,7 @@ instead of being guessed.
 
 | Command | Description |
 |---|---|
-| `:CcNew [model] [effort]` | Open cc.nvim, optionally overriding the model and reasoning effort for this session |
+| `:CcNew [model] [effort] [remote[=name]]` | Open cc.nvim, optionally overriding the model and reasoning effort and enabling Remote Control for this session |
 | `:CcClose` | Close cc.nvim (kill process, close windows) |
 | `:CcToggle` | Toggle visibility |
 | `:CcClear` | Start a fresh session in the current windows |
@@ -168,8 +169,9 @@ instead of being guessed.
 | `:CcFold {n}` | Set output fold level (0..3) |
 | `:CcPlan` | Open in plan mode (`--permission-mode plan`) |
 | `:CcPermissionMode [mode]` | Set permission mode (no arg = picker with one-line descriptions; tab-completes the six modes). Sent live to an active session via `set_permission_mode` control_request, else stored for the next `:Cc` / `:CcNew`. |
+| `:CcRemote [name]` | Toggle Claude Remote Control live, or for the next `:CcNew`; optional name renames the session (shown in claude.ai too) |
 | `:CcPlanShow` | Open the most recent plan file |
-| `:CcResume [id\|claude\|codex]` | Resume by ID, or open the all-provider picker (optionally filtered by provider) |
+| `:CcResume [id\|claude\|codex] [remote[=name]]` | Resume by ID, or open the all-provider picker (optionally filtered by provider); `remote` enables Remote Control on the resumed session |
 | `:CcContinue` | Resume the most recent session for the current cwd across providers |
 | `:CcHistory` / `:CcHistory!` | Pick a session across providers (! = all projects) |
 | `:CcRename [name]` | Rename the current session (no arg = show current title) |
@@ -280,6 +282,19 @@ require('cc').setup({
     },
   },
 
+  remote_control = {
+    stderr_notice = true, -- route `[bridge…]` stderr lines to the output buffer; false keeps WARN popups
+    stderr_notice_format = 'claude: %s', -- stderr line, prefix intact
+    notice_format = 'Remote Control: %s', -- session_url
+    disabled_notice = 'Remote Control disabled',
+    resync_notice = 'Remote Control: re-creating the claude.ai session so history syncs',
+    error_format = 'Remote Control failed: %s', -- CLI error text for a refused request
+    failed_format = 'Remote Control failed: %s (:CcRemote to retry)', -- bridge_state failed/policy_disabled
+    interrupted_notice = 'Interrupted remotely', -- turn aborted from claude.ai
+    rename_error_format = 'Rename failed: %s', -- rename_session control error
+    resume = 'off', -- 'auto' re-enables on :CcResume when the session exited with it on
+  },
+
   show_thinking = true,
   show_turn_cost = true,
   splash = true,
@@ -317,6 +332,7 @@ require('cc').setup({
       codex = nil,
       use_nerdfont = nil,
     },
+    remote_control_labels = { connected = 'remote', reconnecting = 'remote…' },
     spinner = {
       frames = nil,
       frames_nerdfont = {
@@ -523,6 +539,73 @@ messages render too: `Approaching usage limit (5-hour) · 90% used`,
 once the window resets. Error `result`s (`error_during_execution`,
 `error_max_turns`, …) get the same treatment. These lines use `CcError`.
 
+## Remote Control
+
+Drive a Claude session from your phone via claude.ai/code. Enable at startup
+with `:CcNew opus high remote` or `:CcNew opus high remote=phone`; the
+`remote[=name]` keyword can go anywhere among the arguments. Toggle a live
+bridge with `:CcRemote [name]`. Without a live session, `:CcRemote` toggles
+Remote Control for the next `:CcNew`.
+
+The claude.ai session URL is printed as a notice in the output buffer. The
+statusline shows `remote` while connected and `remote…` while reconnecting.
+Requires the Claude CLI to be logged in to claude.ai.
+
+The cc.nvim session name is the claude.ai title. `remote=<name>` renames the
+session the same way `/rename <name>` does, and `:CcRemote` on a session
+that already has a name hands that name to the bridge. Without a name the
+bridge comes up under the CLI's `<hostname>-<two-word-slug>` and follows
+whatever cc.nvim names the session later, whether from auto-rename or
+`/rename`, via the CLI's `rename_session` control request. If that request
+fails the output shows `remote_control.rename_error_format`.
+
+Remote Control is off after `:CcResume` unless you ask for it. Pass
+`remote[=name]` to `:CcResume` (with an id, a provider filter, or on its own
+before the picker) to enable it for that session, or set
+`remote_control.resume = 'auto'` to re-enable it whenever the resumed
+transcript shows the session exited with Remote Control on.
+
+When a resumed session's transcript still names a claude.ai session, the
+CLI reattaches to it on enable: same URL, phone history intact. The CLI
+skips its history flush on reattach, so turns made while Remote Control was
+off would never reach the phone
+([claude-code#95437](https://github.com/anthropics/claude-code/issues/95437)).
+cc.nvim checks the transcript for turns recorded after the last bridge
+binding; if there are any, it cycles the bridge off and on once instead,
+which creates a fresh claude.ai session with the full history and prints
+`remote_control.resync_notice`.
+
+Prompts sent from the phone appear in the output buffer as user turns.
+cc.nvim launches the CLI with `--replay-user-messages` and drops the echoes
+of its own prompts.
+
+Permission prompts can be answered from either side: answering in cc.nvim
+dismisses the prompt on the phone; answering on the phone closes cc.nvim's
+floating prompt and marks the tool `Answered remotely` in the transcript.
+The same applies to the plan-mode, AskUserQuestion, and MCP elicitation
+dialogs, which now use cc.nvim's own floating picker instead of
+`vim.ui.select` so a remote answer can close them at any step.
+
+Stopping a turn from the phone renders `remote_control.interrupted_notice`
+with the turn's timing and no cost line, the same as a local interrupt. A
+permission-mode change from the phone shows in the statusline immediately.
+A model change from the phone shows up only when the next turn starts; the
+CLI emits nothing on stdout at switch time.
+
+`bridge_state` can end in `failed` or `policy_disabled`. Both are terminal:
+the output shows `remote_control.failed_format` with the CLI's detail, the
+statusline label clears, and `:CcRemote` enables again in one step.
+`reconnecting` recovers on its own and shows as `remote…`. Disabling Remote
+Control mid-turn leaves the running tool and any open permission prompt
+untouched.
+
+The CLI writes informational lines to stderr with a `[bridge]` prefix, for
+example `[bridge] no session-anchored default-branch evidence` when the repo
+has no `refs/remotes/origin/HEAD`. cc.nvim renders these as notices in the
+output buffer rather than popups (`remote_control.stderr_notice = false`
+restores the popups). That particular one is harmless for local work;
+`git remote set-head origin -a` in the repo silences it.
+
 ## Peeking at running Bash
 
 Long-running Bash tool calls (`yarn install`, builds, test runs) only show
@@ -618,7 +701,7 @@ cc.nvim sets automatically when attaching). The default format shows:
 - Current model, with a provider-aware icon
 - Reasoning effort
 - Current git branch and PR number (if any)
-- Session name / `⚡` remote-control indicator when applicable
+- Session name / `remote` while Remote Control is connected (`remote…` while reconnecting)
 
 As the output window narrows, the default formatter drops whole components
 according to `statusline.priorities`. The first entry has the highest priority
@@ -631,7 +714,8 @@ Provide `statusline.format = function(state) ... end` to build your own.
 The `state` table exposes `state` (lifecycle below), `provider`, `is_thinking`,
 `spinner_frame`, `interrupt_pending`, `total_tokens`, `input_tokens`, `output_tokens`,
 `cost_usd`, `mode`, `branch`, `pr`, `model`, `cli_version`, `session_name`,
-`session_id`, `remote_control`, and the current output `window_width`. Custom
+`session_id`, `remote_control` (boolean), `remote_control_state` (bridge state),
+`awaiting_permission`, and the current output `window_width`. Custom
 formatters are not shortened automatically; they can use `window_width` to
 implement their own responsive layout. Return a string using standard Neovim
 statusline syntax.
@@ -677,6 +761,7 @@ show a provider column.
 - `:CcResume claude` / `:CcResume codex` filter the picker by provider
 - `:CcHistory!` opens a picker across every project and provider
 - `:CcResume <id>` jumps to a specific session
+- `:CcResume <id> remote[=name]` also enables Remote Control (see above)
 
 When resuming, the prior transcript is re-rendered into the output buffer
 (with inline diffs, tool calls, etc.) before the live session picks up.
@@ -687,9 +772,12 @@ Records are capped at `history_max_records` to keep long sessions snappy.
 Give the current session a custom title with either `/rename <name>` in
 the prompt buffer or `:CcRename <name>` from anywhere. The slash form is
 intercepted client-side (not forwarded to the agent); both share the same
-code path and append a `custom-title` record to the session's JSONL file —
-the same format the upstream Claude Code TUI uses, so renames round-trip
-between the two. The new title surfaces in:
+code path. With a live Claude process the rename is sent to the CLI as a
+`rename_session` control request, which appends a `custom-title` record to
+the session's JSONL file (the same format the upstream TUI uses, so renames
+round-trip between the two) and retitles the claude.ai session when Remote
+Control is on. Without a live process cc.nvim appends the record itself.
+The new title surfaces in:
 
 - the statusline `session_name` segment
 - the `:CcHistory` picker (preferring `custom-title` > `ai-title` > first
@@ -739,8 +827,8 @@ effort selections are included on the next turn; `max` maps to `xhigh`.
 
 Deliberately Claude-only: permission modes and Shift+Tab cycling (configure
 `providers.codex.approval_policy` / `sandbox` instead), `:CcPlan` plan mode,
-`:CcPeek` and its PreToolUse hook, provider-advertised slash commands and
-skills, auto-rename, and USD cost (Codex does not report cost; the statusline hides it).
+Remote Control (`:CcRemote`), `:CcPeek` and its PreToolUse hook,
+provider-advertised slash commands and skills, auto-rename, and USD cost (Codex does not report cost; the statusline hides it).
 Commands gated on these explain why instead of failing silently.
 
 Codex approval and sandbox behavior comes from your `~/.codex/config.toml`

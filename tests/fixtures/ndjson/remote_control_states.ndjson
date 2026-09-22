@@ -1,0 +1,6 @@
+{"type":"system","subtype":"bridge_state","state":"ready","uuid":"1b241232-6325-4f83-86ee-5209e94abc11","session_id":"65fb089a-17c9-4973-b5e5-18468226be99"}
+{"type":"system","subtype":"bridge_state","state":"connected","bridge_epoch":1,"uuid":"4183114b-951b-461e-8cb2-cf4d302dd387","session_id":"65fb089a-17c9-4973-b5e5-18468226be99"}
+{"type":"system","subtype":"bridge_state","state":"reconnecting","detail":"JWT expired — refreshing","bridge_epoch":1,"uuid":"8e0c1d52-2a5f-4c0e-9d3b-1f7a6b4c2d10","session_id":"65fb089a-17c9-4973-b5e5-18468226be99"}
+{"type":"system","subtype":"bridge_state","state":"connected","bridge_epoch":1,"uuid":"c2a7f6e1-9b3d-4e8a-a1f0-5d6c7b8a9e01","session_id":"65fb089a-17c9-4973-b5e5-18468226be99"}
+{"type":"system","subtype":"bridge_state","state":"failed","detail":"the session worker registration went stale — no active worker holds it (code 4090)","bridge_epoch":1,"uuid":"d3b8a7f2-0c4e-4f9b-b2a1-6e7d8c9b0f12","session_id":"65fb089a-17c9-4973-b5e5-18468226be99"}
+{"type":"system","subtype":"bridge_state","state":"policy_disabled","detail":"Remote Control is disabled by your organization's policy","uuid":"e4c9b8a3-1d5f-4a0c-c3b2-7f8e9d0a1b23","session_id":"65fb089a-17c9-4973-b5e5-18468226be99"}

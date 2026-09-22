@@ -194,6 +194,50 @@ T['render_historical']['multiple fixtures render without error'] = function()
 end
 
 -- ---------------------------------------------------------------------------
+-- last_bridge_session: binding plus whether turns follow it
+-- ---------------------------------------------------------------------------
+T['last_bridge_session'] = MiniTest.new_set()
+
+T['last_bridge_session']['flags user or assistant records after the last binding'] = function()
+  _G.child.lua([[
+    local history = require('cc.history')
+    local path = vim.fn.tempname()
+    local pointer = '{"type":"bridge-session","bridgeSessionId":"cse_A","lastSequenceNum":0}'
+    local user = '{"type":"user","message":{"role":"user","content":"two"}}'
+    local assistant = '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"two"}]}}'
+    local noise = {
+      '{"type":"attachment","attachment":{}}',
+      '{"type":"mode","mode":"default"}',
+      '{"type":"last-prompt","lastPrompt":"two"}',
+      '{"type":"ai-title","aiTitle":"session"}',
+    }
+    local function read(lines)
+      vim.fn.writefile(lines, path)
+      local id, stale = history.last_bridge_session(path)
+      return { id = id, stale = stale }
+    end
+    _G._test_cases = {
+      after_user = read({ user, pointer, user }),
+      after_assistant = read({ pointer, assistant }),
+      repersisted = read({ pointer, user, assistant, pointer }),
+      noise_only = read({ pointer, noise[1], noise[2], noise[3], noise[4] }),
+      turns_before_only = read({ user, assistant, pointer }),
+      no_pointer = read({ user, assistant }),
+      cleared_then_turn = read({ pointer, '{"type":"bridge-session","bridgeSessionId":""}', user }),
+    }
+    vim.fn.delete(path)
+  ]])
+  local cases = _G.child.lua_get('_G._test_cases')
+  eq(cases.after_user, { id = 'cse_A', stale = true })
+  eq(cases.after_assistant, { id = 'cse_A', stale = true })
+  eq(cases.repersisted, { id = 'cse_A', stale = false })
+  eq(cases.noise_only, { id = 'cse_A', stale = false })
+  eq(cases.turns_before_only, { id = 'cse_A', stale = false })
+  eq(cases.no_pointer, { stale = false })
+  eq(cases.cleared_then_turn, { id = '', stale = true })
+end
+
+-- ---------------------------------------------------------------------------
 -- Resume notice
 -- ---------------------------------------------------------------------------
 T['resume_notice'] = MiniTest.new_set()

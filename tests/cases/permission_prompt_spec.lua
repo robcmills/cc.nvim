@@ -176,6 +176,32 @@ T['pressing a resolves allow_once and closes window'] = function()
   eq(float_state(_G.child), vim.NIL)
 end
 
+T['dismiss closes the window and clears the instance without answering'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({})
+    _G._test_choice_count = 0
+    _G._test_instance = {}
+    _G._test_handle = require('cc.permission_prompt').ask(
+      'Bash', { command = 'true' },
+      function() _G._test_choice_count = _G._test_choice_count + 1 end,
+      { instance = _G._test_instance })
+  ]])
+  eq(_G.child.lua_get('_G._test_instance.permission_winid == _G._test_handle.winid'), true)
+  _G.child.lua([[
+    _G._test_handle.dismiss()
+    vim.wait(50)
+  ]])
+  eq(_G.child.lua_get('vim.api.nvim_win_is_valid(_G._test_handle.winid)'), false)
+  eq(_G.child.lua_get('_G._test_instance.permission_winid == nil'), true)
+  eq(_G.child.lua_get('_G._test_choice_count'), 0)
+  eq(float_state(_G.child), vim.NIL)
+  _G.child.lua([[
+    _G._test_handle.dismiss()
+    vim.wait(50)
+  ]])
+  eq(_G.child.lua_get('_G._test_choice_count'), 0)
+end
+
 T['pressing A resolves allow_always'] = function()
   open(_G.child, [[ 'Bash', { command = 'true' } ]])
   _G.child.type_keys('A')

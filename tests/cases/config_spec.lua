@@ -175,4 +175,30 @@ T['statusline config']['invalid priorities warn and restore the default'] = func
   eq(notices[1].msg:find('statusline.priorities', 1, true) ~= nil, true)
 end
 
+T['remote_control config'] = MiniTest.new_set()
+
+T['remote_control config']['resume defaults to off and accepts auto'] = function()
+  _G.child.lua([[require('cc.config').setup({})]])
+  eq(_G.child.lua_get('require("cc.config").options.remote_control.resume'), 'off')
+  _G.child.lua([[require('cc.config').setup({ remote_control = { resume = 'auto' } })]])
+  eq(_G.child.lua_get('require("cc.config").options.remote_control.resume'), 'auto')
+end
+
+T['remote_control config']['invalid resume warns and falls back to off'] = function()
+  _G.child.lua([[
+    local notices = {}
+    local original_notify = vim.notify
+    vim.notify = function(msg, level) notices[#notices + 1] = { msg = msg, level = level } end
+    require('cc.config').setup({ remote_control = { resume = 'on' } })
+    vim.notify = original_notify
+    _G._resume = require('cc.config').options.remote_control.resume
+    _G._notices = notices
+  ]])
+  eq(_G.child.lua_get('_G._resume'), 'off')
+  local notices = _G.child.lua_get('_G._notices')
+  eq(#notices, 1)
+  eq(notices[1].level, vim.log.levels.WARN)
+  eq(notices[1].msg:find('remote_control.resume', 1, true) ~= nil, true)
+end
+
 return T

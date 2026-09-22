@@ -1,6 +1,7 @@
 -- Dispatches SDK NDJSON messages to session (state) and output (render).
 
 local ErrorNotice = require('cc.output.error_notice')
+local Config = require('cc.config')
 
 local M = {}
 
@@ -9,8 +10,10 @@ local M = {}
 ---@field output cc.Output
 ---@field process cc.Process?
 ---@field instance cc.Instance?
+---@field open_prompts table<string, { tool_name: string, dismiss: fun() }>
 ---@field on_session_id fun(session_id: string)?
 ---@field interrupted_result_pending boolean true after an acknowledged interrupt until Claude's optional trailing result
+---@field remote_control_failure string? detail of the last bridge_state failure, so the CLI's matching control_response error is not shown twice
 ---@field rate_limit_status string? status of the last rendered rate_limit_event
 ---@field rate_limit_key string? dedupe key of the last rendered rate_limit_event
 ---@field last_error_text string? error notice shown for the in-flight turn, so its `result` echo is not repeated
@@ -24,6 +27,7 @@ function M.new(opts)
     output = opts.output,
     process = opts.process,
     instance = opts.instance,
+    open_prompts = {},
     on_session_id = opts.on_session_id,
     interrupted_result_pending = false,
   }, Router)
@@ -60,6 +64,21 @@ local function launched_task_id(msg, block)
   local text = result_text(block.content)
   return text:match('background with ID:%s*([^%s%.]+)')
     or text:match('agentId:%s*([^%s%(]+)')
+end
+
+--- The CLI closes an aborted turn with a synthetic user message whose only
+--- content is the text "[Request interrupted by user]" (or "... for tool
+--- use]"). Both the stdin interrupt and a claude.ai interrupt abort with the
+--- same reason and emit it; a permission denial does not.
+---@param content table user message content blocks
+---@return boolean
+local function is_interrupt_marker(content)
+  local text
+  for _, block in ipairs(content) do
+    if type(block) ~= 'table' or block.type ~= 'text' then return false end
+    text = text or block.text
+  end
+  return type(text) == 'string' and text:find('^%[Request interrupted by user') ~= nil
 end
 
 ---@param msg table
@@ -113,10 +132,14 @@ function Router:dispatch(msg)
     self:_handle_control_request(msg)
   elseif t == 'control_response' then
     self:_handle_control_response(msg)
+  elseif t == 'control_cancel_request' then
+    self:_handle_control_cancel(msg)
   elseif t == 'tool_progress' then
     self:_handle_tool_progress(msg)
   elseif t == 'tool_use_summary' then
     -- Could surface as a status line; skip for now.
+  elseif t == 'command_lifecycle' then
+    -- Prompt UUIDs trigger queue lifecycle acknowledgements; no UI action needed.
   elseif t == 'rate_limit' or t == 'rate_limit_event' then
     self:_handle_rate_limit(msg)
   elseif t == 'api_retry' then
@@ -135,6 +158,7 @@ function Router:dispatch(msg)
 
   -- Refresh statusline on events that change visible state.
   if t == 'system' or t == 'result' or t == 'control_response'
+      or t == 'control_cancel_request'
       or background_changed or before_turn_active ~= self.session.turn_active then
     refresh_statusline(self)
   end
@@ -155,6 +179,20 @@ function Router:_handle_system(msg)
     end
     if self.instance then
       require('cc')._flush_pending_rename(self.instance)
+    end
+  elseif sub == 'bridge_state' then
+    self.session.remote_control_state = msg.state
+    self.session.remote_control_detail = msg.detail
+    self.remote_control_failure = nil
+    if msg.state == 'failed' or msg.state == 'policy_disabled' then
+      -- Terminal: the transport gave up (auth, superseded worker, version)
+      -- or the org policy refused the bridge. `reconnecting` is the only
+      -- state the CLI recovers from on its own; these need a new enable.
+      local detail = msg.detail or 'bridge failed'
+      self.remote_control_failure = detail
+      local text = string.format(Config.options.remote_control.failed_format, detail)
+      self.output:render_notice(text)
+      vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
     end
   elseif sub == 'compact_boundary' then
     self.output:render_notice('Context Compacted')
@@ -252,12 +290,41 @@ function Router:_handle_stream_event(msg)
   end
 end
 
---- Handle user-type NDJSON messages. These carry tool_result blocks that
---- Claude Code produces after executing tools.
+--- Handle prompt replays and tool_result blocks produced by Claude Code.
+---@param msg table
+---@return boolean changed
 function Router:_handle_user(msg)
   local message = msg.message
   if not message or message.role ~= 'user' then return false end
   local content = message.content
+  if msg.isReplay == true and (msg.parent_tool_use_id == nil or msg.parent_tool_use_id == vim.NIL) then
+    if msg.isSynthetic == true or msg.isMeta == true then return false end
+    if type(msg.uuid) == 'string' and self.session:consume_sent_prompt(msg.uuid) then
+      return false
+    end
+    local text = ''
+    if type(content) == 'string' then
+      text = content
+    elseif type(content) == 'table' then
+      local parts = {}
+      for _, block in ipairs(content) do
+        if type(block) == 'table' then
+          if block.type == 'text' then
+            if type(block.text) == 'string' then table.insert(parts, block.text) end
+          elseif type(block.type) == 'string' then
+            table.insert(parts, string.format(Config.options.remote_control.content_block_format, block.type))
+          end
+        end
+      end
+      text = table.concat(parts, '\n')
+    end
+    if text == '' then return false end
+    require('cc.splash').clear(self.output.bufnr)
+    self.output:follow_tail()
+    self.session:add_user_turn(text)
+    self.output:render_user_turn(text)
+    return false
+  end
   if type(content) == 'string' then
     if content:match('^%s*<task%-notification>') then
       return self.session:finish_background_task(
@@ -267,6 +334,10 @@ function Router:_handle_user(msg)
     return false
   end
   if type(content) ~= 'table' then return false end
+  if is_interrupt_marker(content) then
+    self:_on_interrupt_marker()
+    return false
+  end
   local changed = false
   for _, block in ipairs(content) do
     if type(block) == 'table' and block.type == 'tool_result' then
@@ -285,6 +356,33 @@ function Router:_handle_user(msg)
     end
   end
   return changed
+end
+
+--- Stamp the live turn as interrupted, once, whichever signal lands first:
+--- the control_response to our own interrupt or the CLI's interrupt marker.
+---@param text string? notice text; nil renders the default 'Interrupted'
+function Router:_finish_interrupted_turn(text)
+  if self.interrupted_result_pending then return end
+  self.output:stop_all_tool_timers()
+  -- Claude versions differ on whether they emit a trailing `result` (2.1.x
+  -- sends `error_during_execution`). Absorb it as state-only so neither an
+  -- error notice nor cumulative cost/usage is shown for this turn.
+  self.interrupted_result_pending = true
+  local timing = self.session:finish_turn()
+  require('cc.seen').on_turn_finished(self.instance)
+  self.output:render_interrupted(timing, text)
+end
+
+--- A turn we did not ask to stop was aborted from claude.ai. When we did ask
+--- (interrupt_pending), the marker merely confirms it, possibly ahead of the
+--- control_response, and renders the plain notice.
+function Router:_on_interrupt_marker()
+  if not self.session.turn_active then return end
+  local text = nil
+  if not self.session.interrupt_pending then
+    text = Config.options.remote_control.interrupted_notice
+  end
+  self:_finish_interrupted_turn(text)
 end
 
 function Router:_handle_result(msg)
@@ -353,6 +451,20 @@ function Router:_handle_tool_progress(msg)
   end
 end
 
+---@param msg table
+function Router:_handle_control_cancel(msg)
+  local entry = self.open_prompts[msg.request_id]
+  if not entry then return end
+  self.open_prompts[msg.request_id] = nil
+  pcall(entry.dismiss)
+  self.output:render_permission_outcome('remote', entry.tool_name)
+  if self.instance then
+    self.instance.awaiting_permission = false
+    self.instance.awaiting_input = false
+    require('cc.statusline').refresh(self.instance)
+  end
+end
+
 function Router:_handle_control_response(msg)
   local resp = msg.response
   if not resp or not resp.request_id then return end
@@ -363,6 +475,21 @@ function Router:_handle_control_response(msg)
     local subtype = self.process:consume_pending_control(resp.request_id)
     if subtype then pending = { subtype = subtype } end
   end
+  if not pending then
+    local entry = self.open_prompts[resp.request_id]
+    if entry then
+      self.open_prompts[resp.request_id] = nil
+      pcall(entry.dismiss)
+      local behavior = type(resp.response) == 'table' and resp.response.behavior
+      if behavior ~= 'allow' and behavior ~= 'deny' then behavior = 'remote' end
+      self.output:render_permission_outcome(behavior, entry.tool_name)
+      if self.instance then
+        self.instance.awaiting_permission = false
+        self.instance.awaiting_input = false
+        require('cc.statusline').refresh(self.instance)
+      end
+    end
+  end
   local subtype = pending and pending.subtype
   if subtype == 'interrupt' then
     if self.session then
@@ -371,14 +498,7 @@ function Router:_handle_control_response(msg)
       self.session.turn_active = false
     end
     if resp.subtype == 'success' then
-      -- Claude versions differ on whether they emit a trailing `result`.
-      -- Stamp the acknowledged interrupt now, then absorb any such result as
-      -- state-only so cumulative cost/usage is never shown for this turn.
-      self.output:stop_all_tool_timers()
-      self.interrupted_result_pending = true
-      local timing = self.session:finish_turn()
-      require('cc.seen').on_turn_finished(self.instance)
-      self.output:render_interrupted(timing)
+      self:_finish_interrupted_turn()
     else
       local err = resp.error or 'control_response error'
       self.output:render_notice('Interrupt failed: ' .. tostring(err))
@@ -396,6 +516,43 @@ function Router:_handle_control_response(msg)
       if self.instance then
         require('cc.statusline').refresh(self.instance)
       end
+    end
+  elseif subtype == 'remote_control' then
+    local cfg = Config.options.remote_control
+    if resp.subtype == 'success' then
+      local inner = resp.response or {}
+      if inner.session_url then
+        self.remote_control_failure = nil
+        self.session.remote_control_url = inner.session_url
+        self.session.remote_control_bridge_id = inner.bridge_session_id
+        if not pending.silent then
+          self.output:render_notice(string.format(cfg.notice_format, inner.session_url))
+        end
+      else
+        self.session.remote_control_state = nil
+        self.session.remote_control_detail = nil
+        self.session.remote_control_url = nil
+        self.session.remote_control_bridge_id = nil
+        if not pending.silent then self.output:render_notice(cfg.disabled_notice) end
+      end
+    elseif not pending.silent then
+      local err = resp.error or 'control_response error'
+      -- An enable that died inside the bridge init already reported itself
+      -- through bridge_state failed/policy_disabled with this same text.
+      if err ~= self.remote_control_failure then
+        local text = string.format(cfg.error_format, err)
+        self.output:render_notice(text)
+        vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
+      end
+    end
+  elseif subtype == 'rename_session' then
+    -- The CLI persists the title and pushes it to the bridge itself; only
+    -- failures need surfacing (empty title, session_id mismatch).
+    if resp.subtype ~= 'success' then
+      local text = string.format(Config.options.remote_control.rename_error_format,
+        resp.error or 'control_response error')
+      self.output:render_notice(text)
+      vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
     end
   elseif subtype == 'get_settings' then
     if resp.subtype ~= 'success' then return end
@@ -445,15 +602,30 @@ function Router:_handle_control_request(msg)
   local req = msg.request
   if not req then return end
   if self.instance then
-    self.instance.remote_control_active = true
+    self.instance.awaiting_permission = true
     self.instance.awaiting_input = true
     require('cc.statusline').refresh(self.instance)
   end
   if req.subtype == 'can_use_tool' then
     self:_handle_permission_request(msg.request_id, req)
   elseif req.subtype == 'elicitation' then
-    require('cc.interactive').handle_elicitation(
-      self.process, self.output, msg.request_id, req, self.instance)
+    self:_handle_interactive_request(msg.request_id, req, 'elicitation', 'handle_elicitation')
+  end
+end
+
+---@param request_id string
+---@param req table
+---@param tool_name string
+---@param handler string
+function Router:_handle_interactive_request(request_id, req, tool_name, handler)
+  local answered = false
+  local handle = require('cc.interactive')[handler](
+    self.process, self.output, request_id, req, self.instance, function()
+      self.open_prompts[request_id] = nil
+      answered = true
+    end)
+  if not answered then
+    self.open_prompts[request_id] = { tool_name = tool_name, dismiss = handle.dismiss }
   end
 end
 
@@ -465,22 +637,22 @@ function Router:_handle_permission_request(request_id, req)
 
   -- Specialized handlers for interactive CC features.
   if tool_name == 'EnterPlanMode' then
-    require('cc.interactive').handle_enter_plan_mode(
-      self.process, self.output, request_id, req, self.instance)
+    self:_handle_interactive_request(request_id, req, tool_name, 'handle_enter_plan_mode')
     return
   elseif tool_name == 'ExitPlanMode' then
-    require('cc.interactive').handle_exit_plan_mode(
-      self.process, self.output, request_id, req, self.instance)
+    self:_handle_interactive_request(request_id, req, tool_name, 'handle_exit_plan_mode')
     return
   elseif tool_name == 'AskUserQuestion' then
-    require('cc.interactive').handle_ask_user_question(
-      self.process, self.output, request_id, req, self.instance)
+    self:_handle_interactive_request(request_id, req, tool_name, 'handle_ask_user_question')
     return
   end
 
   self.output:render_permission_request(tool_name, input)
 
-  require('cc.permission_prompt').ask(tool_name, input, function(behavior, variant)
+  local answered = false
+  local handle = require('cc.permission_prompt').ask(tool_name, input, function(behavior, variant)
+    self.open_prompts[request_id] = nil
+    answered = true
     local response_body = self:_build_permission_response(
       behavior, variant, tool_name, input, tool_use_id, suggestions)
     self.output:render_permission_outcome(behavior, tool_name)
@@ -495,11 +667,14 @@ function Router:_handle_permission_request(request_id, req)
       })
     end
     if self.instance then
-      self.instance.remote_control_active = false
+      self.instance.awaiting_permission = false
       self.instance.awaiting_input = false
       require('cc.statusline').refresh(self.instance)
     end
   end, { provider = 'claude', instance = self.instance })
+  if not answered and type(handle) == 'table' and type(handle.dismiss) == 'function' then
+    self.open_prompts[request_id] = { tool_name = tool_name, dismiss = handle.dismiss }
+  end
 end
 
 --- Build the `response` body for a can_use_tool control_response.

@@ -10,8 +10,13 @@ local M = {}
 ---@field model string?
 ---@field tools table
 ---@field permission_mode string?
+---@field remote_control_state 'ready'|'connected'|'reconnecting'|'failed'|'policy_disabled'|nil
+---@field remote_control_detail string?
+---@field remote_control_url string?
+---@field remote_control_bridge_id string?
 ---@field resolved_effort string? the CLI's resolved effort level (applied.effort from get_settings); lets the statusline show what 'auto' resolves to
 ---@field turns table[]
+---@field sent_prompt_uuids table<string, true>
 ---@field current_message table?
 ---@field current_blocks table<integer, table>
 ---@field is_streaming boolean
@@ -50,7 +55,12 @@ function M.new()
     tools = {},
     permission_mode = nil,
     resolved_effort = nil,
+    remote_control_state = nil,
+    remote_control_detail = nil,
+    remote_control_url = nil,
+    remote_control_bridge_id = nil,
     turns = {},
+    sent_prompt_uuids = {},
     current_message = nil,
     current_blocks = {},
     is_streaming = false,
@@ -156,6 +166,12 @@ end
 ---@param msg table system/init message
 function Session:on_init(msg)
   self.id = msg.session_id or self.id
+  -- The CLI re-emits init at every turn start. A model switched between
+  -- turns (Remote Control's set_model has no other stdout signal) first
+  -- shows up here, so drop the old model's context window with it.
+  if type(msg.model) == 'string' and self.model and msg.model ~= self.model then
+    self.context_window = nil
+  end
   self.model = msg.model or self.model
   self.tools = msg.tools or self.tools
   self.permission_mode = msg.permissionMode or self.permission_mode
@@ -178,6 +194,19 @@ function Session:add_user_turn(text)
     role = 'user',
     text = text,
   })
+end
+
+---@param uuid string
+function Session:note_sent_prompt(uuid)
+  self.sent_prompt_uuids[uuid] = true
+end
+
+---@param uuid string
+---@return boolean
+function Session:consume_sent_prompt(uuid)
+  if not self.sent_prompt_uuids[uuid] then return false end
+  self.sent_prompt_uuids[uuid] = nil
+  return true
 end
 
 ---@param message table anthropic message object

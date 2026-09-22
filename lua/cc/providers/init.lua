@@ -18,6 +18,7 @@
 --   :set_model(model, cb?)  select the model for subsequent turns
 --   :set_effort(level, cb?) select reasoning effort for subsequent turns
 --   :set_permission_mode(mode)  Claude-only (gate on capabilities)
+--   :set_remote_control(enabled, name?, cb?)  Claude-only Remote Control bridge
 --   :rename(name, cb?)     optional: provider-native session rename
 --   :auto_rename_spec(prompt, cfg)  optional: one-shot title command
 --   :start_dump(path) / :stop_dump()  tee raw wire bytes for fixture capture
@@ -34,6 +35,7 @@ local M = {}
 ---@field auto_rename boolean first-prompt auto-title via a provider command
 ---@field local_history boolean history read from local files without a subprocess
 ---@field plan_mode boolean Claude plan mode (:CcPlan)
+---@field remote_control boolean Claude Remote Control (:CcRemote)
 
 local MODULES = {
   claude = 'cc.providers.claude',
