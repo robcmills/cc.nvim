@@ -749,6 +749,69 @@ navigation through `require('cc').focus_instance(output_bufnr)`. A turn finishin
 in the current instance is seen immediately while Neovim is focused; returning
 focus also marks that instance seen.
 
+### Driving sessions from outside Neovim
+
+Four functions let a shell script or another agent create, prompt, read, and
+close sessions in a running Neovim over `nvim --server <socket> --remote-expr`.
+Every one returns its result or `nil, err` (`false, err` for the boolean ones)
+rather than relying on `vim.notify`, so callers can branch on the answer.
+
+```lua
+---@return integer? output_bufnr, string? err
+require('cc').open({
+  provider = 'claude',          -- or 'codex'; a model that implies a provider wins
+  model = 'opus', effort = 'high', permission_mode = 'acceptEdits', remote = false,
+  cwd = '~/src/project',        -- spawn directory (default: getcwd())
+  name = 'api-test',            -- session title, same path as :CcRename
+  prompt = 'Reply with pong',   -- submitted as the first turn
+  focus = false,                -- default true
+})
+---@return boolean ok, string? err
+require('cc').send_prompt(output_bufnr, 'text')
+---@return string? text, string? err
+require('cc').get_last_assistant_message(output_bufnr)
+---@return boolean ok, string? err
+require('cc').close(output_bufnr)   -- no arg: the current instance, as before
+```
+
+`focus = false` creates the output as a hidden listed buffer and leaves the
+current window alone. The instance still appears in `list_instances()` and the
+buffer sidebar, and opening the buffer later builds the prompt companion the
+usual way. Either the output or the prompt bufnr identifies an instance for
+`send_prompt`, `get_last_assistant_message`, and `close`.
+
+`send_prompt` runs the same pipeline as submitting from the prompt buffer:
+client-side slash commands (`/rename`, `/model`, `/effort`) are handled
+locally, the first prompt of an unnamed session triggers auto-rename, and a
+prompt is refused while a turn is active. `get_last_assistant_message`
+returns the text of the most recent assistant message that contains text,
+for both providers. It only sees replies received while this Neovim has been
+running; history replayed by `:CcResume` is not included.
+
+Two things to know when polling from a script. A background instance whose
+turn just finished reports `unread`, not `ready`, because nobody has viewed
+it, so treat both as idle. And `luaeval` returns only the first Lua value, so
+wrap a call in `vim.json.encode({ ... })` when you need the error too.
+
+The session below was driven end to end this way against a headless Neovim
+started with `nvim --headless --clean -u tests/minimal_init.lua --listen /tmp/cc-api-test.sock`:
+
+```bash
+S=/tmp/cc-api-test.sock
+# open → prints the output bufnr (2)
+nvim --server $S --remote-expr "luaeval('require(\"cc\").open(_A)', json_decode('{\"focus\": false, \"name\": \"api-test\", \"prompt\": \"Reply with the single word pong\"}'))"
+# poll until the state leaves working/starting (it lands on unread)
+nvim --server $S --remote-expr "luaeval('require(\"cc\").list_instances()[1].state')"
+# read the reply → pong
+nvim --server $S --remote-expr "luaeval('require(\"cc\").get_last_assistant_message(2)')"
+# send another turn; the list form keeps both return values → [true]
+nvim --server $S --remote-expr "luaeval('vim.json.encode({require(\"cc\").send_prompt(_A[1], _A[2])})', [2, 'Now reply with the single word ping'])"
+# while that turn runs → [false,"agent turn in progress — wait for it to finish or interrupt first"]
+nvim --server $S --remote-expr "luaeval('vim.json.encode({require(\"cc\").send_prompt(_A[1], _A[2])})', [2, 'too soon'])"
+# close → [true]; a second close → [false,"no cc.nvim instance owns buffer 2"]
+nvim --server $S --remote-expr "luaeval('vim.json.encode({require(\"cc\").close(2)})')"
+```
+
 ## Session history
 
 Claude Code stores conversations at
