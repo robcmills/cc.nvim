@@ -896,6 +896,9 @@ function Codex:_on_item_completed(item)
       -- Completed without a matching start (missed start or already closed).
       self:_render_prose(item.text, 'text')
     end
+    -- Codex never streams through Session:begin_message/end_message, so
+    -- record the completed reply here for cc.get_last_assistant_message.
+    if self.session then self.session:add_assistant_text(item.text) end
   elseif t == 'reasoning' then
     local open = self._open_prose
     if open and open.item_id == item.id then

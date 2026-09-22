@@ -320,10 +320,16 @@ end
 -- ---------------------------------------------------------------------------
 
 --- Create a new instance with layout: output above (primary), prompt below (companion).
----@param opts { reuse_prompt_winid: integer?, reuse_output_winid: integer? }?
+--- With `focus = false` the buffers are created and registered but no window
+--- is touched: the output stays a hidden listed buffer until the user (or
+--- `focus_instance`) opens it, at which point the output's BufWinEnter
+--- autocmd builds the prompt companion exactly as it does for a reopened
+--- session.
+---@param opts { reuse_prompt_winid: integer?, reuse_output_winid: integer?, cwd: string?, focus: boolean? }?
 ---@return cc.Instance
 local function create_instance(opts)
   opts = opts or {}
+  local focus = opts.focus ~= false
   local id = next_instance_id
   next_instance_id = next_instance_id + 1
 
@@ -342,7 +348,7 @@ local function create_instance(opts)
     last_plan_file = nil,
     session_name = nil,
     pending_session_name = nil,
-    cwd = vim.fn.getcwd(),
+    cwd = opts.cwd or vim.fn.getcwd(),
     awaiting_input = false,
     awaiting_permission = false,
     autosize_disabled = false,
@@ -385,7 +391,9 @@ local function create_instance(opts)
   if reuse_prompt and not vim.api.nvim_win_is_valid(reuse_prompt) then reuse_prompt = nil end
   if reuse_output and not vim.api.nvim_win_is_valid(reuse_output) then reuse_output = nil end
 
-  if reuse_prompt and reuse_output then
+  if not focus then
+    -- Background instance: no windows, no focus change, no insert mode.
+  elseif reuse_prompt and reuse_output then
     -- Reuse existing windows: swap new buffers into place.
     vim.api.nvim_win_set_buf(reuse_output, output_buf)
     inst.output_winid = reuse_output
@@ -553,6 +561,7 @@ end
 ---@param inst cc.Instance
 ---@param opts { resume_id: string?, permission_mode: string?, provider: string?, model: string?, effort: string?, remote: boolean|string? }?
 ---@return boolean ok
+---@return string? err
 local function attach_provider(inst, opts)
   opts = opts or {}
   local P, perr
@@ -563,7 +572,7 @@ local function attach_provider(inst, opts)
   end
   if not P then
     vim.notify('cc.nvim: ' .. tostring(perr), vim.log.levels.ERROR)
-    return false
+    return false, tostring(perr)
   end
   local provider = P.attach({
     instance = inst,
@@ -604,7 +613,7 @@ local function attach_provider(inst, opts)
     vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.ERROR)
     inst.provider = nil
     inst.process = nil
-    return false
+    return false, tostring(err)
   end
   -- `remote=<name>` names the cc.nvim session as well. The rename goes
   -- through the live CLI, so the claude.ai title follows the (deduped)
@@ -625,16 +634,47 @@ function M.is_open()
   return inst ~= nil and inst.process ~= nil and inst.process:is_alive()
 end
 
+---@class cc.OpenOpts
+---@field permission_mode string? Claude permission mode for the new session
+---@field model string? model name or alias; may also select the provider
+---@field effort string? reasoning effort level
+---@field remote boolean|string? enable Remote Control (string = claude.ai title, also names the session)
+---@field provider 'claude'|'codex'? explicit provider; a model that identifies another provider wins
+---@field cwd string? working directory for the session (default: `getcwd()`)
+---@field name string? session title, applied through the `/rename` path
+---@field prompt string? submitted as the first turn once the provider is spawned
+---@field focus boolean? default true; false creates a hidden listed buffer and leaves the current window alone
+
 --- Public: open a new cc.nvim session.
----@param opts { permission_mode: string?, model: string?, effort: string?, remote: boolean|string? }?
+--- Returns the output bufnr (the key `list_instances`, `send_prompt`,
+--- `get_last_assistant_message`, and `close` take), or `nil, err`. Errors
+--- are also surfaced with `vim.notify` so interactive callers keep the old
+--- behavior.
+---@param opts cc.OpenOpts?
+---@return integer? output_bufnr
+---@return string? err
 function M.open(opts)
   opts = opts or {}
+  local function fail(err, level)
+    vim.notify('cc.nvim: ' .. err, level or vim.log.levels.WARN)
+    return nil, err
+  end
   if opts.effort and not require('cc.effort').is_valid(opts.effort) then
-    vim.notify(
-      'cc.nvim: invalid effort "' .. tostring(opts.effort) .. '". Use one of: '
-      .. table.concat(require('cc.effort').levels(), ', '),
-      vim.log.levels.WARN)
-    return
+    return fail('invalid effort "' .. tostring(opts.effort) .. '". Use one of: '
+      .. table.concat(require('cc.effort').levels(), ', '))
+  end
+  if opts.provider ~= nil then
+    local _, perr = Providers.get(opts.provider)
+    if perr then return fail(perr, vim.log.levels.ERROR) end
+  end
+  if opts.prompt ~= nil and (type(opts.prompt) ~= 'string' or not opts.prompt:match('%S')) then
+    return fail('prompt must be a non-empty string')
+  end
+  local cwd = opts.cwd
+  if cwd ~= nil then
+    if type(cwd) ~= 'string' or cwd == '' then return fail('cwd must be a non-empty string') end
+    cwd = vim.fn.fnamemodify(vim.fn.expand(cwd), ':p'):gsub('(.)/$', '%1')
+    if vim.fn.isdirectory(cwd) ~= 1 then return fail('cwd is not a directory: ' .. cwd) end
   end
 
   local model = opts.model
@@ -642,11 +682,8 @@ function M.open(opts)
   if model then
     local resolved, provider, status, suggestions = require('cc.model').resolve(model)
     if status == 'ambiguous' then
-      vim.notify(
-        'cc.nvim: ambiguous model "' .. tostring(model) .. '". Matches: '
-        .. table.concat(suggestions, ', '),
-        vim.log.levels.WARN)
-      return
+      return fail('ambiguous model "' .. tostring(model) .. '". Matches: '
+        .. table.concat(suggestions, ', '))
     end
     model = resolved
     inferred_provider = provider
@@ -660,17 +697,37 @@ function M.open(opts)
     pending_remote = nil
   end
 
-  local inst = create_instance()
+  local focus = opts.focus ~= false
+  local inst = create_instance({ cwd = cwd, focus = focus })
   require('cc.splash').render(inst.output.bufnr)
-  attach_provider(inst, {
+  local ok, err = attach_provider(inst, {
     permission_mode = opts.permission_mode,
     provider = inferred_provider
       or Providers.infer_from_model(model)
+      or opts.provider
       or Providers.current_name(),
     model = model,
     effort = opts.effort,
     remote = opts.remote,
   })
+  if not ok then
+    -- A visible instance keeps its splash so the user sees the error in
+    -- place; a background one has no viewer, so drop it rather than leave
+    -- an `exited` entry in the inventory.
+    if not focus then close_instance(inst) end
+    return nil, err
+  end
+  -- `remote=<name>` already named the session inside attach_provider.
+  if type(opts.name) == 'string' and opts.name:match('%S') and opts.name ~= opts.remote then
+    M._handle_rename(inst, opts.name, { silent = true })
+  end
+  if opts.prompt then
+    local sent, serr = M.submit_for(inst, opts.prompt)
+    if not sent then
+      vim.notify('cc.nvim: initial prompt not sent: ' .. tostring(serr), vim.log.levels.WARN)
+    end
+  end
+  return inst.output.bufnr
 end
 
 --- Public: open in plan mode (Claude-only).
@@ -908,33 +965,32 @@ function M._set_last_plan_file(path, output_bufnr)
   end
 end
 
---- Public: submit current prompt buffer content to the agent.
-function M.submit()
-  local inst = get_current_instance()
-  if inst and inst.is_fixture then
-    vim.notify(FIXTURE_PLACEHOLDER, vim.log.levels.WARN)
-    return
+--- Submit `text` to an instance: liveness and turn guards, client-side slash
+--- commands, first-turn auto-rename, user-turn bookkeeping, then the
+--- provider send. Shared by the prompt-buffer `submit()` and the external
+--- `send_prompt()`. Never touches the prompt buffer; callers own that.
+--- Returns true when the text was consumed (forwarded to the agent or
+--- handled locally as a slash command), else `false, err`.
+---@param inst cc.Instance
+---@param text string
+---@return boolean ok
+---@return string? err
+function M.submit_for(inst, text)
+  if not inst then return false, 'no cc.nvim instance' end
+  if inst.is_fixture then return false, FIXTURE_PLACEHOLDER end
+  if not inst.process or not inst.process:is_alive() then
+    return false, 'not open. Run :CcNew first.'
   end
-  if not inst or not inst.process or not inst.process:is_alive() then
-    vim.notify('cc.nvim: not open. Run :CcNew first.', vim.log.levels.WARN)
-    return
-  end
-  if not inst.prompt:has_content() then
-    return
+  if type(text) ~= 'string' or not text:match('%S') then
+    return false, 'prompt must be a non-empty string'
   end
   if inst.session.turn_active or inst.session.is_streaming then
-    vim.notify(
-      'cc.nvim: agent turn in progress — wait for it to finish or interrupt first',
-      vim.log.levels.WARN)
-    return
+    return false, 'agent turn in progress — wait for it to finish or interrupt first'
   end
-  local text = inst.prompt:read()
 
   -- Intercept client-side slash commands before forwarding to the agent.
   if M._try_handle_client_command(inst, text) then
-    inst.prompt:clear()
-    require('cc.autosize').reset(inst)
-    return
+    return true
   end
 
   -- First-turn auto-rename (best-effort, before turns is incremented).
@@ -944,9 +1000,6 @@ function M.submit()
   if caps.auto_rename ~= false and AutoRename.should_run(inst) then
     AutoRename.start(inst, text)
   end
-
-  inst.prompt:clear()
-  require('cc.autosize').reset(inst)
 
   require('cc.splash').clear(inst.output.bufnr)
   inst.output:follow_tail()
@@ -971,6 +1024,65 @@ function M.submit()
       parent_tool_use_id = vim.NIL,
     })
   end
+  return true
+end
+
+--- Public: submit current prompt buffer content to the agent.
+function M.submit()
+  local inst = get_current_instance()
+  if inst and inst.is_fixture then
+    vim.notify(FIXTURE_PLACEHOLDER, vim.log.levels.WARN)
+    return
+  end
+  if not inst or not inst.process or not inst.process:is_alive() then
+    vim.notify('cc.nvim: not open. Run :CcNew first.', vim.log.levels.WARN)
+    return
+  end
+  if not inst.prompt:has_content() then
+    return
+  end
+  local ok, err = M.submit_for(inst, inst.prompt:read())
+  if not ok then
+    vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.WARN)
+    return
+  end
+  inst.prompt:clear()
+  require('cc.autosize').reset(inst)
+end
+
+--- Public: submit `text` to the instance that owns `bufnr` (output or
+--- prompt buffer). Same pipeline as the prompt-buffer submit, including the
+--- mid-turn guard. Returns `false, err` for an unknown buffer, a dead
+--- process, or an active turn.
+---@param bufnr integer output or prompt bufnr
+---@param text string
+---@return boolean ok
+---@return string? err
+function M.send_prompt(bufnr, text)
+  local inst = type(bufnr) == 'number' and find_instance(bufnr) or nil
+  if not inst then
+    return false, 'no cc.nvim instance owns buffer ' .. tostring(bufnr)
+  end
+  return M.submit_for(inst, text)
+end
+
+--- Public: plain text of the most recent assistant reply in the instance
+--- that owns `bufnr`, for either provider. Only replies received while this
+--- Neovim has been running count; transcript history replayed on resume is
+--- not included. Returns `nil, err` for an unknown buffer or when no reply
+--- has arrived yet.
+---@param bufnr integer output or prompt bufnr
+---@return string? text
+---@return string? err
+function M.get_last_assistant_message(bufnr)
+  local inst = type(bufnr) == 'number' and find_instance(bufnr) or nil
+  if not inst then
+    return nil, 'no cc.nvim instance owns buffer ' .. tostring(bufnr)
+  end
+  local text = inst.session and inst.session.last_assistant_text
+    and inst.session:last_assistant_text() or nil
+  if not text then return nil, 'no assistant message yet' end
+  return text
 end
 
 --- Client-side slash command dispatch. Returns true if the text was handled
@@ -1580,11 +1692,23 @@ function M.stop()
   end
 end
 
---- Public: close the current cc.nvim session (kill process, close windows).
-function M.close()
-  local inst = get_current_instance()
-  if not inst then return end
+--- Public: close a cc.nvim session (kill process, close windows, wipe
+--- buffers). With `bufnr` (output or prompt) the target instance is closed
+--- wherever it is; without it, the instance owning the current buffer.
+---@param bufnr integer?
+---@return boolean ok
+---@return string? err
+function M.close(bufnr)
+  local inst
+  if bufnr ~= nil then
+    inst = type(bufnr) == 'number' and find_instance(bufnr) or nil
+    if not inst then return false, 'no cc.nvim instance owns buffer ' .. tostring(bufnr) end
+  else
+    inst = get_current_instance()
+    if not inst then return false, 'current buffer is not a cc.nvim buffer' end
+  end
   close_instance(inst)
+  return true
 end
 
 --- Public: toggle visibility (close if current buffer is cc, else open new).
