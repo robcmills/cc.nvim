@@ -286,7 +286,7 @@ end
 function Codex:respond(id, result)
   self:_write({ jsonrpc = '2.0', id = id, result = result })
   if self.instance then
-    self.instance.awaiting_input = false
+    self.instance.awaiting_input = self.instance.awaiting_permission == true
     require('cc.statusline').refresh(self.instance)
   end
 end
@@ -297,7 +297,7 @@ end
 function Codex:respond_error(id, code, message)
   self:_write({ jsonrpc = '2.0', id = id, error = { code = code, message = message } })
   if self.instance then
-    self.instance.awaiting_input = false
+    self.instance.awaiting_input = self.instance.awaiting_permission == true
     require('cc.statusline').refresh(self.instance)
   end
 end
@@ -1503,12 +1503,14 @@ function Codex:_approve_command(id, params, legacy)
   if self.output then
     self.output:render_permission_request('Bash', input)
   end
-  require('cc.permission_prompt').ask('Bash', input, function(behavior, variant)
+  require('cc.permission_prompt').request('Bash', input, function(behavior, variant, _, source)
     if self.output then
       self.output:render_permission_outcome(behavior, 'Bash')
     end
-    self:respond(id, { decision = map_decision(behavior, variant, legacy) })
-  end, { provider = 'codex', instance = self.instance })
+    if source ~= 'closed' then
+      self:respond(id, { decision = map_decision(behavior, variant, legacy) })
+    end
+  end, { provider = 'codex', instance = self.instance, request_id = id })
 end
 
 ---@param id any
@@ -1528,12 +1530,14 @@ function Codex:_approve_file_change(id, params, legacy)
   if self.output then
     self.output:render_permission_request('FileChange', input)
   end
-  require('cc.permission_prompt').ask('FileChange', input, function(behavior, variant)
+  require('cc.permission_prompt').request('FileChange', input, function(behavior, variant, _, source)
     if self.output then
       self.output:render_permission_outcome(behavior, 'FileChange')
     end
-    self:respond(id, { decision = map_decision(behavior, variant, legacy) })
-  end, { provider = 'codex', instance = self.instance })
+    if source ~= 'closed' then
+      self:respond(id, { decision = map_decision(behavior, variant, legacy) })
+    end
+  end, { provider = 'codex', instance = self.instance, request_id = id })
 end
 
 --- EXPERIMENTAL codex request_user_input: walk the questions sequentially

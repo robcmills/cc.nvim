@@ -606,12 +606,11 @@ T['approvals'] = MiniTest.new_set()
 --- Stub the permission prompt to auto-answer with the given choice.
 local function stub_permission_prompt(child, behavior, variant)
   child.lua(string.format([==[
-    package.loaded['cc.permission_prompt'] = {
-      ask = function(tool_name, input, cb)
-        _G._test_asked = { tool_name = tool_name, input = input }
-        cb(%q, %q)
-      end,
-    }
+    package.loaded['cc.permission_prompt'] = nil
+    require('cc.permission_prompt').ask = function(tool_name, input, cb)
+      _G._test_asked = { tool_name = tool_name, input = input }
+      cb(%q, %q)
+    end
   ]==], behavior, variant))
 end
 
@@ -690,6 +689,37 @@ T['approvals']['fileChange approval shows the tracked diff'] = function()
   local sent = _G.child.lua_get('_G._test_sent')
   eq(sent[#sent].id, 81)
   eq(sent[#sent].result.decision, 'accept')
+end
+
+T['approvals']['resolve API keeps concurrent approvals waiting and allows only once'] = function()
+  setup_codex(_G.child)
+  handshake(_G.child)
+  _G.child.lua([[
+    package.loaded['cc.permission_prompt'] = nil
+    require('cc.permission_prompt').ask = function(_, _, _, context)
+      _G._remote_supported = context.enable_remote()
+      return { dismiss = function() end }
+    end
+    local inst = _G._test_inst
+    inst.prompt = { bufnr = vim.api.nvim_create_buf(false, true) }
+    require('cc')._register_test_instance(inst.output.bufnr, inst)
+    for _, id in ipairs({ 91, 92 }) do
+      _G._feed({ id = id, method = 'item/commandExecution/requestApproval',
+        params = { command = 'pwd' } })
+    end
+    assert(require('cc').resolve_permission(91, 'allow'))
+    _G._still_waiting = inst.awaiting_input and inst.awaiting_permission
+    assert(require('cc').resolve_permission(92, 'deny'))
+    _G._finished = not inst.awaiting_input and not inst.awaiting_permission
+  ]])
+  eq(_G.child.lua_get('_G._remote_supported'), false)
+  eq(_G.child.lua_get('_G._still_waiting'), true)
+  eq(_G.child.lua_get('_G._finished'), true)
+  local sent = _G.child.lua_get('_G._test_sent')
+  eq(sent[#sent - 1].id, 91)
+  eq(sent[#sent - 1].result, { decision = 'accept' })
+  eq(sent[#sent].id, 92)
+  eq(sent[#sent].result, { decision = 'decline' })
 end
 
 T['approvals']['unsupported server requests get an error response'] = function()

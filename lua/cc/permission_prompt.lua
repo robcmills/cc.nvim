@@ -91,11 +91,12 @@ M._body_lines = body_lines
 
 ---@param tool_name string
 ---@param input table?
----@param context { provider: string?, instance: cc.Instance? }?
+---@param context table? request context, including provider and instance
 ---@return cc.PermissionPromptEvent
 local function build_event(tool_name, input, context)
   context = context or {}
   local instance = context.instance
+  local stage = context.stage
   local output = instance and instance.output
   local prompt = instance and instance.prompt
   local output_bufnr = output and output.bufnr or nil
@@ -118,20 +119,171 @@ local function build_event(tool_name, input, context)
     output_bufname = output_bufname,
     tool_name = tool_name,
     input = input,
+    request_id = context.request_id,
+    opened_at = context.opened_at,
+    elapsed = context.started_at and (vim.uv.hrtime() - context.started_at) / 1e9 or nil,
+    stage = context.stage,
+    resolve = context.resolve,
+    enable_remote = context.enable_remote and function() return context.enable_remote(stage) end or nil,
+    disable_remote = context.disable_remote,
+    remote_enabled_by_stage = context.remote_enabled_by_stage,
+    behavior = context.behavior,
+    source = context.source,
   }
 end
 
----@param tool_name string
----@param input table?
----@param context { provider: string?, instance: cc.Instance? }?
-local function notify_callback(tool_name, input, context)
-  local callback = require('cc.config').options.on_permission_prompt
+local function notify_callback(name, callback, event)
   if type(callback) ~= 'function' then return end
-  local ok, err = pcall(callback, build_event(tool_name, input, context))
+  local ok, err = pcall(callback, event)
   if not ok then
-    vim.notify('cc.nvim: on_permission_prompt callback failed: ' .. tostring(err),
+    vim.notify('cc.nvim: ' .. name .. ' callback failed: ' .. tostring(err),
       vim.log.levels.ERROR)
   end
+end
+
+---@class cc.PendingPermission
+---@field request_id string|number
+---@field tool_name string
+---@field input table?
+---@field opened_at number
+---@field remote_enabled_by_stage boolean
+---@field resolve fun(behavior: 'allow'|'deny', message: string?): boolean
+---@field finish fun(behavior: 'allow'|'deny'|nil, source: string, variant: string?, message: string?, deferred: boolean?): boolean
+---@field dismiss fun()?
+
+--- Own a request independently of its float. Providers encode answers in
+--- on_choice; remote/closed completions must not send another answer.
+---@param tool_name string
+---@param input table?
+---@param on_choice fun(behavior: string?, variant: string?, message: string?, source: string)
+---@param context table provider, instance, request_id, and optional pending map
+---@return cc.PendingPermission
+function M.request(tool_name, input, on_choice, context)
+  local options = require('cc.config').options
+  local stages = vim.deepcopy(options.permission_timeouts or {})
+  local inst = context.instance
+  local pending = context.pending or (inst and inst.pending_permissions) or {}
+  if inst then inst.pending_permissions = pending end
+  local entry = {
+    request_id = context.request_id, tool_name = tool_name, input = input,
+    opened_at = os.time(), remote_enabled_by_stage = false,
+  }
+  context.opened_at = entry.opened_at
+  context.started_at = vim.uv.hrtime()
+  local resolved, timer, handle = false, nil, nil
+
+  local function stop_timer()
+    if timer then
+      timer:stop()
+      timer:close()
+      timer = nil
+    end
+  end
+
+  local function refresh()
+    if not inst then return end
+    inst.awaiting_permission = next(pending) ~= nil
+    inst.awaiting_input = inst.awaiting_permission
+    require('cc.statusline').refresh(inst)
+  end
+
+  entry.finish = function(behavior, source, variant, message, deferred)
+    if resolved then return false end
+    resolved = true
+    stop_timer()
+    pending[entry.request_id] = nil
+    if source ~= 'local' and handle and handle.dismiss then pcall(handle.dismiss) end
+    refresh()
+    local function complete()
+      on_choice(behavior, variant, message, source)
+      context.stage = nil
+      context.behavior = behavior
+      context.source = source
+      context.remote_enabled_by_stage = entry.remote_enabled_by_stage
+      notify_callback('on_permission_resolved', options.on_permission_resolved,
+        build_event(tool_name, input, context))
+    end
+    if deferred then vim.schedule(complete) else complete() end
+    return true
+  end
+  entry.resolve = function(behavior, message)
+    if behavior ~= 'allow' and behavior ~= 'deny' then return false end
+    return entry.finish(behavior, 'api', behavior == 'allow' and 'allow_once' or 'deny', message)
+  end
+  context.resolve = entry.resolve
+  context.enable_remote = function(stage)
+    if resolved or not inst or not inst.provider or not inst.provider.set_remote_control then
+      return false
+    end
+    local state = inst.session and inst.session.remote_control_state
+    if state == 'ready' or state == 'connected' or state == 'reconnecting'
+        or inst.permission_remote_enabling then return false end
+    inst.permission_remote_enabling = true
+    local id = inst.provider:set_remote_control(true, require('cc')._current_session_name(inst), function()
+      inst.permission_remote_enabling = nil
+      require('cc.statusline').refresh(inst)
+    end)
+    if not id then inst.permission_remote_enabling = nil; return false end
+    if stage then entry.remote_enabled_by_stage = true end
+    return true
+  end
+  context.disable_remote = function()
+    if not inst or not inst.provider or not inst.provider.set_remote_control then return false end
+    local id = inst.provider:set_remote_control(false, nil, function()
+      inst.permission_remote_enabling = nil
+      require('cc.statusline').refresh(inst)
+    end)
+    return id ~= nil
+  end
+  context.choose = function(behavior, variant)
+    entry.finish(behavior, 'local', variant, nil, true)
+  end
+  context.set_handle = function(value) handle = value end
+  pending[entry.request_id] = entry
+  refresh()
+
+  -- Arm one timer at a time. A late event loop or a slow callback must not
+  -- make the next stage fire early relative to the preceding stage.
+  local function arm(index, delay)
+    local stage = stages[index]
+    if resolved or not stage then return end
+    timer = vim.uv.new_timer()
+    timer:start(math.max(0, math.ceil((delay or stage.after) * 1000)), 0, vim.schedule_wrap(function()
+      if resolved then return end
+      stop_timer()
+      local fired_at = vim.uv.hrtime()
+      context.stage = index
+      notify_callback('permission_timeouts[' .. index .. ']', stage.callback,
+        build_event(tool_name, input, context))
+      context.stage = nil
+      local next_stage = stages[index + 1]
+      if next_stage then
+        arm(index + 1, next_stage.after - (vim.uv.hrtime() - fired_at) / 1e9)
+      end
+    end))
+  end
+  handle = M.ask(tool_name, input, function(behavior, variant)
+    entry.finish(behavior, 'local', variant)
+  end, context)
+  entry.dismiss = handle and handle.dismiss
+  -- ask can resolve synchronously, including from on_permission_prompt.
+  if resolved then
+    if context.source ~= 'local' and handle and handle.dismiss then pcall(handle.dismiss) end
+  else
+    arm(1, stages[1] and (stages[1].after - (vim.uv.hrtime() - context.started_at) / 1e9))
+  end
+  return entry
+end
+
+--- Close pending requests before tearing down buffers or their process.
+---@param instance cc.Instance
+function M.close_pending(instance)
+  local pending = instance.pending_permissions or {}
+  local entries = vim.tbl_values(pending)
+  for _, entry in ipairs(entries) do
+    if entry.finish then entry.finish('deny', 'closed') end
+  end
+  instance.permission_remote_enabling = nil
 end
 
 --- Open the float and resolve once via `on_choice`.
@@ -145,7 +297,7 @@ end
 ---@param tool_name string
 ---@param input table?
 ---@param on_choice fun(behavior: 'allow'|'deny', variant: 'allow_once'|'allow_always'|'deny'|'cancel')
----@param context? { provider: string?, instance: cc.Instance? }
+---@param context table? request context, including provider and instance
 ---@return { bufnr: integer, winid: integer, dismiss: fun() }
 function M.ask(tool_name, input, on_choice, context)
   local lines = body_lines(tool_name, input)
@@ -213,7 +365,11 @@ function M.ask(tool_name, input, on_choice, context)
   local function resolve(behavior, variant)
     if resolved then return end
     dismiss()
-    vim.schedule(function() on_choice(behavior, variant) end)
+    if context and context.choose then
+      context.choose(behavior, variant)
+    else
+      vim.schedule(function() on_choice(behavior, variant) end)
+    end
   end
 
   local function bind(key, behavior, variant, desc)
@@ -240,9 +396,12 @@ function M.ask(tool_name, input, on_choice, context)
     callback = function() resolve('deny', 'cancel') end,
   })
 
-  notify_callback(tool_name, input, context)
+  local handle = { bufnr = bufnr, winid = winid, dismiss = dismiss }
+  if context and context.set_handle then context.set_handle(handle) end
+  notify_callback('on_permission_prompt', require('cc.config').options.on_permission_prompt,
+    build_event(tool_name, input, context))
 
-  return { bufnr = bufnr, winid = winid, dismiss = dismiss }
+  return handle
 end
 
 return M

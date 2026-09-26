@@ -149,10 +149,9 @@ end
 
 T['list_instances']['Claude permission requests set and clear awaiting_input'] = function()
   _G.child.lua([[
-    local original = package.loaded['cc.permission_prompt']
-    package.loaded['cc.permission_prompt'] = {
-      ask = function(_, _, callback) _G._claude_permission_choice = callback end,
-    }
+    local prompt = require('cc.permission_prompt')
+    local original = prompt.ask
+    prompt.ask = function(_, _, callback) _G._claude_permission_choice = callback end
     local session = require('cc.session').new()
     local output = require('cc.output').new(session, 'cc-agent-api-claude')
     output:ensure_buffer()
@@ -170,7 +169,7 @@ T['list_instances']['Claude permission requests set and clear awaiting_input'] =
     _G._claude_waiting_before = instance.awaiting_input
     _G._claude_permission_choice('allow', 'allow_once')
     _G._claude_waiting_after = instance.awaiting_input
-    package.loaded['cc.permission_prompt'] = original
+    prompt.ask = original
   ]])
   eq(_G.child.lua_get('_G._claude_waiting_before'), true)
   eq(_G.child.lua_get('_G._claude_waiting_after'), false)
@@ -178,10 +177,9 @@ end
 
 T['list_instances']['Codex approvals set and clear awaiting_input'] = function()
   _G.child.lua([[
-    local original = package.loaded['cc.permission_prompt']
-    package.loaded['cc.permission_prompt'] = {
-      ask = function(_, _, callback) _G._codex_permission_choice = callback end,
-    }
+    local prompt = require('cc.permission_prompt')
+    local original = prompt.ask
+    prompt.ask = function(_, _, callback) _G._codex_permission_choice = callback end
     local session = require('cc.session').new()
     local output = require('cc.output').new(session, 'cc-agent-api-codex')
     output:ensure_buffer()
@@ -202,7 +200,7 @@ T['list_instances']['Codex approvals set and clear awaiting_input'] = function()
     _G._codex_waiting_before = instance.awaiting_input
     _G._codex_permission_choice('allow', 'allow_once')
     _G._codex_waiting_after = instance.awaiting_input
-    package.loaded['cc.permission_prompt'] = original
+    prompt.ask = original
   ]])
   eq(_G.child.lua_get('_G._codex_waiting_before'), true)
   eq(_G.child.lua_get('_G._codex_waiting_after'), false)

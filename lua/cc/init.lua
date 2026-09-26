@@ -33,6 +33,8 @@ M.VERSION = '0.11.0'
 ---@field cwd string working directory captured when the instance was created
 ---@field awaiting_input boolean? true while provider UI is waiting for a user response
 ---@field permission_winid integer? floating window of the open permission prompt, if any; set/cleared by cc.permission_prompt
+---@field pending_permissions table<string|number, cc.PendingPermission>?
+---@field permission_remote_enabling boolean? suppress duplicate enables before acknowledgement
 ---@field awaiting_permission boolean?
 ---@field saved_output_view table? output winsaveview snapshot from the last close, restored on reopen
 ---@field saved_output_following_tail boolean? whether the output cursor was on the tail at the last close; reopen re-pins to the new tail instead of restoring saved_output_view
@@ -53,6 +55,7 @@ vim.api.nvim_create_autocmd('VimLeavePre', {
   group = vim.api.nvim_create_augroup('cc.shutdown', { clear = true }),
   callback = function()
     for _, inst in pairs(instances) do
+      if inst then require('cc.permission_prompt').close_pending(inst) end
       if inst and inst.process then
         pcall(function() inst.process:close() end)
       end
@@ -478,6 +481,7 @@ end
 --- that name (E95: buffer with this name already exists).
 ---@param inst cc.Instance
 local function teardown_instance_keep_windows(inst)
+  require('cc.permission_prompt').close_pending(inst)
   require('cc.statusline_spinner').stop(inst)
   if inst.output and inst.output.bufnr > 0 then
     local sid = inst.session and inst.session.id or nil
@@ -511,6 +515,7 @@ end
 --- same `cc-<title>` without colliding with the stale buffer.
 ---@param inst cc.Instance
 local function close_instance(inst)
+  require('cc.permission_prompt').close_pending(inst)
   require('cc.statusline_spinner').stop(inst)
   if inst.output and inst.output.bufnr > 0 then
     local sid = inst.session and inst.session.id or nil
@@ -589,6 +594,7 @@ local function attach_provider(inst, opts)
       require('cc.statusline').refresh(inst)
     end,
     on_exit = function(code)
+      require('cc.permission_prompt').close_pending(inst)
       if code and code ~= 0 then
         vim.notify('cc.nvim: ' .. P.name .. ' exited with code ' .. code, vim.log.levels.WARN)
       end
@@ -1759,6 +1765,19 @@ function M.get_skills()
   return nil
 end
 
+--- Answer a pending permission by control request ID. Allow is always once.
+---@param request_id string|number
+---@param behavior 'allow'|'deny'
+---@param message string? denial message sent to the model
+---@return boolean resolved false for an unknown/resolved ID or invalid behavior
+function M.resolve_permission(request_id, behavior, message)
+  for _, inst in pairs(instances) do
+    local entry = inst.pending_permissions and inst.pending_permissions[request_id]
+    if entry and entry.resolve then return entry.resolve(behavior, message) end
+  end
+  return false
+end
+
 --- Return provider-neutral, JSON-safe snapshots of every registered instance.
 --- Internal provider/process/buffer objects are deliberately not exposed.
 ---@return table[]
@@ -1771,7 +1790,19 @@ function M.list_instances()
     local prompt_bufnr = inst.prompt and inst.prompt.bufnr or nil
     if type(output_bufnr) == 'number' and type(prompt_bufnr) == 'number'
         and (provider == 'claude' or provider == 'codex') then
+      local pending = {}
+      for _, entry in pairs(inst.pending_permissions or {}) do
+        if entry.resolve then
+          pending[#pending + 1] = {
+            request_id = entry.request_id, tool_name = entry.tool_name,
+            input = vim.deepcopy(entry.input), opened_at = entry.opened_at,
+          }
+        end
+      end
+      table.sort(pending, function(a, b) return tostring(a.request_id) < tostring(b.request_id) end)
       snapshots[#snapshots + 1] = {
+        awaiting_permission = inst.awaiting_permission == true,
+        pending_permissions = pending,
         outputBufnr = output_bufnr,
         promptBufnr = prompt_bufnr,
         sessionId = inst.last_session_id or (session and session.id) or vim.NIL,
