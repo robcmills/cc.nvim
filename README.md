@@ -252,6 +252,8 @@ require('cc').setup({
   models_path = nil, -- nil → stdpath('data') .. '/cc/models.json'
   -- Called when a Claude or Codex tool permission prompt opens.
   on_permission_prompt = nil, -- function(event)
+  permission_timeouts = {}, -- { { after = seconds, callback = function(event) end }, ... }
+  on_permission_resolved = nil, -- function(event)
   -- One-line summaries shown in the :CcPermissionMode picker, keyed by mode.
   permission_mode_descriptions = { --[[ see lua/cc/config.lua for defaults ]] },
   prompt_height = 10,
@@ -471,8 +473,61 @@ Set `on_permission_prompt` to receive an event when this window opens,
 for example to send a desktop notification. The event contains `provider`,
 `session_id`, `session_name`, `prompt_bufnr`, `output_bufnr`,
 `output_bufname` (the basename shown by buffer-list integrations),
-`tool_name`, and `input`. Callback errors are reported without blocking the
-permission prompt.
+`tool_name`, and `input`. Tool approval events also include `request_id`,
+`opened_at` (epoch seconds), `elapsed` (seconds since opening), and these handles:
+
+- `event.resolve('allow'|'deny', message)` answers and dismisses the prompt,
+  returning `true` once, then `false` on further calls. Allow always means
+  **allow once**, never a persistent rule. A denial message replaces
+  `User denied via cc.nvim` in Claude's control response.
+- `event.enable_remote()` enables Remote Control for this instance using its
+  current session name. Returns `true` if it sent an enable, `false` if the
+  bridge is ready/connected/reconnecting, an enable is already in flight,
+  the prompt has resolved, or the provider does not support Remote Control.
+- `event.disable_remote()` disables Remote Control for the instance, including
+  from the resolved callback. Returns whether a request was sent.
+
+`permission_timeouts` is an ordered list of `{ after = seconds, callback = function(event) }`.
+Each delay starts when the preceding stage fires; the first starts when the
+prompt opens. Fractional seconds are supported. Stage events add a 1-based
+`stage`; opening and resolved events have no stage. Only pending requests run
+stages, and resolution or instance teardown stops and closes their timers.
+
+`on_permission_resolved(event)` runs once for every resolved tool approval.
+It adds `behavior` (`allow` or `deny`), `source` (`local` for float choices,
+`remote` for bridge answers, `api` for either resolve API, or `closed` for
+process exit/instance teardown), and `remote_enabled_by_stage` (boolean).
+Remote cancellation does not contain the actual decision, so `behavior` is
+nil when it is unknown; an echoed remote response supplies it when available.
+Teardown reports `deny` without sending an answer to the exiting process.
+
+For example, give yourself two minutes to answer locally, then forward the
+pending Claude prompt to the phone app through Remote Control. After another
+15 minutes, deny with guidance for the model. Reset Remote Control after
+resolution only if a stage enabled it:
+
+```lua
+require('cc').setup({
+  permission_timeouts = {
+    { after = 120, callback = function(event)
+      event.enable_remote()
+    end },
+    { after = 900, callback = function(event)
+      event.resolve('deny', 'Approval timeout. Attempt to work around safely, else continue other work and report this denial.')
+    end },
+  },
+  on_permission_resolved = function(event)
+    if event.remote_enabled_by_stage then event.disable_remote() end
+  end,
+})
+```
+
+The default empty stages and nil resolved callback add no automatic action.
+Callback errors are reported without breaking the prompt or later stages.
+These options apply to the tool approval float, including Codex command/file
+approvals. Codex supports allow/deny decisions but its approval protocol has
+no custom denial message or Remote Control. Specialized plan-mode, question,
+and elicitation dialogs retain their own handling.
 
 | Key | Action |
 |---|---|
@@ -730,8 +785,15 @@ reliable.
 ### Instance lifecycle and external agents
 
 `require('cc').list_instances()` returns JSON-safe snapshots for external
-agent tools, including callers using `nvim --remote-expr`. The snapshot's
-`state`, `:CcStatus`, and statusline lifecycle share this precedence:
+agent tools, including callers using `nvim --remote-expr`.
+`awaiting_permission` is a boolean, and `pending_permissions` is a list of
+`{ request_id, tool_name, input, opened_at }` for pending tool approval floats.
+These snapshots contain no callable handles. Use
+`require('cc').resolve_permission(request_id, 'allow'|'deny', message)` to answer
+by ID across instances. It returns `false` for an unknown/already resolved ID
+or invalid behavior, and `true` when answered. Allow means allow once.
+
+The snapshot's `state`, `:CcStatus`, and statusline lifecycle share this precedence:
 
 | State | Meaning |
 | --- | --- |

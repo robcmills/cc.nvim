@@ -9,6 +9,20 @@ local M = {}
 ---@field output_bufname string? basename shown by buffer-list integrations
 ---@field tool_name string
 ---@field input table?
+---@field request_id string|number? control request ID
+---@field stage integer? 1-based timeout stage; nil for opening/resolution
+---@field opened_at number? epoch seconds
+---@field elapsed number? seconds since opening (monotonic)
+---@field resolve fun(behavior: 'allow'|'deny', message: string?): boolean
+---@field enable_remote fun(): boolean true if an enable was sent
+---@field disable_remote fun(): boolean true if a disable was sent
+---@field remote_enabled_by_stage boolean? set on resolution
+---@field behavior 'allow'|'deny'|nil resolved decision; nil if unknown remotely
+---@field source 'local'|'remote'|'api'|'closed'|nil set on resolution
+
+---@class cc.PermissionTimeout
+---@field after number seconds from opening or the preceding stage firing
+---@field callback fun(event: cc.PermissionPromptEvent)
 
 ---@class cc.Config
 ---@field limits_log string|false|nil
@@ -87,6 +101,16 @@ local defaults = {
   -- reported without interrupting the permission flow.
   -- function(event: cc.PermissionPromptEvent)
   on_permission_prompt = nil,
+
+  -- Sequential stages for an unanswered tool permission prompt. Each delay
+  -- is in seconds from opening / the previous stage firing. Errors are
+  -- reported without interrupting the prompt; resolution cancels all stages.
+  ---@type cc.PermissionTimeout[]
+  permission_timeouts = {},
+
+  -- Called once on any resolution, including remote answers and teardown.
+  ---@type fun(event: cc.PermissionPromptEvent)?
+  on_permission_resolved = nil,
 
   -- One-line summaries shown in the :CcPermissionMode picker. Keys are the
   -- CLI's mode names; override any entry to reword it.

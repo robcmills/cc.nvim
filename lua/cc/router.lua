@@ -10,7 +10,7 @@ local M = {}
 ---@field output cc.Output
 ---@field process cc.Process?
 ---@field instance cc.Instance?
----@field open_prompts table<string, { tool_name: string, dismiss: fun() }>
+---@field open_prompts table<string, cc.PendingPermission|{ tool_name: string, dismiss: fun() }>
 ---@field on_session_id fun(session_id: string)?
 ---@field interrupted_result_pending boolean true after an acknowledged interrupt until Claude's optional trailing result
 ---@field remote_control_failure string? detail of the last bridge_state failure, so the CLI's matching control_response error is not shown twice
@@ -455,6 +455,10 @@ end
 function Router:_handle_control_cancel(msg)
   local entry = self.open_prompts[msg.request_id]
   if not entry then return end
+  if entry.finish then
+    entry.finish(nil, 'remote')
+    return
+  end
   self.open_prompts[msg.request_id] = nil
   pcall(entry.dismiss)
   self.output:render_permission_outcome('remote', entry.tool_name)
@@ -477,7 +481,11 @@ function Router:_handle_control_response(msg)
   end
   if not pending then
     local entry = self.open_prompts[resp.request_id]
-    if entry then
+    if entry and entry.finish then
+      local behavior = type(resp.response) == 'table' and resp.response.behavior
+      if behavior ~= 'allow' and behavior ~= 'deny' then behavior = nil end
+      entry.finish(behavior, 'remote')
+    elseif entry then
       self.open_prompts[resp.request_id] = nil
       pcall(entry.dismiss)
       local behavior = type(resp.response) == 'table' and resp.response.behavior
@@ -649,13 +657,12 @@ function Router:_handle_permission_request(request_id, req)
 
   self.output:render_permission_request(tool_name, input)
 
-  local answered = false
-  local handle = require('cc.permission_prompt').ask(tool_name, input, function(behavior, variant)
-    self.open_prompts[request_id] = nil
-    answered = true
+  require('cc.permission_prompt').request(tool_name, input, function(behavior, variant, message, source)
+    self.output:render_permission_outcome(behavior or 'remote', tool_name)
+    if source == 'remote' or source == 'closed' then return end
     local response_body = self:_build_permission_response(
       behavior, variant, tool_name, input, tool_use_id, suggestions)
-    self.output:render_permission_outcome(behavior, tool_name)
+    if behavior == 'deny' and message ~= nil then response_body.message = message end
     if self.process then
       self.process:write({
         type = 'control_response',
@@ -666,15 +673,8 @@ function Router:_handle_permission_request(request_id, req)
         },
       })
     end
-    if self.instance then
-      self.instance.awaiting_permission = false
-      self.instance.awaiting_input = false
-      require('cc.statusline').refresh(self.instance)
-    end
-  end, { provider = 'claude', instance = self.instance })
-  if not answered and type(handle) == 'table' and type(handle.dismiss) == 'function' then
-    self.open_prompts[request_id] = { tool_name = tool_name, dismiss = handle.dismiss }
-  end
+  end, { provider = 'claude', instance = self.instance,
+    request_id = request_id, pending = self.open_prompts })
 end
 
 --- Build the `response` body for a can_use_tool control_response.
