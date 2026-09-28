@@ -395,7 +395,8 @@ The output buffer is foldable with five logical levels:
 
 Consecutive tool calls in an agent turn share a group; agent text or
 thinking between them starts a new one. The header's count updates as calls
-stream in. A lone tool call still gets its own group, so every level hides
+stream in, and while the group is folded it also shows the running or most
+recent call with its timer, the way a folded subagent `Activity:` header does. A lone tool call still gets its own group, so every level hides
 the same kind of line everywhere.
 
 Every foldable header gets a caret prefix rendered as inline `virt_text`:
@@ -412,7 +413,7 @@ Example at `foldlevel=1`:
 ▾ Agent:
   I'll look into the token expiration.
 
-  ▸ ⚒ Tools: 3 calls
+  ▸ ⚒ Tools: 3 calls · ❯ Bash: npm test ⏱ 4s
 
   Fixed. The expiry was '1h'; changed to '24h'.
   ── $0.05 │ 12k in │ 55 out ──

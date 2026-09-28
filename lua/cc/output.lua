@@ -81,6 +81,7 @@ M._buf_state = {}
 ---@class cc.OutputToolGroup
 ---@field header_lnum integer 1-indexed line of the group header
 ---@field count integer tool calls in the run so far
+---@field last_tool_id string? most recent call, shown in the folded header
 
 --- Per-subagent "Activity:" section nested inside the parent Agent tool block.
 --- Holds the subagent's own tool calls, results, text and thinking at fold
@@ -999,7 +1000,8 @@ function Output:on_content_block_start(block)
   elseif block.type == 'tool_use' then
     local icon = require('cc.icons').for_tool(block.name or '')
     local header_text = header_pad(TOOL_DEPTH) .. icon .. ' ' .. display_tool_name(block.name) .. ':'
-    self:_add_to_tool_group()
+    local group = self:_add_to_tool_group()
+    group.last_tool_id = block.id
     local header_lnum = self:_append({ header_text }, { '>' .. TOOL_DEPTH }, true)
     self.streaming_block_type = 'tool_use'
     self.streaming_tool_id = block.id
@@ -1583,6 +1585,38 @@ function Output:subagent_thinking(parent_id, text)
   self:_subagent_prose(parent_id, text, 'thinking')
 end
 
+--- Folded-header status for a tool: its current header line text, so a
+--- running tool's live timer (and final duration once done) shows through.
+---@param bufnr integer
+---@param tool_use_id string?
+---@return string? status
+local function tool_status(bufnr, tool_use_id)
+  local state = M._buf_state[bufnr]
+  local meta = state and state.tool_blocks[tool_use_id or '']
+  if meta and meta.header_lnum
+      and meta.header_lnum <= vim.api.nvim_buf_line_count(bufnr) then
+    local line = vim.api.nvim_buf_get_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false)[1]
+    return clip_status(line or '')
+  end
+  return nil
+end
+
+--- Status shown in a folded tool group header: the current or most recent
+--- tool call, same text as a folded Activity header shows for a tool.
+---@param bufnr integer
+---@param header_lnum integer line of the group header
+---@return string? status
+function M.tool_group_status(bufnr, header_lnum)
+  local state = M._buf_state[bufnr]
+  if not state or not state.tool_groups then return nil end
+  for _, group in ipairs(state.tool_groups) do
+    if group.header_lnum == header_lnum then
+      return tool_status(bufnr, group.last_tool_id)
+    end
+  end
+  return nil
+end
+
 --- Status shown in a folded "Activity:" header: the most recent nested
 --- item. For a tool that is the current header line text (so a running
 --- tool's live timer shows through); for prose the first line of text.
@@ -1597,13 +1631,7 @@ function M.subagent_status(bufnr, header_lnum)
       local last = sub.last
       if not last then return nil end
       if last.kind == 'tool' then
-        local meta = state.tool_blocks[last.tool_use_id or '']
-        if meta and meta.header_lnum
-            and meta.header_lnum <= vim.api.nvim_buf_line_count(bufnr) then
-          local line = vim.api.nvim_buf_get_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false)[1]
-          return clip_status(line or '')
-        end
-        return nil
+        return tool_status(bufnr, last.tool_use_id)
       elseif last.kind == 'thinking' then
         return '∴ Thinking...'
       end

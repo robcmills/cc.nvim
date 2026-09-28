@@ -97,8 +97,10 @@ local function build_fold_info(bufnr, foldstart, foldend)
     info.status = output.subagent_status(bufnr, foldstart)
   end
 
+  -- Tool groups show their current or most recent call the same way.
   if group then
     info.tool_count = group.count
+    info.status = output.tool_group_status(bufnr, foldstart)
   end
 
   -- For tool folds, attach the originating tool block's name and input so
@@ -192,8 +194,11 @@ function M.default_foldtext(info)
     end
     return { { '▸ ', 'CcCaret' }, { body, hl } }
   elseif info.role == 'tool_group' then
-    local stripped = info.header:gsub('^%s*', '')
-    return { { caret, 'CcCaret' }, { stripped, hl } }
+    local body = info.header:gsub('^%s*', '')
+    if info.status and info.status ~= '' then
+      body = body .. ' · ' .. info.status
+    end
+    return { { caret, 'CcCaret' }, { body, hl } }
   elseif info.role == 'tool' then
     local stripped = info.header:gsub('^%s*', '')
     local tool_body = require('cc.output.tool_body')

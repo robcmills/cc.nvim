@@ -531,11 +531,11 @@ T['tool_groups']['level 1 shows only turn text and group headers'] = function()
     'Agent:',
     'Let me look.',
     '',
-    '  ▸ ⚒ Tools: 2 calls',
+    '  ▸ ⚒ Tools: 2 calls · ❯ Bash: pwd',
     '',
     'Looked around.',
     '',
-    '  ▸ ⚒ Tools: 1 call',
+    '  ▸ ⚒ Tools: 1 call · ❯ Bash: date',
     '',
     'Done.',
   })
@@ -597,7 +597,70 @@ T['tool_groups']['streaming a tool into the run bumps the count and extends the 
   eq(_G.child.lua_get('_G._after'), '  ⚒ Tools: 2 calls')
   eq(_G.child.lua_get('_G._closed'), true)
   eq(_G.child.lua_get('_G._extends_to_end'), true)
-  eq(_G.child.lua_get('_G._ft'), '  ▸ ⚒ Tools: 2 calls')
+  eq(_G.child.lua_get('_G._ft'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: pwd')
+end
+
+T['tool_groups']['collapsed header tracks the running call as calls stream in'] = function()
+  tg([[
+    vim.wo.foldlevel = 1
+    output:render_user_turn('go')
+    _G._tg.tool('t1', 'ls', 'a')
+    local header = _G._tg.find('Tools:')
+    output:begin_assistant_turn()
+    local block = { type = 'tool_use', id = 't2', name = 'Bash', input = { command = 'yarn lint' } }
+    output:on_content_block_start(block)
+    output:on_content_block_stop(block)
+    output:update_tool_elapsed('t2', 5)
+    vim.cmd('redraw')
+    _G._running = vim.fn.foldtextresult(header)
+    output:update_tool_elapsed('t2', 7)
+    vim.cmd('redraw')
+    _G._ticked = vim.fn.foldtextresult(header)
+    output:begin_assistant_turn()
+    output:on_content_block_start({ type = 'tool_use', id = 't3', name = 'Read' })
+    vim.cmd('redraw')
+    _G._next = vim.fn.foldtextresult(header)
+  ]])
+  eq(_G.child.lua_get('_G._running'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: yarn lint ⏱ 5s')
+  eq(_G.child.lua_get('_G._ticked'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: yarn lint ⏱ 7s')
+  eq(_G.child.lua_get('_G._next'), '  ▸ ⚒ Tools: 3 calls · ▤ Read:')
+end
+
+T['tool_groups']['collapsed header keeps the last call once the run ends'] = function()
+  tg([[
+    output:render_user_turn('go')
+    _G._tg.tool('t1', 'ls', 'a')
+    _G._tg.tool('t2', 'yarn lint')
+    output:update_tool_elapsed('t2', 3)
+    output:render_tool_result('t2', 'ok', false)
+    _G._tg.text('Lint is clean.')
+    output:end_assistant_turn()
+    local header = _G._tg.find('Tools:')
+    vim.wo.foldlevel = 1
+    vim.cmd('redraw')
+    _G._ft = vim.fn.foldtextresult(header)
+    -- Open, the header line itself carries no status.
+    _G._line = vim.fn.getline(header)
+  ]])
+  eq(_G.child.lua_get('_G._ft'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: yarn lint ⏱ 3s')
+  eq(_G.child.lua_get('_G._line'), '  ⚒ Tools: 2 calls')
+end
+
+T['tool_groups']['an error result still shows the call like an Activity header'] = function()
+  tg([[
+    output:render_user_turn('go')
+    _G._tg.tool('t1', 'ls', 'a')
+    _G._tg.tool('t2', 'false')
+    output:render_tool_result('t2', 'exit 1', true)
+    local header = _G._tg.find('Tools:')
+    vim.wo.foldlevel = 1
+    vim.cmd('redraw')
+    _G._ft = vim.fn.foldtextresult(header)
+    _G._err_fl = Output._buf_state[bufnr].fold_levels[_G._tg.find('Error:')]
+  ]])
+  -- Activity headers mark no running/done/error state; neither do groups.
+  eq(_G.child.lua_get('_G._ft'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: false')
+  eq(_G.child.lua_get('_G._err_fl'), '>4')
 end
 
 T['tool_groups']['hidden thinking between tool calls keeps the run together'] = function()
@@ -629,7 +692,7 @@ T['tool_groups']['a permission prompt stays inside the run'] = function()
   ]])
   eq(_G.child.lua_get('_G._groups'), 1)
   eq(_G.child.lua_get('_G._perm_fl'), 2)
-  eq(_G.child.lua_get('_G._visible[#_G._visible]'), '  ▸ ⚒ Tools: 2 calls')
+  eq(_G.child.lua_get('_G._visible[#_G._visible]'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: pwd')
 end
 
 T['tool_groups']['resumed transcripts render groups too'] = function()
