@@ -70,10 +70,10 @@ T['rewriting a closed fold header keeps the fold extent'] = function()
     local bufnr = _G._test_bufnr
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     for i, l in ipairs(lines) do
-      if l:match('^  %S+ Subagent:') then _G._parent = i end
+      if l:match('^    %S+ Subagent:') then _G._parent = i end
     end
-    -- foldlevel 1 closes the Agent tool block, so its extent is observable.
-    _G._test_output:set_fold_level(1)
+    -- foldlevel 2 closes the Agent tool block, so its extent is observable.
+    _G._test_output:set_fold_level(2)
     vim.api.nvim_win_call(_G._test_output.winid, function()
       vim.cmd('redraw')
       _G._before = vim.fn.foldclosedend(_G._parent)

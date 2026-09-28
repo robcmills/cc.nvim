@@ -32,15 +32,30 @@ local function build_fold_info(bufnr, foldstart, foldend)
   local header = vim.fn.getline(foldstart)
   local line_count = foldend - foldstart + 1
 
-  -- Fold depth of the header (">2" → 2). Tool headers sit at even depths
-  -- (2 top-level, 4 nested in a subagent Activity section); their Output:
-  -- folds at the next odd depth.
+  -- Fold depth of the header (">3" → 3). Tool groups sit at depth 2, tool
+  -- headers at 3 (5 when nested in a subagent Activity section), and their
+  -- Output: folds one deeper.
+  local output = require('cc.output')
   local raw = state and state.fold_levels and state.fold_levels[foldstart]
   local depth = 0
   if type(raw) == 'string' then
     depth = tonumber(raw:match('[>%<]?(%d+)')) or 0
   elseif type(raw) == 'number' then
     depth = raw
+  end
+
+  -- Tool groups and tool headers are found by line number; their text is
+  -- user-configurable (group label, icons) so it can't be pattern-matched.
+  local group, tool_block
+  if state then
+    for _, g in ipairs(state.tool_groups or {}) do
+      if g.header_lnum == foldstart then group = g; break end
+    end
+    if not group then
+      for _, block in pairs(state.tool_blocks or {}) do
+        if block.header_lnum == foldstart then tool_block = block; break end
+      end
+    end
   end
 
   -- Detect role from header line content.
@@ -53,9 +68,12 @@ local function build_fold_info(bufnr, foldstart, foldend)
     role = 'result'
   elseif header:match('^%s*Activity:') then
     role = 'activity'
-  elseif depth == 2 or depth == 4 then
+  elseif group then
+    role = 'tool_group'
+  elseif tool_block or depth == output.TOOL_GROUP_DEPTH then
+    -- Untracked tool-group-depth folds are plan snapshots and stray hooks.
     role = 'tool'
-  elseif depth >= 3 then
+  elseif depth > output.TOOL_GROUP_DEPTH then
     role = 'result'
   end
 
@@ -76,19 +94,18 @@ local function build_fold_info(bufnr, foldstart, foldend)
 
   -- Subagent Activity folds show their latest item while collapsed.
   if role == 'activity' then
-    info.status = require('cc.output').subagent_status(bufnr, foldstart)
+    info.status = output.subagent_status(bufnr, foldstart)
+  end
+
+  if group then
+    info.tool_count = group.count
   end
 
   -- For tool folds, attach the originating tool block's name and input so
   -- foldtext can derive a fold-only summary for tools in tool_body.SUMMARY_FOLD_ONLY.
-  if role == 'tool' and state and state.tool_blocks then
-    for _, block in pairs(state.tool_blocks) do
-      if block.header_lnum == foldstart then
-        info.tool_name = block.tool_name
-        info.tool_input = block.input
-        break
-      end
-    end
+  if tool_block then
+    info.tool_name = tool_block.tool_name
+    info.tool_input = tool_block.input
   end
 
   -- For user/agent turns, scan content to count tools and find preview text.
@@ -96,11 +113,12 @@ local function build_fold_info(bufnr, foldstart, foldend)
     local tool_count = 0
     local last_block_text = nil
     local prev_was_text = false
+    local tool_header = '>' .. output.TOOL_DEPTH
     local fold_lines = vim.fn.getline(foldstart + 1, foldend)
     for i, line in ipairs(fold_lines) do
       local lnum = foldstart + i
       local fl = state.fold_levels[lnum]
-      if fl == '>2' then
+      if fl == tool_header then
         tool_count = tool_count + 1
         prev_was_text = false
       elseif fl == 1 then
@@ -130,7 +148,7 @@ end
 local function role_hl(info)
   if info.role == 'user' then return 'CcUser' end
   if info.role == 'agent' then return 'CcAgent' end
-  if info.role == 'tool' then return 'CcTool' end
+  if info.role == 'tool' or info.role == 'tool_group' then return 'CcTool' end
   if info.role == 'activity' then return 'CcActivity' end
   if info.role == 'result' then
     if info.header and info.header:match('^%s*Error:') then return 'CcError' end
@@ -173,6 +191,9 @@ function M.default_foldtext(info)
       body = 'Agent:  ⟨' .. info.line_count .. ' lines⟩'
     end
     return { { '▸ ', 'CcCaret' }, { body, hl } }
+  elseif info.role == 'tool_group' then
+    local stripped = info.header:gsub('^%s*', '')
+    return { { caret, 'CcCaret' }, { stripped, hl } }
   elseif info.role == 'tool' then
     local stripped = info.header:gsub('^%s*', '')
     local tool_body = require('cc.output.tool_body')
@@ -277,7 +298,7 @@ function M.refresh_carets(bufnr)
         end
         -- Indent the inline caret to match the header's visual depth so the
         -- expanded view aligns with the folded (foldtext) view. Depth 1
-        -- headers sit at col 0, depth 2 at col 2, depth 3 at col 4.
+        -- headers sit at col 0, depth 2 at col 2, depth 3 at col 4, etc.
         local caret_col = math.max(0, (my_level - 1) * 2)
         local ok, id = pcall(vim.api.nvim_buf_set_extmark, bufnr, NS_CARETS, lnum - 1, caret_col, {
           virt_text = { { char .. ' ', 'CcCaret' } },

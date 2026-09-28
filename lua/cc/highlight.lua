@@ -135,20 +135,21 @@ function M.apply_buffer_syntax(bufnr)
     -- Permission request/outcome lines
     vim.cmd([[syntax match CcPermission /^\s\+[⚠✓✗]\s\+\%(Permission\|Allowed\|Denied\):.*$/ containedin=ALL]])
 
-    -- Diff lines inside a tool input. These are always prefixed with exactly
-    -- 8 spaces (see diff.lua INDENT), so we anchor on that to avoid matching
-    -- markdown bullets in agent prose which use a shallower indent.
+    -- Diff lines inside a tool input. diff.lua indents them 8 spaces and a
+    -- top-level tool body sits 2 more columns in (inside its tool group), so
+    -- anchor on exactly 10 to avoid matching markdown bullets in agent prose,
+    -- which use a shallower indent.
+    vim.cmd([[syntax match CcDiffAdd    /^ \{10\}\zs+.*$/ containedin=ALL]])
+    vim.cmd([[syntax match CcDiffDelete /^ \{10\}\zs-.*$/ containedin=ALL]])
+    vim.cmd([[syntax match CcDiffHunk   /^ \{10\}\zs@@.*@@$/ containedin=ALL]])
+
+    -- Codex FileChange bodies add a per-file path at the 6-space body indent,
+    -- then indent the supplied unified diff by another 2 spaces. Keep Claude's
+    -- 10-space rules above and add the Codex-specific 8-space form alongside.
+    vim.cmd([[syntax match CcDiffPath   /^ \{6\}\zs.*\ze (\%(add\|delete\|move\|rename\|update\))$/ containedin=ALL]])
     vim.cmd([[syntax match CcDiffAdd    /^ \{8\}\zs+.*$/ containedin=ALL]])
     vim.cmd([[syntax match CcDiffDelete /^ \{8\}\zs-.*$/ containedin=ALL]])
     vim.cmd([[syntax match CcDiffHunk   /^ \{8\}\zs@@.*@@$/ containedin=ALL]])
-
-    -- Codex FileChange bodies add a per-file path at 4 spaces, then indent
-    -- the supplied unified diff by another 2 spaces. Keep Claude's 8-space
-    -- rules above and add the Codex-specific 6-space form alongside them.
-    vim.cmd([[syntax match CcDiffPath   /^ \{4\}\zs.*\ze (\%(add\|delete\|move\|rename\|update\))$/ containedin=ALL]])
-    vim.cmd([[syntax match CcDiffAdd    /^ \{6\}\zs+.*$/ containedin=ALL]])
-    vim.cmd([[syntax match CcDiffDelete /^ \{6\}\zs-.*$/ containedin=ALL]])
-    vim.cmd([[syntax match CcDiffHunk   /^ \{6\}\zs@@.*@@$/ containedin=ALL]])
 
     -- TodoWrite item icons. Glyphs must match output.lua's todo_marker().
     vim.cmd([[syntax match CcTodoCompleted  /^\s\+\zs✓\ze\s/ containedin=ALL]])

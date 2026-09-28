@@ -26,6 +26,7 @@ local NERDFONT = {
   AskUserQuestion = '\xef\x84\xa8', -- U+F128 nf-fa-question 
   EnterPlanMode   = '\xef\x89\xb9', -- U+F279 nf-fa-map 
   ExitPlanMode    = '\xef\x80\x8c', -- U+F00C nf-fa-check 
+  ToolGroup       = '\xef\x82\x85', -- U+F085 nf-fa-cogs  (header of a run of tool calls)
   default         = '\xef\x82\xad', -- U+F0AD nf-fa-wrench 
 }
 
@@ -49,6 +50,7 @@ local UNICODE = {
   AskUserQuestion = '?',
   EnterPlanMode   = '▣',
   ExitPlanMode    = '▣',
+  ToolGroup       = '⚒',
   default         = '◆',
 }
 

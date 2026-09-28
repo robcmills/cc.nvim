@@ -63,8 +63,9 @@ Additionally, there were some issues with claude code when I built this,
 - **Verbose tool output overflows everything.** Tool results are folded
   by default so session output stays scannable; when you do expand
   something, a configurable `max_tool_result_lines` caps how much renders.
-  `:CcFold 0..3` toggles global disclosure levels. Foldlevel 1 is great for
-  scanning sessions at a glance. Then open folds to dig in.
+  `:CcFold 0..4` toggles global disclosure levels. Foldlevel 1 folds every
+  run of tool calls into one line, so a session reads as User, Agent, User,
+  Agent. Then open folds to dig in.
 
 On top of avoiding the pain points above, cc.nvim uses the `claude/codex` CLI
 directly (zero extra dependencies beyond what you already have), so all
@@ -92,6 +93,7 @@ Nearly every visible element is configurable:
 - **Per-tool icons.** Every tool gets a glyph (nerdfont auto-detected,
   unicode fallback). Swap any of them: `tool_icons.icons = { Read = '📖',
   Bash = '$', MyMcpTool = '🔧' }`. Set a `default` for unknown tools.
+  `ToolGroup` is the icon on the header folding each run of tool calls.
 - **Full highlight control.** `CcUser`, `CcAgent`, `CcTool`, `CcToolInput`,
   `CcOutput`, `CcError`, `CcCost`, `CcDiffAdd/Delete/Hunk`, `CcCaret`,
   `CcStl*`, and more — all link to existing colorscheme groups by default,
@@ -166,7 +168,7 @@ instead of being guessed.
 | `:CcClear` | Start a fresh session in the current windows |
 | `:CcSend` | Submit the prompt buffer to the agent |
 | `:CcStop` | Interrupt current turn (stream-json `control_request`) |
-| `:CcFold {n}` | Set output fold level (0..3) |
+| `:CcFold {n}` | Set output fold level (0..4) |
 | `:CcPlan` | Open in plan mode (`--permission-mode plan`) |
 | `:CcPermissionMode [mode]` | Set permission mode (no arg = picker with one-line descriptions; tab-completes the six modes). Sent live to an active session via `set_permission_mode` control_request, else stored for the next `:Cc` / `:CcNew`. |
 | `:CcRemote [name]` | Toggle Claude Remote Control live, or for the next `:CcNew`; optional name renames the session (shown in claude.ai too) |
@@ -215,7 +217,7 @@ require('cc').setup({
     validate = nil,
   },
 
-  default_fold_level = 2,
+  default_fold_level = 3,
   foldtext = nil,
 
   highlights = {
@@ -350,6 +352,8 @@ require('cc').setup({
     tokens_icon = 'τ',
   },
 
+  tool_group_format = nil, -- function(count) -> string; nil → 'Tools: N calls'
+
   tool_icons = {
     default = nil,
     icons = {},
@@ -379,14 +383,20 @@ Markdown is configured to refresh less often or only at block completion.
 
 ## Progressive disclosure
 
-The output buffer is foldable with four logical levels:
+The output buffer is foldable with five logical levels:
 
 | `foldlevel` | What's visible |
 |---|---|
 | 0 | Only User / Agent turn headers |
-| 1 | + agent text + tool summary lines (one-liners) |
-| 2 *(default)* | + tool inputs (Bash commands, Edit diffs) |
-| 3 | + tool results (stdout, read file contents) |
+| 1 | + agent text, with each run of tool calls folded to one `Tools: N calls` line |
+| 2 | + tool summary lines (one-liners) |
+| 3 *(default)* | + tool inputs (Bash commands, Edit diffs) |
+| 4 | + tool results (stdout, read file contents) |
+
+Consecutive tool calls in an agent turn share a group; agent text or
+thinking between them starts a new one. The header's count updates as calls
+stream in. A lone tool call still gets its own group, so every level hides
+the same kind of line everywhere.
 
 Every foldable header gets a caret prefix rendered as inline `virt_text`:
 `▾` when open, `▸` when folded. Carets stay in sync with Vim's fold state
@@ -397,38 +407,56 @@ Example at `foldlevel=1`:
 
 ```
 ▾ User:
-    Fix the bug in auth.ts where tokens expire too early
+  Fix the bug in auth.ts where tokens expire too early
 
 ▾ Agent:
-    I'll look into the token expiration.
-    ▸ 📖 Read: src/auth.ts
-    ▸ ✏️ Edit: src/auth.ts
-    ▸ $ Bash: npm test
-    Fixed. The expiry was '1h'; changed to '24h'.
+  I'll look into the token expiration.
+
+  ▸ ⚒ Tools: 3 calls
+
+  Fixed. The expiry was '1h'; changed to '24h'.
   ── $0.05 │ 12k in │ 55 out ──
 ```
 
-Unfold a tool with `zo` to see the input (at level 2) or result (at level 3).
-Change globally with `:CcFold 2` or the standard `zM` / `zR`.
+The same turn at `foldlevel=2`:
+
+```
+▾ Agent:
+  I'll look into the token expiration.
+
+  ▾ ⚒ Tools: 3 calls
+    ▸ ▤ Read: src/auth.ts
+
+    ▸ ✎ Edit: src/auth.ts
+
+    ▸ ❯ Bash: npm test
+
+  Fixed. The expiry was '1h'; changed to '24h'.
+```
+
+Unfold a group or tool with `zo`, or change globally with `:CcFold 1` and
+the standard `zM` / `zR`.
 
 ### Subagent activity
 
 When Claude delegates to a subagent, everything the subagent does streams
 into an `Activity:` section nested inside the `Subagent:` tool block. The
-section is a level-3 fold, so at the default `foldlevel=2` it stays closed
+section is a level-4 fold, so at the default `foldlevel=3` it stays closed
 and its header shows the subagent's most recent step: the running tool with
 its live timer, or the first line of its latest message. Open it (`zo`, or
-`:CcFold 3`) to see each nested tool call with its input and result, plus
+`:CcFold 4`) to see each nested tool call with its input and result, plus
 the subagent's text and thinking, laid out like top-level tools two depths
 deeper. Fold state is never changed behind your back: sections open or close
 only via `:CcFold` or your own `zo` / `zc`.
 
 ```
 ▾ Agent:
-    Let me analyze the codebase.
-  ▾ 󰋘 Subagent: Explore codebase structure 󰔛 42s
-      prompt: List all source files
-    ▸ Activity: 󰈙 Read: lua/cc/output.lua 󰔛 2s
+  Let me analyze the codebase.
+
+  ▾  Tools: 1 call
+    ▾ 󰋘 Subagent: Explore codebase structure 󰔛 42s
+        prompt: List all source files
+      ▸ Activity: 󰈙 Read: lua/cc/output.lua 󰔛 2s
 ```
 
 Subagent tool calls always stream; text and thinking need the
@@ -1069,7 +1097,7 @@ tests/
 ├── helpers.lua             # render_fixture(), replay_streaming(), visual_dump(), assertion helpers
 ├── cases/                                  # unit specs (mini.test, in-process child)
 │   ├── output_rendering_spec.lua    # user/agent turn headers, text rendering
-│   ├── fold_spec.lua                # fold levels 0-3, :CcFold, foldtext summaries
+│   ├── fold_spec.lua                # fold levels 0-4, tool groups, :CcFold, foldtext summaries
 │   ├── diff_rendering_spec.lua      # Edit/Write/MultiEdit diffs
 │   ├── highlight_spec.lua           # CcXxx highlight group defaults
 │   ├── caret_spec.lua               # ▾/▸ extmark sync with fold state

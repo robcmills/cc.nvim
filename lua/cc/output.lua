@@ -2,16 +2,23 @@
 -- Fold level scheme (per-line, fed to foldexpr):
 --   >1  User/Agent headers         (fold depth 1)
 --    1  Turn content (agent text)
---   >2  Tool header                (fold depth 2 inside a turn)
---    2  Tool input lines
---   >3  Tool result sub-header     (fold depth 3 inside a tool)
---    3  Tool result content
+--   >2  Tool group header          (fold depth 2: one run of consecutive tool calls)
+--    2  Separators between the group's tools
+--   >3  Tool header                (fold depth 3 inside a group)
+--    3  Tool input lines
+--   >4  Tool result sub-header     (fold depth 4 inside a tool)
+--    4  Tool result content
+--
+-- Every tool call belongs to a group, even a lone one, so each :CcFold level
+-- hides the same kind of line everywhere. Agent text or thinking between
+-- tool calls ends the run; the next tool call starts a new group.
 --
 -- User-facing :CcFold N maps to Vim foldlevel=N:
 --   0 = turns collapsed (only User/Agent headers visible)
---   1 = turns open, tools collapsed        (default)
---   2 = tools open (input visible), results collapsed
---   3 = everything visible
+--   1 = turns open, tool groups collapsed (agent text + group headers)
+--   2 = groups open, tools collapsed
+--   3 = tools open (input visible), results collapsed   (default)
+--   4 = everything visible
 --
 -- Carets (▸ folded, ▾ open) are inline virt_text extmarks at the start of
 -- header lines, synced to Vim's fold state on CursorMoved.
@@ -27,6 +34,37 @@ local function display_tool_name(name)
   return TOOL_DISPLAY_NAMES[name] or name or '?'
 end
 
+-- Fold depths of the tool tree. Subagent Activity sections sit one level
+-- below their parent Agent tool, and the subagent's own tools one below that.
+local TOOL_GROUP_DEPTH = 2
+local TOOL_DEPTH = 3
+local ACTIVITY_DEPTH = TOOL_DEPTH + 1
+local SUBAGENT_TOOL_DEPTH = ACTIVITY_DEPTH + 1
+M.TOOL_GROUP_DEPTH = TOOL_GROUP_DEPTH
+M.TOOL_DEPTH = TOOL_DEPTH
+
+--- Leading spaces for a fold header at `depth`, so the inline caret (placed
+--- at column (depth - 1) * 2 by refresh_carets) sits right before its text.
+---@param depth integer
+---@return string
+local function header_pad(depth)
+  return string.rep(' ', (depth - 1) * 2)
+end
+
+--- Header line text for a tool group of `count` calls.
+---@param count integer
+---@return string
+local function tool_group_header(count)
+  local fmt = require('cc.config').options.tool_group_format
+  local label
+  if type(fmt) == 'function' then
+    local ok, ret = pcall(fmt, count)
+    if ok and type(ret) == 'string' then label = ret end
+  end
+  label = label or string.format('Tools: %d call%s', count, count == 1 and '' or 's')
+  return header_pad(TOOL_GROUP_DEPTH) .. require('cc.icons').for_tool('ToolGroup') .. ' ' .. label
+end
+
 -- Per-buffer fold tracking (keyed by bufnr)
 ---@class cc.OutputBufState
 ---@field fold_levels table<integer, string|integer>  line number -> foldexpr value
@@ -34,12 +72,19 @@ end
 ---@field extmark_ids table<integer, integer>         line -> extmark id (1-indexed line)
 ---@field tool_blocks table<string, cc.OutputToolBlock> tool_use_id -> render metadata
 ---@field subagents table<string, cc.OutputSubagent> parent Agent tool_use_id -> Activity section
+---@field tool_groups cc.OutputToolGroup[] every tool group header rendered, in buffer order
 ---@field pending_subagent table<string, table[]>? subagent messages queued until the parent input renders
 M._buf_state = {}
 
+--- One run of consecutive top-level tool calls, folded under a header that
+--- counts them. Subagent tool calls nest inside their Agent tool instead.
+---@class cc.OutputToolGroup
+---@field header_lnum integer 1-indexed line of the group header
+---@field count integer tool calls in the run so far
+
 --- Per-subagent "Activity:" section nested inside the parent Agent tool block.
 --- Holds the subagent's own tool calls, results, text and thinking at fold
---- depth 3+. The section is created lazily with its first item so it never
+--- depth 4+. The section is created lazily with its first item so it never
 --- exists as an empty single-line fold.
 ---@class cc.OutputSubagent
 ---@field parent_id string tool_use_id of the parent Agent call
@@ -57,7 +102,7 @@ M._buf_state = {}
 ---@field result_header_lnum integer? line where "▾ Output:" was inserted
 ---@field input_rendered boolean
 ---@field input_end_lnum integer? last line of rendered tool input; insertion point for tool_result
----@field depth integer? fold depth of the header line: 2 for top-level tools, 4 for tools nested inside a subagent Activity section (default 2)
+---@field depth integer? fold depth of the header line: 3 for top-level tools, 5 for tools nested inside a subagent Activity section (default 3)
 ---@field parent_id string? parent Agent tool_use_id when this tool ran inside a subagent
 
 ---@class cc.Output
@@ -66,6 +111,7 @@ M._buf_state = {}
 ---@field session cc.Session
 ---@field streaming_block_type string?
 ---@field streaming_tool_id string? currently-streaming tool_use id
+---@field tool_group cc.OutputToolGroup? group the next tool call joins; nil once a run ends
 ---@field _pending_delta_chunks string[]
 ---@field _pending_delta_kind string?
 ---@field _delta_timer userdata?
@@ -89,6 +135,7 @@ function M.new(session, buf_name)
     last_turn_role = nil, ---@type 'user'|'agent'|nil tracks consecutive turns
     agent_header_lnum = nil, ---@type integer? header line of current agent fold
     agent_end_lnum = nil, ---@type integer? last line of the most recent agent turn (anchor for the result/cost line)
+    tool_group = nil,
     _pending_delta_chunks = {},
     _pending_delta_kind = nil,
     _delta_timer = nil,
@@ -118,6 +165,7 @@ function Output:ensure_buffer()
     extmark_ids = {},
     tool_blocks = {},
     subagents = {},
+    tool_groups = {},
   }
 
   self:_setup_window_opts_for_buffer()
@@ -501,6 +549,12 @@ function Output:_insert_lines(start_lnum, lines, fold_levels, is_header)
     end
   end
 
+  for _, group in ipairs(state.tool_groups or {}) do
+    if group.header_lnum >= start_lnum then
+      group.header_lnum = group.header_lnum + n
+    end
+  end
+
   for _, sub in pairs(state.subagents or {}) do
     if sub.header_lnum >= start_lnum then
       sub.header_lnum = sub.header_lnum + n
@@ -832,6 +886,7 @@ function Output:render_user_turn(text)
   local highlight_user = config.markdown_highlight and config.markdown_highlight.user
   local is_continuation = (self.last_turn_role == 'user')
   self.last_turn_role = 'user'
+  self:_close_tool_group()
 
   if is_continuation then
     -- Consecutive user turn: append content under the existing fold.
@@ -882,9 +937,13 @@ function Output:begin_assistant_turn()
 
   if is_continuation and self.agent_header_lnum then
     -- Consecutive agent turn: skip the header, stay inside existing fold.
-    self:_append({ '' }, { 1 }, false)
+    -- Each tool call usually arrives in its own assistant message, so an
+    -- open tool group survives the boundary: keep the separator inside it.
+    -- _close_tool_group demotes it if the message turns out to be text.
+    self:_append({ '' }, { self.tool_group and TOOL_GROUP_DEPTH or 1 }, false)
     return self.agent_header_lnum
   end
+  self:_close_tool_group()
 
   -- Blank separator (may be collapsed if buffer already ends with blank).
   self:_append({ '' }, { 0 }, false)
@@ -912,6 +971,7 @@ function Output:on_content_block_start(block)
   local config = require('cc.config').options
   local highlight_agent = config.markdown_highlight and config.markdown_highlight.agent
   if block.type == 'text' then
+    self:_close_tool_group()
     local lnum = self:_append({ '  ' }, { 1 }, false)
     self.streaming_block_type = 'text'
     self.streaming_prose_start_lnum = lnum
@@ -923,6 +983,7 @@ function Output:on_content_block_start(block)
     end
   elseif block.type == 'thinking' then
     if config.show_thinking then
+      self:_close_tool_group()
       local lnum = self:_append({ '  ∴ Thinking... ' }, { 1 }, false)
       self.streaming_block_type = 'thinking'
       self.streaming_prose_start_lnum = lnum
@@ -937,10 +998,9 @@ function Output:on_content_block_start(block)
     end
   elseif block.type == 'tool_use' then
     local icon = require('cc.icons').for_tool(block.name or '')
-    local header_text = '  ' .. icon .. ' ' .. display_tool_name(block.name) .. ':'
-    -- Blank separator (may be collapsed if buffer already ends with blank).
-    self:_append({ '' }, { 1 }, false)
-    local header_lnum = self:_append({ header_text }, { '>2' }, true)
+    local header_text = header_pad(TOOL_DEPTH) .. icon .. ' ' .. display_tool_name(block.name) .. ':'
+    self:_add_to_tool_group()
+    local header_lnum = self:_append({ header_text }, { '>' .. TOOL_DEPTH }, true)
     self.streaming_block_type = 'tool_use'
     self.streaming_tool_id = block.id
     local state = M._buf_state[self.bufnr]
@@ -950,8 +1010,59 @@ function Output:on_content_block_start(block)
       tool_name = block.name,
       header_lnum = header_lnum,
       input_rendered = false,
-      depth = 2,
+      depth = TOOL_DEPTH,
     }
+  end
+end
+
+--- Make room for the next top-level tool call: extend the open tool group
+--- (separator inside it, count bumped) or start a new group after a blank
+--- turn-level separator. Blank separators may be collapsed by _append if the
+--- buffer already ends with a blank.
+---@return cc.OutputToolGroup
+function Output:_add_to_tool_group()
+  local group = self.tool_group
+  if group then
+    self:_append({ '' }, { TOOL_GROUP_DEPTH }, false)
+    group.count = group.count + 1
+    self:_update_tool_group_header(group)
+    return group
+  end
+  self:_append({ '' }, { 1 }, false)
+  local header_lnum = self:_append({ tool_group_header(1) },
+    { '>' .. TOOL_GROUP_DEPTH }, true)
+  group = { header_lnum = header_lnum, count = 1 }
+  table.insert(M._buf_state[self.bufnr].tool_groups, group)
+  self.tool_group = group
+  return group
+end
+
+--- Rewrite a group header with its current count.
+---@param group cc.OutputToolGroup
+function Output:_update_tool_group_header(group)
+  local bufnr = self.bufnr
+  if group.header_lnum > vim.api.nvim_buf_line_count(bufnr) then return end
+  self:_with_tail_anchor(function()
+    -- In-place rewrite of a fold header: see Output:_set_line.
+    self:_set_line(group.header_lnum, tool_group_header(group.count))
+  end)
+  M.refresh_carets(bufnr)
+end
+
+--- End the current run of tool calls; the next tool call opens a new group.
+--- A continuation separator already appended inside the group belongs
+--- between the group and whatever ends it, so demote it to turn level. The
+--- next append re-evaluates the line above it, which picks up the change.
+function Output:_close_tool_group()
+  if not self.tool_group then return end
+  self.tool_group = nil
+  local bufnr = self.bufnr
+  local state = M._buf_state[bufnr]
+  if not state then return end
+  local last = vim.api.nvim_buf_line_count(bufnr)
+  if state.fold_levels[last] == TOOL_GROUP_DEPTH
+      and vim.api.nvim_buf_get_lines(bufnr, last - 1, last, false)[1] == '' then
+    state.fold_levels[last] = 1
   end
 end
 
@@ -996,7 +1107,7 @@ function Output:on_content_block_stop(block, opts)
     -- Rewrite the header with the summary (no timer suffix).
     local summary = require('cc.output.tool_body').summarize_tool_input(block.name, block.input)
     self:_update_tool_header_summary(meta and meta.header_lnum or nil,
-      block.name, summary)
+      block.name, summary, meta and meta.depth)
     -- Live path: re-layer the timer suffix that the rewrite above stripped,
     -- so the (icon + duration) pair never disappears between content_block_stop
     -- and the next 1-second tick.
@@ -1006,7 +1117,7 @@ function Output:on_content_block_stop(block, opts)
       local uv = vim.uv or vim.loop
       self:update_tool_elapsed(block.id, (uv.now() - rec.start_ms) / 1000)
     end
-    -- Render the full input at fold level 2 (multi-line if needed)
+    -- Render the full input inside the tool fold (multi-line if needed)
     if meta and not meta.input_rendered then
       local last_lnum = self:_render_tool_input(block.name, block.input)
       meta.input_rendered = true
@@ -1044,13 +1155,14 @@ end
 ---@param lnum integer?
 ---@param tool_name string
 ---@param summary string?
-function Output:_update_tool_header_summary(lnum, tool_name, summary)
+---@param depth integer? fold depth of the tool header (default top-level)
+function Output:_update_tool_header_summary(lnum, tool_name, summary, depth)
   if not lnum then return end
   local bufnr = self.bufnr
   if lnum > vim.api.nvim_buf_line_count(bufnr) then return end
   self:_with_tail_anchor(function()
     local icon = require('cc.icons').for_tool(tool_name)
-    local new_text = '  ' .. icon .. ' ' .. display_tool_name(tool_name) .. ':'
+    local new_text = header_pad(depth or TOOL_DEPTH) .. icon .. ' ' .. display_tool_name(tool_name) .. ':'
     if summary and summary ~= '' and not require('cc.output.tool_body').SUMMARY_FOLD_ONLY[tool_name] then
       new_text = new_text .. ' ' .. summary
     end
@@ -1061,17 +1173,17 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary)
   M.refresh_carets(bufnr)
 end
 
---- Render tool input block at fold level 2 (below the tool header).
+--- Render tool input block inside the tool fold (below the tool header).
 --- When insert_lnum is provided, insert there instead of appending. This is
 --- used by providers whose start event omits input that arrives on completion.
 ---@param tool_name string
 ---@param input table?
 ---@param insert_lnum integer?
----@param depth integer? fold depth of the owning tool header (default 2)
+---@param depth integer? fold depth of the owning tool header (default 3)
 ---@return integer? last_lnum 1-indexed last line written, or nil if nothing rendered
 function Output:_render_tool_input(tool_name, input, insert_lnum, depth)
   if not input then return nil end
-  depth = depth or 2
+  depth = depth or TOOL_DEPTH
   local config = require('cc.config').options
   local body_lines, snippets
   if type(config.tool_input_format) == 'function' then
@@ -1094,9 +1206,10 @@ function Output:_render_tool_input(tool_name, input, insert_lnum, depth)
   local lines = {}
   local levels = {}
   -- Diff renderers (Edit/MultiEdit/Write) already emit their own indentation
-  -- via the cc.diff module; other bodies get a 4-space indent. Tools nested
-  -- in a subagent Activity section sit two fold depths deeper, so both
-  -- forms shift right by a further 4 columns.
+  -- via the cc.diff module; other bodies get a 4-space indent. Both forms
+  -- shift right 2 columns per fold depth past 2: top-level tools (depth 3,
+  -- inside a tool group) by 2, tools nested in a subagent Activity section
+  -- (depth 5) by 6.
   local pre_indented = tool_name == 'Edit' or tool_name == 'MultiEdit' or tool_name == 'Write'
   local nested_indent = (depth - 2) * 2
   local extra_indent = (pre_indented and 0 or 4) + nested_indent
@@ -1146,18 +1259,18 @@ function Output:update_tool_input(tool_use_id, input)
 
   meta.input = input
   local summary = require('cc.output.tool_body').summarize_tool_input(meta.tool_name, input)
-  self:_update_tool_header_summary(meta.header_lnum, meta.tool_name, summary)
+  self:_update_tool_header_summary(meta.header_lnum, meta.tool_name, summary, meta.depth)
 
   -- This API intentionally fills an input body that was empty at start. Do
   -- not duplicate or rewrite an input body a provider already rendered.
   if meta.input_rendered and meta.input_end_lnum == meta.header_lnum then
-    local last_lnum = self:_render_tool_input(meta.tool_name, input, meta.header_lnum + 1)
+    local last_lnum = self:_render_tool_input(meta.tool_name, input, meta.header_lnum + 1, meta.depth)
     meta.input_end_lnum = last_lnum or meta.header_lnum
   end
 end
 
 --- Render a tool_result block (from a user-type NDJSON message).
---- Places a "▾ Output:" sub-header (fold level >3) and the content (level 3)
+--- Places a "▾ Output:" sub-header (fold level >4) and the content (level 4)
 --- right after the owning tool's input block. If the input hasn't rendered
 --- yet (streaming race: client finished the tool before Claude's
 --- content_block_stop fired), defer until on_content_block_stop flushes it.
@@ -1215,10 +1328,10 @@ function Output:_render_tool_result_for(meta, content, is_error)
     truncated = true
   end
 
-  -- Top-level tools (depth 2) render "    Output:" at >3 with content at 3;
-  -- tools nested in a subagent Activity section (depth 4) shift two fold
+  -- Top-level tools (depth 3) render "      Output:" at >4 with content at
+  -- 4; tools nested in a subagent Activity section (depth 5) shift two fold
   -- depths and four columns deeper.
-  local depth = meta.depth or 2
+  local depth = meta.depth or TOOL_DEPTH
   local head_pad = string.rep(' ', depth * 2)
   local body_pad = string.rep(' ', depth * 2 + 2)
   local lines = { head_pad .. (is_error and 'Error:' or 'Output:') }
@@ -1269,16 +1382,17 @@ end
 -- messages carrying parent_tool_use_id (see router.lua).
 --
 -- Layout (fold depths in brackets):
---     󰋘 Subagent: <description> 󰔛 42s        [>2] parent tool header
---     prompt: ...                             [2]  parent input
---     Activity:                               [>3] section header (closed by default)
---       󰘳 Bash: Count Lua files 󰔛 0.2s       [>4] nested tool header
---         find . -name '*.lua' | wc -l        [4]  nested input
---         Output:                             [>5] nested result
---           42                                [5]
---       ∴ Thinking... ...                     [3]  nested thinking
---       Found 42 source files                 [3]  nested text
---     Output:                                 [>3] parent result
+--     Tools: 1 call                           [>2] tool group header
+--       󰋘 Subagent: <description> 󰔛 42s      [>3] parent tool header
+--       prompt: ...                           [3]  parent input
+--       Activity:                             [>4] section header (closed by default)
+--         󰘳 Bash: Count Lua files 󰔛 0.2s     [>5] nested tool header
+--           find . -name '*.lua' | wc -l      [5]  nested input
+--           Output:                           [>6] nested result
+--             42                              [6]
+--         ∴ Thinking... ...                   [4]  nested thinking
+--         Found 42 source files               [4]  nested text
+--       Output:                               [>4] parent result
 -- The folded Activity header shows the most recent item via foldtext, so the
 -- live status is visible while collapsed and disappears when opened.
 -- ---------------------------------------------------------------------------
@@ -1331,8 +1445,8 @@ function Output:_subagent_insert(parent, lines, levels, is_header)
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   if not sub then
     local header_at = (parent.input_end_lnum or parent.header_lnum) + 1
-    local all_lines = { '    Activity:' }
-    local all_levels = { '>3' }
+    local all_lines = { header_pad(ACTIVITY_DEPTH) .. 'Activity:' }
+    local all_levels = { '>' .. ACTIVITY_DEPTH }
     vim.list_extend(all_lines, lines)
     vim.list_extend(all_levels, levels)
     if header_at > line_count then
@@ -1378,12 +1492,13 @@ function Output:subagent_tool_use(parent_id, block)
   local name = block.name or '?'
   local icon = require('cc.icons').for_tool(name)
   local tool_body = require('cc.output.tool_body')
-  local header = '      ' .. icon .. ' ' .. display_tool_name(name) .. ':'
+  local header = header_pad(SUBAGENT_TOOL_DEPTH) .. icon .. ' ' .. display_tool_name(name) .. ':'
   local summary = tool_body.summarize_tool_input(name, block.input)
   if summary and summary ~= '' and not tool_body.SUMMARY_FOLD_ONLY[name] then
     header = header .. ' ' .. summary
   end
-  local sub, header_lnum = self:_subagent_insert(parent, { header }, { '>4' }, true)
+  local sub, header_lnum = self:_subagent_insert(parent, { header },
+    { '>' .. SUBAGENT_TOOL_DEPTH }, true)
   local meta = {
     bufnr = self.bufnr,
     tool_use_id = block.id,
@@ -1392,11 +1507,11 @@ function Output:subagent_tool_use(parent_id, block)
     header_lnum = header_lnum,
     input_rendered = true,
     input_end_lnum = header_lnum,
-    depth = 4,
+    depth = SUBAGENT_TOOL_DEPTH,
     parent_id = parent_id,
   }
   state.tool_blocks[block.id] = meta
-  local last_lnum = self:_render_tool_input(name, block.input, header_lnum + 1, 4)
+  local last_lnum = self:_render_tool_input(name, block.input, header_lnum + 1, SUBAGENT_TOOL_DEPTH)
   if last_lnum then
     meta.input_end_lnum = last_lnum
     sub.end_lnum = math.max(sub.end_lnum, last_lnum)
@@ -1437,13 +1552,14 @@ function Output:_subagent_prose(parent_id, text, kind)
   while #raw > 0 and vim.trim(raw[#raw]) == '' do table.remove(raw) end
   if #raw == 0 then return end
   local lines, levels = {}, {}
+  local pad = header_pad(SUBAGENT_TOOL_DEPTH)
   if kind == 'thinking' then
-    table.insert(lines, '      ∴ Thinking... ' .. raw[1])
-    for i = 2, #raw do table.insert(lines, '      ' .. raw[i]) end
+    table.insert(lines, pad .. '∴ Thinking... ' .. raw[1])
+    for i = 2, #raw do table.insert(lines, pad .. raw[i]) end
   else
-    for _, l in ipairs(raw) do table.insert(lines, '      ' .. l) end
+    for _, l in ipairs(raw) do table.insert(lines, pad .. l) end
   end
-  for _ in ipairs(lines) do table.insert(levels, 3) end
+  for _ in ipairs(lines) do table.insert(levels, ACTIVITY_DEPTH) end
   local sub = self:_subagent_insert(parent, lines, levels, false)
   local first_text = nil
   for _, l in ipairs(raw) do
@@ -1505,6 +1621,7 @@ local turn_cost_format_errored = false
 function Output:render_result(result, append_to_tail)
   self:flush_pending_delta()
   self.last_turn_role = nil
+  self:_close_tool_group()
   local cfg = require('cc.config').options
   if cfg.show_turn_cost == false then return end
   local text
@@ -1560,6 +1677,7 @@ end
 function Output:render_notice(text)
   self:flush_pending_delta()
   self.last_turn_role = nil
+  self:_close_tool_group()
   self:_append({ '  ── ' .. text .. ' ──' }, { 0 }, false)
 end
 
@@ -1572,7 +1690,9 @@ function Output:render_permission_request(tool_name, input)
   if summary ~= '' then
     text = text .. ' — ' .. summary
   end
-  self:_append({ text }, { 1 }, false)
+  -- Inside a tool group the prompt stays in the group so it does not split
+  -- the run of tool calls around it.
+  self:_append({ text }, { self.tool_group and TOOL_GROUP_DEPTH or 1 }, false)
 end
 
 ---@param behavior 'allow'|'deny'|'remote'
@@ -1624,6 +1744,7 @@ function Output:render_historical_record(rec)
       if type(block) == 'table' then
         if block.type == 'text' then
           -- Append text paragraph at fold level 1.
+          self:_close_tool_group()
           local start_lnum = self:_append({ '  ' }, { 1 }, false)
           self:_append_to_last_line(block.text or '')
           if highlight_agent then
@@ -1632,6 +1753,7 @@ function Output:render_historical_record(rec)
           end
         elseif block.type == 'thinking' then
           if config.show_thinking then
+            self:_close_tool_group()
             local start_lnum = self:_append({ '  ∴ Thinking... ' }, { 1 }, false)
             self:_append_to_last_line(block.thinking or '')
             if highlight_agent then
@@ -1653,7 +1775,9 @@ function Output:render_historical_record(rec)
   end
 end
 
---- Render a dim one-line hook lifecycle event at fold level 2.
+--- Render a dim one-line hook lifecycle event. Inside a tool group it joins
+--- the preceding tool's fold, level with the tool input; elsewhere it gets
+--- its own tool-group-depth fold.
 ---@param hook_name string
 ---@param phase string 'started' | 'response'
 ---@param elapsed_s number?
@@ -1664,13 +1788,16 @@ function Output:render_hook(hook_name, phase, elapsed_s)
   if elapsed_s then
     suffix = string.format(' (%.1fs)', elapsed_s)
   end
-  local text = string.format('    %s Hook: %s [%s]%s', icon, hook_name, phase, suffix)
-  self:_append({ text }, { 2 }, false)
+  local level = self.tool_group and TOOL_DEPTH or TOOL_GROUP_DEPTH
+  local text = string.format('%s%s Hook: %s [%s]%s',
+    string.rep(' ', level * 2), icon, hook_name, phase, suffix)
+  self:_append({ text }, { level }, false)
 end
 
 --- Render an agent plan snapshot (provider-neutral; e.g. codex
 --- turn/plan/updated). Each step gets a todo-style status marker. Renders
---- as a foldable block at tool depth so repeated updates stay compact.
+--- as a foldable block at tool-group depth so repeated updates stay compact.
+--- A plan is not a tool call, so it ends any open tool group.
 ---@param steps table[] each { step: string, status: 'pending'|'inProgress'|'completed' }?
 ---@param explanation string?
 function Output:render_plan(steps, explanation)
@@ -1678,8 +1805,9 @@ function Output:render_plan(steps, explanation)
   if (not steps or #steps == 0) and (not explanation or explanation == '') then
     return
   end
+  self:_close_tool_group()
   self:_append({ '' }, { 1 }, false)
-  local header_lnum = self:_append({ '  ▣ Plan:' }, { '>2' }, true)
+  local header_lnum = self:_append({ '  ▣ Plan:' }, { '>' .. TOOL_GROUP_DEPTH }, true)
   local lines = {}
   if explanation and explanation ~= '' then
     for _, l in ipairs(vim.split(explanation, '\n', { plain = true })) do

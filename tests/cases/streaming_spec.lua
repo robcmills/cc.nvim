@@ -560,7 +560,7 @@ T['subagent_tasks'] = MiniTest.new_set()
 
 T['subagent_tasks']['renders nested Activity section instead of task notices'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
-  assert_any_line_matches(_G.child, '^    Activity:$')
+  assert_any_line_matches(_G.child, '^      Activity:$')
   assert_no_line_matches(_G.child, 'Task started')
   assert_no_line_matches(_G.child, 'Task done')
 end
@@ -570,8 +570,8 @@ T['subagent_tasks']['renders parent result after the activity section'] = functi
   local lines = helpers.get_buffer_lines(_G.child)
   local activity, output
   for i, l in ipairs(lines) do
-    if l:match('^    Activity:$') then activity = i end
-    if l:match('^    Output:$') then output = i end
+    if l:match('^      Activity:$') then activity = i end
+    if l:match('^      Output:$') then output = i end
   end
   eq(activity ~= nil, true)
   eq(output ~= nil, true)
@@ -1069,24 +1069,29 @@ T['streaming_folds']['agent header has fold level >1'] = function()
   eq(found, true)
 end
 
-T['streaming_folds']['tool header has fold level >2'] = function()
-  helpers.replay_streaming(_G.child, 'tool_bash')
+--- Fold level of the first buffer line matching `pattern`.
+local function level_of(pattern)
+  local lines = helpers.get_buffer_lines(_G.child)
   local levels = helpers.get_fold_levels(_G.child)
-  local found = false
-  for _, fl in pairs(levels) do
-    if fl == '>2' then found = true; break end
+  for i, l in ipairs(lines) do
+    if l:match(pattern) then return levels[i] end
   end
-  eq(found, true)
+  return nil
 end
 
-T['streaming_folds']['tool result has fold level >3'] = function()
+T['streaming_folds']['tool group header has fold level >2'] = function()
   helpers.replay_streaming(_G.child, 'tool_bash')
-  local levels = helpers.get_fold_levels(_G.child)
-  local found = false
-  for _, fl in pairs(levels) do
-    if fl == '>3' then found = true; break end
-  end
-  eq(found, true)
+  eq(level_of('^  %S+ Tools: 1 call$'), '>2')
+end
+
+T['streaming_folds']['tool header has fold level >3'] = function()
+  helpers.replay_streaming(_G.child, 'tool_bash')
+  eq(level_of('^    %S+ Bash:'), '>3')
+end
+
+T['streaming_folds']['tool result has fold level >4'] = function()
+  helpers.replay_streaming(_G.child, 'tool_bash')
+  eq(level_of('^      Output:$'), '>4')
 end
 
 return T

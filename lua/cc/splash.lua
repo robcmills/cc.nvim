@@ -36,7 +36,7 @@ local function build_virt_lines()
     { ':CcNew', 'Open cc.nvim (spawn process, create buffers)' },
     { ':CcClose', 'Close cc.nvim (kill process, close windows)' },
     { ':CcClear', 'Start a fresh session in the current windows' },
-    { ':CcFold {n}', 'Set output fold level (0..3)' },
+    { ':CcFold {n}', 'Set output fold level (0..4)' },
     { ':CcResume [id|provider]', 'Resume a session (all-provider picker if no arg)' },
     { ':CcRename [name]', 'Rename the current session (no arg = show current title)' },
   }

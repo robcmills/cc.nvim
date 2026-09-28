@@ -1,8 +1,8 @@
 -- Regression tests for the "fold flash + view drift" bug:
 --
 -- When a tool_result arrives with many content lines (e.g. Read of a large
--- file), `_render_tool_result_for` appends the `Output:` header (level >3)
--- + content (level 3) and then schedules `_flush_pending_fold_closes` via
+-- file), `_render_tool_result_for` appends the `Output:` header (level >4)
+-- + content (level 4) and then schedules `_flush_pending_fold_closes` via
 -- vim.schedule. Between the append and the deferred close, the screen
 -- redraws — the user sees a flash of fully-expanded tool output that
 -- immediately collapses to one row. Worse, after the fold closes, the
@@ -65,7 +65,7 @@ T['no_open_fold_flash_during_large_read'] = function()
     timeout_ms = 8000,
   })
 
-  -- After the stream has settled, query the child for any depth-3
+  -- After the stream has settled, query the child for any depth-4
   -- (`Output:`) fold that is still OPEN.
   --
   -- Three non-obvious things about fold queries in the headless harness:
@@ -85,7 +85,7 @@ T['no_open_fold_flash_during_large_read'] = function()
   --
   -- This is a test-only workaround for a headless-mode artifact; in
   -- production the UI thread drives foldexpr eval naturally.
-  local open_depth3_seen = _G.child:lua([[
+  local open_result_seen = _G.child:lua([[
     local b = vim.fn.bufnr('cc-nvim-output')
     if b <= 0 then return false end
     local state = require('cc.output')._buf_state[b]
@@ -108,10 +108,10 @@ T['no_open_fold_flash_during_large_read'] = function()
       return false
     end)
   ]])
-  if open_depth3_seen and type(open_depth3_seen) == 'table' then
+  if open_result_seen and type(open_result_seen) == 'table' then
     error(string.format(
-      'Output: fold (level 3) is OPEN at line %d after stream — should be closed at default foldlevel=2. (last_line=%d, samples=%d)',
-      open_depth3_seen.lnum, open_depth3_seen.last, #samples))
+      'Output: fold (level 4) is OPEN at line %d after stream — should be closed at default foldlevel=3. (last_line=%d, samples=%d)',
+      open_result_seen.lnum, open_result_seen.last, #samples))
   end
 end
 
