@@ -126,6 +126,10 @@ local function setup_output_keymaps(inst)
       vim.cmd('startinsert')
     end
   end, { buffer = bufnr, silent = true, desc = 'cc.nvim: goto prompt' })
+  -- Reopening a session can land focus in the output rather than the prompt
+  -- (see last_focus), and the builtin `go` would jump to byte 1 there.
+  vim.keymap.set('n', keys.goto_output, '<Nop>',
+    { buffer = bufnr, silent = true, desc = 'cc.nvim: goto output' })
   if keys.cycle_permission_mode then
     vim.keymap.set('n', keys.cycle_permission_mode,
       function() M.cycle_permission_mode() end,
