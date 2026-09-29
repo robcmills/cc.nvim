@@ -144,6 +144,39 @@ function M.get_fold_levels(child)
   return child.lua_get('_G._test_fold_levels')
 end
 
+--- Lines that would open a fold without a visible header of their own:
+--- every fold must start on a ">N" header exactly one level below the line
+--- above it. A jump of two or more levels makes Vim start extra, invisible
+--- folds on the same line (so one `zo` opens nothing you can see), and a
+--- plain line deeper than its predecessor starts an unlabeled fold.
+---@param child table
+---@param bufnr integer? defaults to _G._test_bufnr
+---@return string[] violations, empty when the fold tree is clean
+function M.implicit_fold_violations(child, bufnr)
+  child.lua(string.format([==[
+    local bufnr = %s
+    local state = require('cc.output')._buf_state[bufnr]
+    local levels = state and state.fold_levels or {}
+    local function depth(fl)
+      if type(fl) == 'number' then return fl end
+      return tonumber(tostring(fl or 0):match('%%d+')) or 0
+    end
+    local bad, prev = {}, 0
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    for l = 1, #lines do
+      local fl = levels[l]
+      local d = depth(fl)
+      local header = type(fl) == 'string' and fl:sub(1, 1) == '>'
+      if d > prev + 1 or (d > prev and not header) then
+        bad[#bad + 1] = ('%%d: %%s after %%d: %%s'):format(l, tostring(fl), prev, lines[l])
+      end
+      prev = d
+    end
+    _G._test_implicit = bad
+  ]==], bufnr and tostring(bufnr) or '_G._test_bufnr'))
+  return child.lua_get('_G._test_implicit')
+end
+
 --- Get all extmarks from a named namespace in the output buffer.
 ---@param child table
 ---@param ns_name string e.g. 'cc.carets'

@@ -97,6 +97,9 @@ T['no_open_fold_flash_during_large_read'] = function()
     if not target_win then return false end
     -- Force foldexpr re-eval in headless.
     vim.fn.win_execute(target_win, 'silent! normal! zX', true)
+    -- `normal!` skips cc's zX map, which re-applies the lone-tool depth
+    -- offsets after re-applying foldlevel; do what the map does.
+    require('cc.output').apply_depth_offsets(b, target_win)
     return vim.api.nvim_win_call(target_win, function()
       for _, meta in pairs(state.tool_blocks or {}) do
         if meta.result_header_lnum then

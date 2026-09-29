@@ -1079,20 +1079,20 @@ local function level_of(pattern)
   return nil
 end
 
-T['streaming_folds']['a lone tool is ungrouped: header >3 at turn indent'] = function()
+T['streaming_folds']['a lone tool is ungrouped: header >2 at turn indent'] = function()
   helpers.replay_streaming(_G.child, 'tool_bash')
-  eq(level_of('Tools: '), nil)
-  eq(level_of('^  %S+ Bash:'), '>3')
+  eq(level_of('Work: '), nil)
+  eq(level_of('^  %S+ Bash:'), '>2')
 end
 
-T['streaming_folds']['tool result has fold level >4'] = function()
+T['streaming_folds']['a lone tool result has fold level >3'] = function()
   helpers.replay_streaming(_G.child, 'tool_bash')
-  eq(level_of('^    Output:$'), '>4')
+  eq(level_of('^    Output:$'), '>3')
 end
 
 T['streaming_folds']['several tools in a turn share a >2 group'] = function()
   helpers.replay_streaming(_G.child, 'peek_three_bash')
-  eq(level_of('^  %S+ Tools: 3 calls$'), '>2')
+  eq(level_of('^  %S+ Work: 3 tool calls$'), '>2')
   eq(level_of('^    %S+ Bash: sleep 90'), '>3')
   eq(level_of('^    %S+ Bash: sleep 92'), '>3')
 end

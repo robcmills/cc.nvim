@@ -290,16 +290,16 @@ T['resume_folds'] = MiniTest.new_set()
 T['resume_folds']['fold levels match expected structure'] = function()
   helpers.render_fixture(_G.child, 'tool_bash')
   local levels = helpers.get_fold_levels(_G.child)
-  -- A lone tool call has no group: >1 (turn header), >3 (tool header),
-  -- >4 (output header), and nothing at >2.
+  -- A lone tool call has no group: >1 (turn header), >2 (tool header),
+  -- >3 (output header), and nothing deeper.
   local seen = {}
   for _, fl in pairs(levels) do
     if type(fl) == 'string' then seen[fl] = true end
   end
   eq(seen['>1'], true)
-  eq(seen['>2'], nil)
+  eq(seen['>2'], true)
   eq(seen['>3'], true)
-  eq(seen['>4'], true)
+  eq(seen['>4'], nil)
 end
 
 T['resume_folds']['highlights applied on resumed content'] = function()

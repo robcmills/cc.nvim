@@ -23,7 +23,7 @@ end
 -- ---------------------------------------------------------------------------
 T['layout'] = MiniTest.new_set()
 
-T['layout']['activity header sits between parent prompt and parent output at depth 4'] = function()
+T['layout']['activity header sits between parent prompt and parent output at depth 3'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
   local lines = helpers.get_buffer_lines(_G.child)
   local fl = helpers.get_fold_levels(_G.child)
@@ -33,7 +33,7 @@ T['layout']['activity header sits between parent prompt and parent output at dep
   eq(prompt ~= nil and activity ~= nil and output ~= nil, true)
   eq(prompt < activity, true)
   eq(activity < output, true)
-  eq(fl[activity], '>4')
+  eq(fl[activity], '>3')
   -- Parent result content follows its own header, after the section.
   eq(lines[output + 1], '      Found 42 source files across 6 directories')
 end
@@ -44,13 +44,13 @@ T['layout']['nested tool renders header, input and result two depths deeper'] = 
   local fl = helpers.get_fold_levels(_G.child)
   local header = find_line(lines, '^      %S+ Bash: Count Lua files')
   eq(header ~= nil, true)
-  eq(fl[header], '>5')
+  eq(fl[header], '>4')
   eq(lines[header + 1], "        find . -name '*.lua' | wc -l")
-  eq(fl[header + 1], 5)
+  eq(fl[header + 1], 4)
   eq(lines[header + 2], '        Output:')
-  eq(fl[header + 2], '>6')
+  eq(fl[header + 2], '>5')
   eq(lines[header + 3], '          42')
-  eq(fl[header + 3], 6)
+  eq(fl[header + 3], 5)
 end
 
 T['layout']['nested tool_progress updates the nested header timer'] = function()
@@ -61,7 +61,7 @@ T['layout']['nested tool_progress updates the nested header timer'] = function()
   eq(lines[read]:match(' 2s$') ~= nil, true)
 end
 
-T['layout']['nested text and thinking render at depth 4 inside the section'] = function()
+T['layout']['nested text and thinking render at depth 3 inside the section'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks', { show_thinking = true })
   local lines = helpers.get_buffer_lines(_G.child)
   local fl = helpers.get_fold_levels(_G.child)
@@ -71,8 +71,8 @@ T['layout']['nested text and thinking render at depth 4 inside the section'] = f
   local text = find_line(lines, '^      Found 42 source files', activity)
   eq(thinking ~= nil and text ~= nil, true)
   eq(activity < thinking and thinking < text and text < output, true)
-  eq(fl[thinking], 4)
-  eq(fl[text], 4)
+  eq(fl[thinking], 3)
+  eq(fl[text], 3)
 end
 
 T['layout']['nested thinking honours show_thinking=false'] = function()
@@ -181,7 +181,7 @@ T['folds']['a lone Agent call stays ungrouped and folds like a grouped one'] = f
     local parent, activity
     _G._has_group = false
     for i, l in ipairs(lines) do
-      if l:match('Tools: ') then _G._has_group = true end
+      if l:match('Work: ') then _G._has_group = true end
       if l:match('^  %S+ Subagent:') then parent = i end
       if l:match('^    Activity:$') then activity = i end
     end
@@ -200,7 +200,8 @@ T['folds']['a lone Agent call stays ungrouped and folds like a grouped one'] = f
   ]])
   local parent = _G.child.lua_get('_G._parent')
   eq(_G.child.lua_get('_G._has_group'), false)
-  eq(_G.child.lua_get('_G._parent_fl'), '>3')
+  eq(_G.child.lua_get('_G._parent_fl'), '>2')
+  eq(helpers.implicit_fold_violations(_G.child), {})
   local fc = _G.child.lua_get('_G._fc')
   -- Levels 1 and 2 both show only the collapsed tool header.
   eq(fc[1], { parent, parent })

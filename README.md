@@ -353,7 +353,7 @@ require('cc').setup({
     tokens_icon = 'τ',
   },
 
-  tool_group_format = nil, -- function(count) -> string; nil → 'Tools: N calls'
+  tool_group_format = nil, -- function(count) -> string; nil → 'Work: N tool calls'
 
   tool_icons = {
     default = nil,
@@ -389,7 +389,7 @@ The output buffer is foldable with five logical levels:
 | `foldlevel` | What's visible |
 |---|---|
 | 0 | Only User / Agent turn headers |
-| 1 | + each turn's final agent text, with its tool calls folded to one `Tools: N calls` line |
+| 1 | + each turn's final agent text, with its tool calls folded to one `Work: N tool calls` line |
 | 2 | + tool summary lines (one-liners) and the text between calls |
 | 3 *(default)* | + tool inputs (Bash commands, Edit diffs) |
 | 4 | + tool results (stdout, read file contents) |
@@ -400,7 +400,10 @@ calls fold away with them; only the text after the last call, usually the
 summary, stays outside. While a turn streams, text after the latest call
 shows at turn level until the next call pulls it into the group. Empty
 `∴ Thinking...` lines are left out of groups. A turn with a single tool call
-has no group and looks as it always did; a second call groups the turn. The
+has no group and looks as it always did; a second call groups the turn.
+Either way each level shows the same kind of line, and every fold opens
+with one `zo`: a lone tool is collapsed at levels 1 and 2, shows its input
+at 3 and its output at 4. The
 header's count updates as calls stream in, and while a call is running the
 folded header also shows it with its timer, the way a folded subagent
 `Activity:` header does.
@@ -417,7 +420,7 @@ Example at `foldlevel=1`:
   Fix the bug in auth.ts where tokens expire too early
 
 ▾ Agent:
-  ▸ ⚒ Tools: 3 calls
+  ▸ ⚒ Work: 3 tool calls
 
   Fixed. The expiry was '1h'; changed to '24h'.
   ── $0.05 │ 12k in │ 55 out ──
@@ -427,7 +430,7 @@ The same turn at `foldlevel=2`:
 
 ```
 ▾ Agent:
-  ▾ ⚒ Tools: 3 calls
+  ▾ ⚒ Work: 3 tool calls
     I'll look into the token expiration.
 
     ▸ ▤ Read: src/auth.ts

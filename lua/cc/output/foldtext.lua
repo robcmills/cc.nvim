@@ -298,7 +298,7 @@ function M.refresh_carets(bufnr)
         local effective_level = vim.fn.foldlevel(lnum)
         local is_folded
         if effective_level == 0 and my_level > 0 then
-          is_folded = my_level > wfl
+          is_folded = my_level + ((state.depth_offset or {})[lnum] or 0) > wfl
         else
           is_folded = vim.fn.foldclosed(lnum) ~= -1
         end

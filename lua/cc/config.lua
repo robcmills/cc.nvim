@@ -234,7 +234,7 @@ local defaults = {
 
   -- function(count) -> string: label of the header folding a turn's tool
   -- calls, after its icon (tool_icons.icons.ToolGroup).
-  -- nil → 'Tools: N calls'.
+  -- nil → 'Work: N tool calls'.
   tool_group_format = nil,
 
   tool_icons = {
