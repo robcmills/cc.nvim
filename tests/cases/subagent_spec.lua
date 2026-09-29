@@ -108,8 +108,10 @@ end
 -- ---------------------------------------------------------------------------
 T['folds'] = MiniTest.new_set()
 
-T['folds']['activity is closed by default and shows the latest item as foldtext'] = function()
-  helpers.replay_streaming(_G.child, 'subagent_tasks')
+-- The fixture's Agent call is the turn's only tool call, so it is ungrouped
+-- one level shallower: Activity at depth 3, closed from foldlevel 2 down.
+T['folds']['activity is closed at foldlevel 2 and shows the latest item as foldtext'] = function()
+  helpers.replay_streaming(_G.child, 'subagent_tasks', { default_fold_level = 2 })
   _G.child.lua([[
     local bufnr = _G._test_bufnr
     vim.api.nvim_exec_autocmds('BufWinEnter', { buffer = bufnr })
@@ -129,7 +131,7 @@ T['folds']['activity is closed by default and shows the latest item as foldtext'
       _G._activity_closed = vim.fn.foldclosed(activity)
       _G._foldtext = vim.fn.foldtextresult(activity)
       -- User opens the section: header text carries no status, nested
-      -- tool folds remain closed at foldlevel 3.
+      -- tool folds remain closed at foldlevel 2.
       vim.api.nvim_win_set_cursor(winid, { activity, 0 })
       vim.cmd('normal! zo')
       _G._activity_after_zo = vim.fn.foldclosed(activity)
@@ -147,7 +149,7 @@ T['folds']['activity is closed by default and shows the latest item as foldtext'
   eq(_G.child.lua_get('_G._header_text'), '    Activity:')
 end
 
-T['folds']['foldlevel 4 opens the section but keeps nested tools closed'] = function()
+T['folds']['foldlevel 3 opens a lone call section but keeps nested tools closed'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
   _G.child.lua([[
     local bufnr = _G._test_bufnr
@@ -161,7 +163,7 @@ T['folds']['foldlevel 4 opens the section but keeps nested tools closed'] = func
     _G._nested = nested
     local winid = vim.fn.bufwinid(bufnr)
     _G._test_output.winid = winid
-    _G._test_output:set_fold_level(4)
+    _G._test_output:set_fold_level(3)
     vim.api.nvim_win_call(winid, function()
       vim.cmd('redraw')
       _G._activity_fc = vim.fn.foldclosed(activity)
@@ -172,7 +174,7 @@ T['folds']['foldlevel 4 opens the section but keeps nested tools closed'] = func
   eq(_G.child.lua_get('_G._nested_fc'), _G.child.lua_get('_G._nested'))
 end
 
-T['folds']['a lone Agent call stays ungrouped and folds like a grouped one'] = function()
+T['folds']['a lone Agent call is ungrouped and folds at its raw depths'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
   _G.child.lua([[
     local bufnr = _G._test_bufnr
@@ -197,18 +199,17 @@ T['folds']['a lone Agent call stays ungrouped and folds like a grouped one'] = f
         _G._fc[level] = { vim.fn.foldclosed(parent), vim.fn.foldclosed(activity) }
       end)
     end
+    _G._activity = activity
   ]])
   local parent = _G.child.lua_get('_G._parent')
+  local activity = _G.child.lua_get('_G._activity')
   eq(_G.child.lua_get('_G._has_group'), false)
   eq(_G.child.lua_get('_G._parent_fl'), '>2')
   eq(helpers.implicit_fold_violations(_G.child), {})
   local fc = _G.child.lua_get('_G._fc')
-  -- Levels 1 and 2 both show only the collapsed tool header.
-  eq(fc[1], { parent, parent })
-  eq(fc[2], { parent, parent })
-  -- Level 3 opens the tool; its Activity section stays closed.
-  eq(fc[3][1], -1)
-  eq(fc[3][2] ~= -1, true)
+  eq(fc[1], { parent, parent })   -- tool collapsed
+  eq(fc[2], { -1, activity })     -- tool open, Activity collapsed
+  eq(fc[3], { -1, -1 })           -- Activity open
 end
 
 -- ---------------------------------------------------------------------------
@@ -220,7 +221,7 @@ T['live']['status tracks the running nested tool and then the latest text'] = fu
   _G.child.lua([[
     local Output = require('cc.output')
     local Session = require('cc.session')
-    require('cc.config').setup({})
+    require('cc.config').setup({ default_fold_level = 2 }) -- lone call: Activity at depth 3
     local session = Session.new()
     local output = Output.new(session, 'cc-test-subagent-live')
     local bufnr = output:ensure_buffer()
@@ -383,7 +384,7 @@ end
 T['live']['closing a tail activity keeps subsequent updates following the tail'] = function()
   _G.child.lua([[
     local Output = require('cc.output')
-    require('cc.config').setup({})
+    require('cc.config').setup({ default_fold_level = 2 }) -- lone call: Activity at depth 3
     local o = Output.new(require('cc.session').new(), 'cc-test-tail-activity')
     local b = o:ensure_buffer()
     vim.api.nvim_set_current_buf(b)

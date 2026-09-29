@@ -18,21 +18,19 @@
 --
 -- Every fold starts on its own visible header exactly one level below the
 -- line above it, so one zo always opens one visible level. A turn with one
--- tool call therefore has it ungrouped one level shallower (header >2,
--- result >3). Those headers carry a depth offset of 1 that :CcFold, window
--- setup and new-fold closing honour, so each level below shows the same
--- kind of line for a lone tool as for a grouped one. The second call in a
--- turn creates the group after the fact and moves everything down a level.
+-- tool call therefore has it ungrouped one level shallower: header >2,
+-- input 2, result >3/3. The second call in a turn creates the group after
+-- the fact and moves everything down a level. A lone tool opens one
+-- :CcFold level earlier than a grouped one; the group is just one more
+-- branch in the tree.
 --
--- User-facing :CcFold N maps to Vim foldlevel=N (plus the offsets):
+-- User-facing :CcFold N maps to Vim foldlevel=N:
 --   0 = turns collapsed (only User/Agent headers visible)
---   1 = turns open, tool groups collapsed (a lone tool shows its header)
---   2 = groups open, tools collapsed (a lone tool still shows its header)
---   3 = tools open (input visible), results collapsed   (default)
+--   1 = turns open: tool groups and lone tools collapsed
+--   2 = groups open with their tools collapsed; lone tools open, results collapsed
+--   3 = grouped tools open, results collapsed; lone tool results open (default)
 --   4 = everything visible
--- Vim's own zr/zm step raw fold depth and ignore the offsets, so a lone tool
--- there opens one step early.
---
+
 -- Carets (▸ folded, ▾ open) are inline virt_text extmarks at the start of
 -- header lines, synced to Vim's fold state on CursorMoved.
 
@@ -50,11 +48,9 @@ end
 -- Fold depths of the tool tree. A grouped tool sits at depth 3 under its
 -- group. A lone tool (the only call in its turn) sits at depth 2: every fold
 -- must start on its own visible header, one level below its parent, so it
--- cannot skip the missing group level. Its headers carry a depth offset of
--- 1 instead, which :CcFold honours (M.apply_depth_offsets), so each level
--- shows the same kind of line with or without a group. Subagent Activity
--- sections sit one level below their parent Agent tool, and the subagent's
--- own tools one below that.
+-- cannot skip the missing group level. Subagent Activity sections sit one
+-- level below their parent Agent tool, and the subagent's own tools one
+-- below that.
 local TOOL_GROUP_DEPTH = 2
 local TOOL_DEPTH = 3
 local LONE_TOOL_DEPTH = 2
@@ -102,7 +98,6 @@ end
 ---@field subagents table<string, cc.OutputSubagent> parent Agent tool_use_id -> Activity section
 ---@field tool_groups cc.OutputToolGroup[] every tool group header rendered, in buffer order
 ---@field empty_thinking table<integer, boolean> lines holding a "∴ Thinking..." with no text
----@field depth_offset table<integer, integer> fold header line -> extra depth :CcFold treats it as having (lone tool trees)
 ---@field pending_subagent table<string, table[]>? subagent messages queued until the parent input renders
 M._buf_state = {}
 
@@ -145,7 +140,6 @@ M._buf_state = {}
 ---@field depth integer? fold depth of the header line: 3 for top-level tools, 5 for tools nested inside a subagent Activity section (default 3)
 ---@field indent integer? header indent in columns: 2 for an ungrouped top-level tool, 4 grouped, parent + 4 when nested (default 2)
 ---@field running boolean? true while the tool's elapsed timer is ticking
----@field lone boolean? part of a lone tool's tree (depth offset 1); cleared when the turn groups
 ---@field parent_id string? parent Agent tool_use_id when this tool ran inside a subagent
 
 ---@class cc.Output
@@ -210,12 +204,10 @@ function Output:ensure_buffer()
     subagents = {},
     tool_groups = {},
     empty_thinking = {},
-    depth_offset = {},
   }
 
   self:_setup_window_opts_for_buffer()
   self:_setup_autocmds()
-  self:_setup_fold_keymaps()
   require('cc.highlight').apply_buffer_syntax(self.bufnr)
   return self.bufnr
 end
@@ -252,7 +244,6 @@ function Output:_ensure_fold_opts(winid)
   vim.wo[winid].foldtext = "v:lua.require'cc.output'.foldtext()"
   vim.wo[winid].foldlevel = (inst and inst.user_fold_level) or config.default_fold_level
   vim.w[winid].cc_output_fold_initialized = true
-  M.apply_depth_offsets(self.bufnr, winid)
 end
 
 --- Configure fold options and caret refresh on windows showing this buffer.
@@ -374,22 +365,6 @@ function Output:_setup_window_opts_for_buffer()
   })
 end
 
---- Vim's own commands that re-apply 'foldlevel' (zx, zX, zr, zm) know only
---- raw fold depths, so a lone tool's folds would open one step early. Wrap
---- them in the output buffer to re-apply the depth offsets afterwards; a
---- count still reaches the native command.
-function Output:_setup_fold_keymaps()
-  local rhs_tail = "<Cmd>lua require('cc.output').apply_depth_offsets("
-    .. 'vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win())<CR>'
-  for _, key in ipairs({ 'zx', 'zX', 'zr', 'zm' }) do
-    vim.keymap.set('n', key, key .. rhs_tail, {
-      buffer = self.bufnr,
-      noremap = true,
-      desc = 'cc.nvim: ' .. key .. ', keeping lone tools folded like grouped ones',
-    })
-  end
-end
-
 --- Listen for events that may change fold state.
 function Output:_setup_autocmds()
   local bufnr = self.bufnr
@@ -445,10 +420,8 @@ end
 ---@param lines string[]
 ---@param fold_levels (string|integer)[]? optional, one per line
 ---@param is_header boolean? whether the FIRST line is a fold header (gets caret)
----@param depth_offset integer? added to each new fold header's depth for
----  :CcFold purposes (see M.apply_depth_offsets); 1 inside a lone tool
 ---@return integer first_line_num 1-indexed line of the first new line
-function Output:_append(lines, fold_levels, is_header, depth_offset)
+function Output:_append(lines, fold_levels, is_header)
   local was_following = self:_is_following_tail()
   local bufnr = self:ensure_buffer()
   local state = M._buf_state[bufnr]
@@ -535,14 +508,8 @@ function Output:_append(lines, fold_levels, is_header, depth_offset)
     if type(fl) == 'string' then
       local depth = tonumber(fl:match('[>%<]?(%d+)'))
       if depth and depth > 0 then
-        local close_depth = depth
-        if depth_offset and depth_offset > 0 then
-          state.depth_offset[lnum] = depth_offset
-          close_depth = depth + depth_offset
-        end
         state.pending_fold_closes = state.pending_fold_closes or {}
-        table.insert(state.pending_fold_closes,
-          { lnum = lnum, depth = depth, close_depth = close_depth })
+        table.insert(state.pending_fold_closes, { lnum = lnum, depth = depth })
       end
     end
   end
@@ -583,7 +550,6 @@ function Output:_shift_line_refs(from, delta)
   state.fold_headers = shift_int_keyed(state.fold_headers)
   state.extmark_ids = shift_int_keyed(state.extmark_ids)
   state.empty_thinking = shift_int_keyed(state.empty_thinking or {})
-  state.depth_offset = shift_int_keyed(state.depth_offset or {})
 
   local function moved(lnum)
     if lnum and lnum >= from then return lnum + delta end
@@ -621,7 +587,6 @@ function Output:_delete_line(lnum)
   state.fold_levels[lnum] = nil
   state.fold_headers[lnum] = nil
   state.empty_thinking[lnum] = nil
-  state.depth_offset[lnum] = nil
   local caret = state.extmark_ids[lnum]
   if caret then
     pcall(vim.api.nvim_buf_del_extmark, bufnr, vim.api.nvim_create_namespace('cc.carets'), caret)
@@ -652,8 +617,7 @@ end
 ---@param lines string[]
 ---@param fold_levels (string|integer)[]?
 ---@param is_header boolean? whether the FIRST inserted line registers a caret
----@param depth_offset integer? see _append
-function Output:_insert_lines(start_lnum, lines, fold_levels, is_header, depth_offset)
+function Output:_insert_lines(start_lnum, lines, fold_levels, is_header)
   local bufnr = self:ensure_buffer()
   local state = M._buf_state[bufnr]
   local n = #lines
@@ -662,7 +626,7 @@ function Output:_insert_lines(start_lnum, lines, fold_levels, is_header, depth_o
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   if start_lnum > line_count then
     -- Insertion point is past end; just append instead of shifting.
-    self:_append(lines, fold_levels, is_header, depth_offset)
+    self:_append(lines, fold_levels, is_header)
     return
   end
 
@@ -692,14 +656,8 @@ function Output:_insert_lines(start_lnum, lines, fold_levels, is_header, depth_o
     if type(fl) == 'string' then
       local depth = tonumber(fl:match('[>%<]?(%d+)'))
       if depth and depth > 0 then
-        local close_depth = depth
-        if depth_offset and depth_offset > 0 then
-          state.depth_offset[lnum] = depth_offset
-          close_depth = depth + depth_offset
-        end
         state.pending_fold_closes = state.pending_fold_closes or {}
-        table.insert(state.pending_fold_closes,
-          { lnum = lnum, depth = depth, close_depth = close_depth })
+        table.insert(state.pending_fold_closes, { lnum = lnum, depth = depth })
       end
     end
   end
@@ -746,49 +704,8 @@ function M._flush_pending_fold_closes(bufnr)
       vim.api.nvim_win_call(w, function()
         local view = vim.fn.winsaveview()
         for _, h in ipairs(ready) do
-          if (h.close_depth or h.depth) > wfl and vim.fn.foldclosed(h.lnum) == -1 then
+          if h.depth > wfl and vim.fn.foldclosed(h.lnum) == -1 then
             vim.api.nvim_win_set_cursor(w, { h.lnum, 0 })
-            pcall(vim.cmd, 'silent! normal! zc')
-          end
-        end
-        vim.fn.winrestview(view)
-      end)
-    end
-  end
-end
-
---- Close the folds that :CcFold treats as deeper than Vim does. A lone
---- tool's headers sit one fold level shallower than grouped ones but carry
---- depth_offset 1, so at foldlevel N a fold whose depth is <= N but whose
---- depth plus offset is > N closes, just as the grouped equivalent would by
---- foldlevel alone. Called wherever cc applies a fold level: window setup,
---- :CcFold, history finalization. New folds get the same treatment through
---- _flush_pending_fold_closes. Only open folds are touched, deepest first,
---- and never in a window where folding is off (zc would turn it back on).
----@param bufnr integer
----@param winid integer? limit to this window (default: every window on bufnr)
-function M.apply_depth_offsets(bufnr, winid)
-  local state = M._buf_state[bufnr]
-  if not state or not state.depth_offset or not next(state.depth_offset) then return end
-  local line_count = vim.api.nvim_buf_line_count(bufnr)
-  local lnums = {}
-  for lnum in pairs(state.depth_offset) do
-    if lnum <= line_count then lnums[#lnums + 1] = lnum end
-  end
-  table.sort(lnums, function(a, b)
-    return fold_depth(state.fold_levels[a]) > fold_depth(state.fold_levels[b])
-  end)
-  for _, w in ipairs(winid and { winid } or vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_is_valid(w) and vim.api.nvim_win_get_buf(w) == bufnr
-        and vim.wo[w].foldenable then
-      local wfl = vim.wo[w].foldlevel
-      vim.api.nvim_win_call(w, function()
-        local view = vim.fn.winsaveview()
-        for _, lnum in ipairs(lnums) do
-          local depth = fold_depth(state.fold_levels[lnum])
-          if depth <= wfl and depth + state.depth_offset[lnum] > wfl
-              and vim.fn.foldclosed(lnum) == -1 then
-            vim.api.nvim_win_set_cursor(w, { lnum, 0 })
             pcall(vim.cmd, 'silent! normal! zc')
           end
         end
@@ -1147,7 +1064,7 @@ function Output:on_content_block_start(block)
     local depth = lone and LONE_TOOL_DEPTH or TOOL_DEPTH
     local icon = require('cc.icons').for_tool(block.name or '')
     local header_text = string.rep(' ', indent) .. icon .. ' ' .. display_tool_name(block.name) .. ':'
-    local header_lnum = self:_append({ header_text }, { '>' .. depth }, true, lone and 1 or 0)
+    local header_lnum = self:_append({ header_text }, { '>' .. depth }, true)
     self.streaming_block_type = 'tool_use'
     self.streaming_tool_id = block.id
     local state = M._buf_state[self.bufnr]
@@ -1159,7 +1076,6 @@ function Output:on_content_block_start(block)
       input_rendered = false,
       depth = depth,
       indent = indent,
-      lone = lone or nil,
     }
     table.insert(turn.tool_ids, block.id or '')
     if turn.group then
@@ -1234,8 +1150,8 @@ function Output:_prepare_turn_tool()
 end
 
 --- Move lines `first`..end of buffer into the turn's tool group: every line
---- goes one fold level deeper (a lone tool's tree reaches its grouped depth
---- and drops its depth offset) and indents two more columns. Empty "∴ Thinking..." lines are dropped, along with blanks
+--- goes one fold level deeper (a lone tool's tree reaches its grouped depth)
+--- and indents two more columns. Empty "∴ Thinking..." lines are dropped, along with blanks
 --- they leave doubled or leading. When `group` is given, its header is
 --- inserted at `first` (the group is being created).
 ---
@@ -1288,19 +1204,16 @@ function Output:_absorb_into_group(first, group)
       else
         state.fold_levels[lnum] = (fl or 1) + 1
       end
-      state.depth_offset[lnum] = nil
     end
     for _, h in ipairs(state.pending_fold_closes or {}) do
       if h.lnum >= first and h.lnum <= last then
         h.depth = fold_depth(state.fold_levels[h.lnum])
-        h.close_depth = h.depth
       end
     end
     for _, meta in pairs(state.tool_blocks) do
       if meta.header_lnum and meta.header_lnum >= first and meta.header_lnum <= last then
         meta.indent = (meta.indent or TOOL_INDENT) + GROUP_INDENT
         meta.depth = (meta.depth or LONE_TOOL_DEPTH) + 1
-        meta.lone = nil
       end
     end
 
@@ -1652,13 +1565,12 @@ function Output:_render_tool_result_for(meta, content, is_error)
   local insertion_point = anchor + 1
 
   meta.full_result = text
-  local offset = meta.lone and 1 or 0
   if insertion_point > line_count then
-    local first_lnum = self:_append(lines, levels, true, offset)
+    local first_lnum = self:_append(lines, levels, true)
     meta.result_header_lnum = first_lnum
   else
     meta.result_header_lnum = insertion_point
-    self:_insert_lines(insertion_point, lines, levels, true, offset)
+    self:_insert_lines(insertion_point, lines, levels, true)
   end
   -- A nested result that lands at the end of its Activity section extends it.
   local parent_section = meta.parent_id and state.subagents[meta.parent_id]
@@ -1734,7 +1646,6 @@ function Output:_subagent_insert(parent, lines, levels, is_header)
   local state = M._buf_state[bufnr]
   local sub = state.subagents[parent.tool_use_id]
   local line_count = vim.api.nvim_buf_line_count(bufnr)
-  local offset = parent.lone and 1 or 0
   if not sub then
     local header_at = (parent.input_end_lnum or parent.header_lnum) + 1
     local all_lines = { string.rep(' ', (parent.indent or TOOL_INDENT) + 2) .. 'Activity:' }
@@ -1742,9 +1653,9 @@ function Output:_subagent_insert(parent, lines, levels, is_header)
     vim.list_extend(all_lines, lines)
     vim.list_extend(all_levels, levels)
     if header_at > line_count then
-      header_at = self:_append(all_lines, all_levels, true, offset)
+      header_at = self:_append(all_lines, all_levels, true)
     else
-      self:_insert_lines(header_at, all_lines, all_levels, true, offset)
+      self:_insert_lines(header_at, all_lines, all_levels, true)
     end
     -- Register carets for nested headers inside the freshly inserted block.
     if is_header then
@@ -1762,9 +1673,9 @@ function Output:_subagent_insert(parent, lines, levels, is_header)
   end
   local at = sub.end_lnum + 1
   if at > line_count then
-    at = self:_append(lines, levels, is_header, offset)
+    at = self:_append(lines, levels, is_header)
   else
-    self:_insert_lines(at, lines, levels, is_header, offset)
+    self:_insert_lines(at, lines, levels, is_header)
   end
   sub.end_lnum = math.max(sub.end_lnum, at + #lines - 1)
   return sub, at
@@ -1803,7 +1714,6 @@ function Output:subagent_tool_use(parent_id, block)
     input_end_lnum = header_lnum,
     depth = depth,
     indent = indent,
-    lone = parent.lone,
     parent_id = parent_id,
   }
   state.tool_blocks[block.id] = meta
@@ -2177,7 +2087,6 @@ end
 function Output:set_fold_level(level)
   if self.winid and vim.api.nvim_win_is_valid(self.winid) then
     vim.wo[self.winid].foldlevel = level
-    M.apply_depth_offsets(self.bufnr, self.winid)
     vim.schedule(function() M.refresh_carets(self.bufnr) end)
   end
 end
@@ -2198,7 +2107,6 @@ function Output:finalize_history_replay()
       pcall(vim.fn.win_execute, winid, 'silent! normal! zX')
     end
   end
-  M.apply_depth_offsets(bufnr)
   -- Closing historical result folds shrinks the display above the cursor.
   -- The cursor can still be on the last buffer line while that line rises
   -- several screen rows off the window bottom, so re-run the established

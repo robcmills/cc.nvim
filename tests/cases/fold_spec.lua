@@ -109,10 +109,10 @@ T['applied_folds'] = MiniTest.new_set()
 
 -- Regression: Vim evaluates foldexpr synchronously during nvim_buf_set_lines.
 -- If state.fold_levels isn't populated first, foldexpr returns 0 and the
--- stale value sticks, so tool-result content stays visible at default
--- foldlevel=3. Verify Vim's live fold computation matches state.fold_levels.
-T['applied_folds']['tool result content is inside closed fold at default level'] = function()
-  helpers.render_fixture(_G.child, 'tool_read')
+-- stale value sticks, so tool-result content stays visible at a foldlevel
+-- that should hide it. Verify Vim's live fold computation matches state.fold_levels.
+T['applied_folds']['tool result content is inside a closed fold at foldlevel 2'] = function()
+  helpers.render_fixture(_G.child, 'tool_read', { default_fold_level = 2 })
   _G.child.lua([[
     local bufnr = _G._test_bufnr
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -135,8 +135,8 @@ T['applied_folds']['tool result content is inside closed fold at default level']
     end)
   ]])
   local output_start = _G.child.lua_get('_G._output_start')
-  -- At default foldlevel=3 the lone tool is open, but its Output: fold
-  -- (depth 3, counted as 4 for :CcFold) must be closed around its content.
+  -- At foldlevel 2 the lone tool is open, but its depth-3 Output: fold must
+  -- be closed around its content.
   eq(_G.child.lua_get('_G._fc_output'), output_start)
   eq(_G.child.lua_get('_G._fc_content'), output_start)
   eq(_G.child.lua_get('_G._flv_content'), 3)
@@ -146,7 +146,8 @@ T['applied_folds']['history finalization closes results before output focus'] = 
   _G.child.lua([[
     local Output = require('cc.output')
     local Session = require('cc.session')
-    require('cc.config').setup({})
+    -- A lone tool's result folds at depth 3; foldlevel 2 closes it.
+    require('cc.config').setup({ default_fold_level = 2 })
 
     -- Install the output buffer into a window that is not focused. This is the
     -- resume/reuse path where BufWinEnter cannot initialize window options.
@@ -497,18 +498,14 @@ T['tool_groups']['a lone tool call renders ungrouped at the turn indent'] = func
     _G._lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     _G._tool_fl = _G._tg.level('Bash: ls')
     _G._out_fl = _G._tg.level('Output:')
-    local offsets = Output._buf_state[bufnr].depth_offset
-    _G._offsets = { offsets[_G._tg.find('Bash: ls')], offsets[_G._tg.find('Output:')] }
   ]])
   eq(_G.child.lua_get('_G._groups'), 0)
   eq(_G.child.lua_get('_G._lines'), {
     'User:', '  go', '', 'Agent:', '', '  ❯ Bash: ls', '    Output:', '      a', '', '  Done.',
   })
-  -- One level shallower than a grouped tool, so no fold skips a level; the
-  -- depth offset makes :CcFold treat it as grouped depth.
+  -- One level shallower than a grouped tool, so no fold skips a level.
   eq(_G.child.lua_get('_G._tool_fl'), '>2')
   eq(_G.child.lua_get('_G._out_fl'), '>3')
-  eq(_G.child.lua_get('_G._offsets'), { 1, 1 })
   eq(helpers.implicit_fold_violations(_G.child), {})
 end
 
@@ -694,7 +691,7 @@ T['tool_groups']['level 3 is the default: inputs open, results collapsed'] = fun
   eq(_G.child.lua_get('require("cc.config").options.default_fold_level'), 3)
 end
 
-T['tool_groups']['a lone tool shows the same kind of line as a grouped one at 0..4'] = function()
+T['tool_groups']['a lone tool folds at its own raw depths at 0..4'] = function()
   tg([[
     output:render_user_turn('go')
     _G._tg.tool('t1', 'ls', 'a')
@@ -704,12 +701,23 @@ T['tool_groups']['a lone tool shows the same kind of line as a grouped one at 0.
   ]])
   local v = _G.child.lua_get('_G._v')
   eq(v[1], { '▸ User: go', '', '▸ Agent: (1 tools) Report.' })
-  local collapsed = { 'User:', 'go', '', 'Agent:', '', '  ▸ ❯ Bash: ls', '', 'Report.' }
-  eq(v[2], collapsed)
-  eq(v[3], collapsed)
-  local open = { 'User:', 'go', '', 'Agent:', '', '❯ Bash: ls', '    ▸ Output: ⟨2 lines⟩', '', 'Report.' }
+  eq(v[2], { 'User:', 'go', '', 'Agent:', '', '  ▸ ❯ Bash: ls', '', 'Report.' })
+  -- One level shallower than a grouped tool, so it opens one level earlier.
+  eq(v[3], { 'User:', 'go', '', 'Agent:', '', '❯ Bash: ls', '    ▸ Output: ⟨2 lines⟩', '', 'Report.' })
+  local open = { 'User:', 'go', '', 'Agent:', '', '❯ Bash: ls', 'Output:', 'a', '', 'Report.' }
   eq(v[4], open)
-  eq(v[5], { 'User:', 'go', '', 'Agent:', '', '❯ Bash: ls', 'Output:', 'a', '', 'Report.' })
+  eq(v[5], open)
+end
+
+T['tool_groups']['fold keys are left to Vim'] = function()
+  tg([[
+    _G._maps = {}
+    for _, key in ipairs({ 'zx', 'zX', 'zr', 'zm' }) do
+      local m = vim.fn.maparg(key, 'n', false, true)
+      _G._maps[key] = m.buffer == 1
+    end
+  ]])
+  eq(_G.child.lua_get('_G._maps'), { zx = false, zX = false, zr = false, zm = false })
 end
 
 T['tool_groups']['one zo on a collapsed lone tool opens it'] = function()
@@ -732,22 +740,6 @@ T['tool_groups']['one zo on a collapsed lone tool opens it'] = function()
   ]])
   eq(_G.child.lua_get('_G._after_zo'),
     { 'User:', 'go', '', 'Agent:', '', '❯ Bash: ls', '    ▸ Output: ⟨2 lines⟩', '', 'Report.' })
-end
-
-T['tool_groups']['zr and zx keep a lone tool in step with grouped ones'] = function()
-  tg([[
-    output:render_user_turn('go')
-    _G._tg.tool('t1', 'ls', 'a')
-    _G._tg.text('Report.')
-    _G._tg.visible(2)
-    local out_lnum = _G._tg.find('Output:')
-    vim.api.nvim_feedkeys('zr', 'mx', false) -- foldlevel 3
-    _G._after_zr = { vim.wo.foldlevel, vim.fn.foldclosed(out_lnum) == out_lnum }
-    vim.api.nvim_feedkeys('zx', 'mx', false)
-    _G._after_zx = vim.fn.foldclosed(out_lnum) == out_lnum
-  ]])
-  eq(_G.child.lua_get('_G._after_zr'), { 3, true })
-  eq(_G.child.lua_get('_G._after_zx'), true)
 end
 
 T['tool_groups']['no fold opens more than one level, in groups or out'] = function()

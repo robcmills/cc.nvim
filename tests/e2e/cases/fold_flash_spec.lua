@@ -52,7 +52,9 @@ end
 
 T['no_open_fold_flash_during_large_read'] = function()
   _G.child = h.spawn({ lines = 20, columns = 100 })
-  h.open_with_fixture(_G.child, 'large_read', { slow_delay_ms = 8 })
+  -- The Read is the turn's only tool call, so its Output: fold sits at
+  -- depth 3; foldlevel 2 is the level that must keep it closed.
+  h.open_with_fixture(_G.child, 'large_read', { slow_delay_ms = 8, default_fold_level = 2 })
   if not _G.child:wait_for(function(c) return c:find_winid_for_buf('cc-nvim-output') ~= nil end, 3000) then
     error('output window never appeared')
   end
@@ -65,8 +67,8 @@ T['no_open_fold_flash_during_large_read'] = function()
     timeout_ms = 8000,
   })
 
-  -- After the stream has settled, query the child for any depth-4
-  -- (`Output:`) fold that is still OPEN.
+  -- After the stream has settled, query the child for any `Output:` fold
+  -- that is still OPEN.
   --
   -- Three non-obvious things about fold queries in the headless harness:
   --   1. foldclosed() returns meaningful values only when called from a
@@ -97,9 +99,6 @@ T['no_open_fold_flash_during_large_read'] = function()
     if not target_win then return false end
     -- Force foldexpr re-eval in headless.
     vim.fn.win_execute(target_win, 'silent! normal! zX', true)
-    -- `normal!` skips cc's zX map, which re-applies the lone-tool depth
-    -- offsets after re-applying foldlevel; do what the map does.
-    require('cc.output').apply_depth_offsets(b, target_win)
     return vim.api.nvim_win_call(target_win, function()
       for _, meta in pairs(state.tool_blocks or {}) do
         if meta.result_header_lnum then
@@ -113,7 +112,7 @@ T['no_open_fold_flash_during_large_read'] = function()
   ]])
   if open_result_seen and type(open_result_seen) == 'table' then
     error(string.format(
-      'Output: fold (level 4) is OPEN at line %d after stream — should be closed at default foldlevel=3. (last_line=%d, samples=%d)',
+      'Output: fold (level 3) is OPEN at line %d after stream — should be closed at foldlevel=2. (last_line=%d, samples=%d)',
       open_result_seen.lnum, open_result_seen.last, #samples))
   end
 end

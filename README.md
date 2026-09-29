@@ -386,13 +386,13 @@ Markdown is configured to refresh less often or only at block completion.
 
 The output buffer is foldable with five logical levels:
 
-| `foldlevel` | What's visible |
-|---|---|
-| 0 | Only User / Agent turn headers |
-| 1 | + each turn's final agent text, with its tool calls folded to one `Work: N tool calls` line |
-| 2 | + tool summary lines (one-liners) and the text between calls |
-| 3 *(default)* | + tool inputs (Bash commands, Edit diffs) |
-| 4 | + tool results (stdout, read file contents) |
+| `foldlevel` | Turn with several tool calls | Turn with one tool call |
+|---|---|---|
+| 0 | Only User / Agent turn headers | same |
+| 1 | + final agent text, tool calls folded to one `Work: N tool calls` line | + agent text, the tool's one-line summary |
+| 2 | + tool summary lines and the text between calls | + tool input |
+| 3 *(default)* | + tool inputs (Bash commands, Edit diffs) | + tool result |
+| 4 | + tool results (stdout, read file contents) | same |
 
 An agent turn with two or more tool calls gets one group. It runs from the
 start of the turn through its last call, so the text and thinking between
@@ -401,9 +401,9 @@ summary, stays outside. While a turn streams, text after the latest call
 shows at turn level until the next call pulls it into the group. Empty
 `∴ Thinking...` lines are left out of groups. A turn with a single tool call
 has no group and looks as it always did; a second call groups the turn.
-Either way each level shows the same kind of line, and every fold opens
-with one `zo`: a lone tool is collapsed at levels 1 and 2, shows its input
-at 3 and its output at 4. The
+The group is one more branch in the tree, so a lone tool sits one level
+shallower than grouped ones and opens one `:CcFold` level earlier: collapsed
+at 1, input open at 2, output open at 3. Every fold opens with one `zo`. The
 header's count updates as calls stream in, and while a call is running the
 folded header also shows it with its timer, the way a folded subagent
 `Activity:` header does.
