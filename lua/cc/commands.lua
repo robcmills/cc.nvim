@@ -107,11 +107,11 @@ function M.create()
   vim.api.nvim_create_user_command('CcFold', function(opts)
     local level = tonumber(opts.args)
     if not level then
-      vim.notify('cc.nvim: :CcFold N (0..3)', vim.log.levels.WARN)
+      vim.notify('cc.nvim: :CcFold N (0..4)', vim.log.levels.WARN)
       return
     end
     cc.set_fold_level(level)
-  end, { nargs = 1, desc = 'Set cc.nvim output fold level (0..3)' })
+  end, { nargs = 1, desc = 'Set cc.nvim output fold level (0..4)' })
 
   vim.api.nvim_create_user_command('CcPlan', function() cc.plan() end,
     { desc = 'Open cc.nvim in plan mode' })

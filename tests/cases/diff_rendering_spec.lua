@@ -31,13 +31,14 @@ T['edit_diff']['has add and delete lines'] = function()
   eq(dels > 0, true)
 end
 
-T['edit_diff']['diff lines are 8-space indented'] = function()
+T['edit_diff']['diff lines are 8-space indented for a lone tool call'] = function()
   helpers.render_fixture(_G.child, 'tool_edit')
   local lines = helpers.get_buffer_lines(_G.child)
   for _, line in ipairs(lines) do
     if line:match('@@.*@@') then
-      -- Hunk headers should start with 8 spaces
-      eq(line:sub(1, 8), '        ')
+      -- diff.lua's 8-space indent; a tool group adds 2. highlight.lua's diff
+      -- syntax anchors on exactly these indents.
+      eq(line:sub(1, 9), '        @')
       return
     end
   end

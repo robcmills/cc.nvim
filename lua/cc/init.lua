@@ -1745,7 +1745,7 @@ function M.prompt_autosize(state)
 end
 
 --- Public: set fold level on the output buffer's window.
----@param level integer 0..3
+---@param level integer 0..4
 function M.set_fold_level(level)
   local inst = get_current_instance()
   if inst and inst.output then

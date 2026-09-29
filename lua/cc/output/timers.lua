@@ -17,6 +17,10 @@ function M.start(self, tool_use_id)
   if not timer then return end
   local rec = { timer = timer, start_ms = uv.now() }
   self._tool_timers[tool_use_id] = rec
+  -- Folded tool group headers show a call only while this flag is set.
+  local state = require('cc.output')._buf_state[self.bufnr]
+  local meta = state and state.tool_blocks[tool_use_id]
+  if meta then meta.running = true end
   -- Interval is overridable via cc.config.tool_timer_interval_ms so tests can
   -- exercise the timer path without sleeping a full second.
   local cfg_ok, cfg = pcall(require, 'cc.config')
@@ -40,6 +44,9 @@ function M.stop(self, tool_use_id)
   local rec = self._tool_timers[tool_use_id]
   if not rec then return end
   self._tool_timers[tool_use_id] = nil
+  local state = require('cc.output')._buf_state[self.bufnr]
+  local meta = state and state.tool_blocks[tool_use_id]
+  if meta then meta.running = nil end
   if vim.api.nvim_buf_is_valid(self.bufnr) then
     local uv = vim.uv or vim.loop
     self:update_tool_elapsed(tool_use_id, (uv.now() - rec.start_ms) / 1000)

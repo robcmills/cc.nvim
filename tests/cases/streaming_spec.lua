@@ -1069,24 +1069,32 @@ T['streaming_folds']['agent header has fold level >1'] = function()
   eq(found, true)
 end
 
-T['streaming_folds']['tool header has fold level >2'] = function()
-  helpers.replay_streaming(_G.child, 'tool_bash')
+--- Fold level of the first buffer line matching `pattern`.
+local function level_of(pattern)
+  local lines = helpers.get_buffer_lines(_G.child)
   local levels = helpers.get_fold_levels(_G.child)
-  local found = false
-  for _, fl in pairs(levels) do
-    if fl == '>2' then found = true; break end
+  for i, l in ipairs(lines) do
+    if l:match(pattern) then return levels[i] end
   end
-  eq(found, true)
+  return nil
 end
 
-T['streaming_folds']['tool result has fold level >3'] = function()
+T['streaming_folds']['a lone tool is ungrouped: header >2 at turn indent'] = function()
   helpers.replay_streaming(_G.child, 'tool_bash')
-  local levels = helpers.get_fold_levels(_G.child)
-  local found = false
-  for _, fl in pairs(levels) do
-    if fl == '>3' then found = true; break end
-  end
-  eq(found, true)
+  eq(level_of('Work: '), nil)
+  eq(level_of('^  %S+ Bash:'), '>2')
+end
+
+T['streaming_folds']['a lone tool result has fold level >3'] = function()
+  helpers.replay_streaming(_G.child, 'tool_bash')
+  eq(level_of('^    Output:$'), '>3')
+end
+
+T['streaming_folds']['several tools in a turn share a >2 group'] = function()
+  helpers.replay_streaming(_G.child, 'peek_three_bash')
+  eq(level_of('^  %S+ Work: 3 tool calls$'), '>2')
+  eq(level_of('^    %S+ Bash: sleep 90'), '>3')
+  eq(level_of('^    %S+ Bash: sleep 92'), '>3')
 end
 
 return T

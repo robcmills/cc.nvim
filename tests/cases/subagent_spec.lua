@@ -108,6 +108,8 @@ end
 -- ---------------------------------------------------------------------------
 T['folds'] = MiniTest.new_set()
 
+-- The fixture's Agent call is the turn's only tool call, so it is ungrouped
+-- one level shallower: Activity at depth 3, closed at the default level 2.
 T['folds']['activity is closed by default and shows the latest item as foldtext'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
   _G.child.lua([[
@@ -147,7 +149,7 @@ T['folds']['activity is closed by default and shows the latest item as foldtext'
   eq(_G.child.lua_get('_G._header_text'), '    Activity:')
 end
 
-T['folds']['foldlevel 3 opens the section but keeps nested tools closed'] = function()
+T['folds']['foldlevel 3 opens a lone call section but keeps nested tools closed'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
   _G.child.lua([[
     local bufnr = _G._test_bufnr
@@ -170,6 +172,44 @@ T['folds']['foldlevel 3 opens the section but keeps nested tools closed'] = func
   ]])
   eq(_G.child.lua_get('_G._activity_fc'), -1)
   eq(_G.child.lua_get('_G._nested_fc'), _G.child.lua_get('_G._nested'))
+end
+
+T['folds']['a lone Agent call is ungrouped and folds at its raw depths'] = function()
+  helpers.replay_streaming(_G.child, 'subagent_tasks')
+  _G.child.lua([[
+    local bufnr = _G._test_bufnr
+    vim.api.nvim_exec_autocmds('BufWinEnter', { buffer = bufnr })
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local parent, activity
+    _G._has_group = false
+    for i, l in ipairs(lines) do
+      if l:match('Work: ') then _G._has_group = true end
+      if l:match('^  %S+ Subagent:') then parent = i end
+      if l:match('^    Activity:$') then activity = i end
+    end
+    _G._parent = parent
+    _G._parent_fl = require('cc.output')._buf_state[bufnr].fold_levels[parent]
+    local winid = vim.fn.bufwinid(bufnr)
+    _G._test_output.winid = winid
+    _G._fc = {}
+    for _, level in ipairs({ 1, 2, 3 }) do
+      _G._test_output:set_fold_level(level)
+      vim.api.nvim_win_call(winid, function()
+        vim.cmd('redraw')
+        _G._fc[level] = { vim.fn.foldclosed(parent), vim.fn.foldclosed(activity) }
+      end)
+    end
+    _G._activity = activity
+  ]])
+  local parent = _G.child.lua_get('_G._parent')
+  local activity = _G.child.lua_get('_G._activity')
+  eq(_G.child.lua_get('_G._has_group'), false)
+  eq(_G.child.lua_get('_G._parent_fl'), '>2')
+  eq(helpers.implicit_fold_violations(_G.child), {})
+  local fc = _G.child.lua_get('_G._fc')
+  eq(fc[1], { parent, parent })   -- tool collapsed
+  eq(fc[2], { -1, activity })     -- tool open, Activity collapsed
+  eq(fc[3], { -1, -1 })           -- Activity open
 end
 
 -- ---------------------------------------------------------------------------
@@ -272,7 +312,9 @@ end
 T['live']['interleaved agents keep activity folds closed during every update'] = function()
   _G.child.lua([[
     local Output = require('cc.output')
-    require('cc.config').setup({})
+    -- Three calls form a Work group; level 3 opens the grouped Agent tools
+    -- while their depth-4 Activity sections stay closed.
+    require('cc.config').setup({ default_fold_level = 3 })
     local output = Output.new(require('cc.session').new(), 'cc-test-interleaved')
     local buf = output:ensure_buffer()
     vim.api.nvim_set_current_buf(buf)
@@ -373,7 +415,7 @@ end
 T['live']['single-line nested tools never close their activity or parent'] = function()
   _G.child.lua([[
     local Output = require('cc.output')
-    require('cc.config').setup({ default_fold_level = 3 })
+    require('cc.config').setup({ default_fold_level = 4 })
     local o = Output.new(require('cc.session').new(), 'cc-test-empty-nested')
     local b = o:ensure_buffer()
     vim.api.nvim_set_current_buf(b)

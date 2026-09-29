@@ -2,17 +2,35 @@
 -- Fold level scheme (per-line, fed to foldexpr):
 --   >1  User/Agent headers         (fold depth 1)
 --    1  Turn content (agent text)
---   >2  Tool header                (fold depth 2 inside a turn)
---    2  Tool input lines
---   >3  Tool result sub-header     (fold depth 3 inside a tool)
---    3  Tool result content
+--   >2  Tool group header          (fold depth 2: the turn's tool calls)
+--    2  Text, thinking and blanks inside the group
+--   >3  Tool header                (fold depth 3 inside a group)
+--    3  Tool input lines
+--   >4  Tool result sub-header     (fold depth 4 inside a tool)
+--    4  Tool result content
+--
+-- An agent turn with two or more tool calls gets one group. It runs from the
+-- start of the turn through the end of the last call, taking in the text and
+-- thinking between calls; only text after the last call (the summary) stays
+-- at turn level. Text streamed after the latest call renders at turn level
+-- until another call arrives and pulls it in. Empty "∴ Thinking..." lines
+-- are dropped inside a group.
+--
+-- Every fold starts on its own visible header exactly one level below the
+-- line above it, so one zo always opens one visible level. A turn with one
+-- tool call therefore has it ungrouped one level shallower: header >2,
+-- input 2, result >3/3. The second call in a turn creates the group after
+-- the fact and moves everything down a level. A lone tool opens one
+-- :CcFold level earlier than a grouped one; the group is just one more
+-- branch in the tree.
 --
 -- User-facing :CcFold N maps to Vim foldlevel=N:
 --   0 = turns collapsed (only User/Agent headers visible)
---   1 = turns open, tools collapsed        (default)
---   2 = tools open (input visible), results collapsed
---   3 = everything visible
---
+--   1 = turns open: tool groups and lone tools collapsed
+--   2 = groups open with their tools collapsed; lone tools open, results collapsed (default)
+--   3 = grouped tools open, results collapsed; lone tool results open
+--   4 = everything visible
+
 -- Carets (▸ folded, ▾ open) are inline virt_text extmarks at the start of
 -- header lines, synced to Vim's fold state on CursorMoved.
 
@@ -27,6 +45,50 @@ local function display_tool_name(name)
   return TOOL_DISPLAY_NAMES[name] or name or '?'
 end
 
+-- Fold depths of the tool tree. A grouped tool sits at depth 3 under its
+-- group. A lone tool (the only call in its turn) sits at depth 2: every fold
+-- must start on its own visible header, one level below its parent, so it
+-- cannot skip the missing group level. Subagent Activity sections sit one
+-- level below their parent Agent tool, and the subagent's own tools one
+-- below that.
+local TOOL_GROUP_DEPTH = 2
+local TOOL_DEPTH = 3
+local LONE_TOOL_DEPTH = 2
+M.TOOL_GROUP_DEPTH = TOOL_GROUP_DEPTH
+M.TOOL_DEPTH = TOOL_DEPTH
+
+-- Header indent of a top-level tool: the turn-text indent outside a group,
+-- two more inside one. Carets sit at a header's indent (see refresh_carets),
+-- so indent and fold depth vary independently.
+local TOOL_INDENT = 2
+local GROUP_INDENT = 2
+local NS_GROUP_INDENT = vim.api.nvim_create_namespace('cc.group_indent')
+M.NS_GROUP_INDENT = NS_GROUP_INDENT
+
+--- Normalize a foldexpr value (">3", 3) to its depth.
+---@param fl string|integer|nil
+---@return integer
+local function fold_depth(fl)
+  if type(fl) == 'number' then return fl end
+  if type(fl) == 'string' then return tonumber(fl:match('%d+')) or 0 end
+  return 0
+end
+
+--- Header line text for a tool group of `count` calls.
+---@param count integer
+---@return string
+local function tool_group_header(count)
+  local fmt = require('cc.config').options.tool_group_format
+  local label
+  if type(fmt) == 'function' then
+    local ok, ret = pcall(fmt, count)
+    if ok and type(ret) == 'string' then label = ret end
+  end
+  -- The default label lives here only, so rewording it is a one-line change.
+  label = label or string.format('Work: %d tool call%s', count, count == 1 and '' or 's')
+  return string.rep(' ', TOOL_INDENT) .. require('cc.icons').for_tool('ToolGroup') .. ' ' .. label
+end
+
 -- Per-buffer fold tracking (keyed by bufnr)
 ---@class cc.OutputBufState
 ---@field fold_levels table<integer, string|integer>  line number -> foldexpr value
@@ -34,12 +96,30 @@ end
 ---@field extmark_ids table<integer, integer>         line -> extmark id (1-indexed line)
 ---@field tool_blocks table<string, cc.OutputToolBlock> tool_use_id -> render metadata
 ---@field subagents table<string, cc.OutputSubagent> parent Agent tool_use_id -> Activity section
+---@field tool_groups cc.OutputToolGroup[] every tool group header rendered, in buffer order
+---@field empty_thinking table<integer, boolean> lines holding a "∴ Thinking..." with no text
 ---@field pending_subagent table<string, table[]>? subagent messages queued until the parent input renders
 M._buf_state = {}
 
+--- The tool calls of one agent turn with two or more of them, folded under
+--- a header that counts them. The group runs from the start of the turn to
+--- the end of its last call; only text after that call stays at turn level.
+--- Subagent tool calls nest inside their Agent tool instead.
+---@class cc.OutputToolGroup
+---@field header_lnum integer 1-indexed line of the group header
+---@field count integer tool calls in the group so far
+---@field tool_ids string[] the turn's top-level tool_use ids, in order
+
+--- Per agent turn tool bookkeeping. A turn ends at a user turn, notice or
+--- result line; the next Agent: header starts a new one.
+---@class cc.OutputTurn
+---@field tool_ids string[] top-level tool_use ids rendered in this turn
+---@field group cc.OutputToolGroup? set once the turn has a second tool call
+---@field trail_start integer? first turn-level line after the latest call
+
 --- Per-subagent "Activity:" section nested inside the parent Agent tool block.
 --- Holds the subagent's own tool calls, results, text and thinking at fold
---- depth 3+. The section is created lazily with its first item so it never
+--- depth 4+. The section is created lazily with its first item so it never
 --- exists as an empty single-line fold.
 ---@class cc.OutputSubagent
 ---@field parent_id string tool_use_id of the parent Agent call
@@ -57,7 +137,9 @@ M._buf_state = {}
 ---@field result_header_lnum integer? line where "▾ Output:" was inserted
 ---@field input_rendered boolean
 ---@field input_end_lnum integer? last line of rendered tool input; insertion point for tool_result
----@field depth integer? fold depth of the header line: 2 for top-level tools, 4 for tools nested inside a subagent Activity section (default 2)
+---@field depth integer? fold depth of the header line: 3 for top-level tools, 5 for tools nested inside a subagent Activity section (default 3)
+---@field indent integer? header indent in columns: 2 for an ungrouped top-level tool, 4 grouped, parent + 4 when nested (default 2)
+---@field running boolean? true while the tool's elapsed timer is ticking
 ---@field parent_id string? parent Agent tool_use_id when this tool ran inside a subagent
 
 ---@class cc.Output
@@ -66,6 +148,7 @@ M._buf_state = {}
 ---@field session cc.Session
 ---@field streaming_block_type string?
 ---@field streaming_tool_id string? currently-streaming tool_use id
+---@field turn cc.OutputTurn? tool bookkeeping for the current agent turn
 ---@field _pending_delta_chunks string[]
 ---@field _pending_delta_kind string?
 ---@field _delta_timer userdata?
@@ -89,6 +172,7 @@ function M.new(session, buf_name)
     last_turn_role = nil, ---@type 'user'|'agent'|nil tracks consecutive turns
     agent_header_lnum = nil, ---@type integer? header line of current agent fold
     agent_end_lnum = nil, ---@type integer? last line of the most recent agent turn (anchor for the result/cost line)
+    turn = nil,
     _pending_delta_chunks = {},
     _pending_delta_kind = nil,
     _delta_timer = nil,
@@ -118,6 +202,8 @@ function Output:ensure_buffer()
     extmark_ids = {},
     tool_blocks = {},
     subagents = {},
+    tool_groups = {},
+    empty_thinking = {},
   }
 
   self:_setup_window_opts_for_buffer()
@@ -441,6 +527,86 @@ function Output:_append(lines, fold_levels, is_header)
   return first_lnum
 end
 
+--- Move every tracked line reference at or below `from` by `delta` lines:
+--- per-line state tables, tool blocks, groups, subagent sections, pending
+--- fold closes and the turn anchors. Callers insert or delete the buffer
+--- lines themselves; _insert_lines and _delete_line are the two users.
+---@param from integer 1-indexed first line that moves
+---@param delta integer
+function Output:_shift_line_refs(from, delta)
+  local state = M._buf_state[self.bufnr]
+  local function shift_int_keyed(tbl)
+    local shifted = {}
+    for lnum, v in pairs(tbl) do
+      if type(lnum) == 'number' and lnum >= from then
+        shifted[lnum + delta] = v
+      else
+        shifted[lnum] = v
+      end
+    end
+    return shifted
+  end
+  state.fold_levels = shift_int_keyed(state.fold_levels)
+  state.fold_headers = shift_int_keyed(state.fold_headers)
+  state.extmark_ids = shift_int_keyed(state.extmark_ids)
+  state.empty_thinking = shift_int_keyed(state.empty_thinking or {})
+
+  local function moved(lnum)
+    if lnum and lnum >= from then return lnum + delta end
+    return lnum
+  end
+  for _, meta in pairs(state.tool_blocks) do
+    meta.header_lnum = moved(meta.header_lnum)
+    meta.result_header_lnum = moved(meta.result_header_lnum)
+    meta.input_end_lnum = moved(meta.input_end_lnum)
+  end
+  for _, h in ipairs(state.pending_fold_closes or {}) do
+    h.lnum = moved(h.lnum)
+  end
+  for _, group in ipairs(state.tool_groups or {}) do
+    group.header_lnum = moved(group.header_lnum)
+  end
+  for _, sub in pairs(state.subagents or {}) do
+    sub.header_lnum = moved(sub.header_lnum)
+    sub.end_lnum = moved(sub.end_lnum)
+  end
+  self.agent_header_lnum = moved(self.agent_header_lnum)
+  self.agent_end_lnum = moved(self.agent_end_lnum)
+  self.streaming_prose_start_lnum = moved(self.streaming_prose_start_lnum)
+  if self.turn then
+    self.turn.trail_start = moved(self.turn.trail_start)
+  end
+end
+
+--- Delete one plain (non-header) line and shift the line state below it.
+--- Deleting, unlike rewriting, adjusts marks and folds correctly.
+---@param lnum integer 1-indexed
+function Output:_delete_line(lnum)
+  local bufnr = self.bufnr
+  local state = M._buf_state[bufnr]
+  state.fold_levels[lnum] = nil
+  state.fold_headers[lnum] = nil
+  state.empty_thinking[lnum] = nil
+  local caret = state.extmark_ids[lnum]
+  if caret then
+    pcall(vim.api.nvim_buf_del_extmark, bufnr, vim.api.nvim_create_namespace('cc.carets'), caret)
+    state.extmark_ids[lnum] = nil
+  end
+  if state.pending_fold_closes then
+    state.pending_fold_closes = vim.tbl_filter(function(h) return h.lnum ~= lnum end,
+      state.pending_fold_closes)
+  end
+  if self.agent_end_lnum == lnum then self.agent_end_lnum = lnum - 1 end
+  if self.turn and self.turn.trail_start == lnum then
+    -- The next line (if any) takes its place once the refs shift up.
+    if lnum >= vim.api.nvim_buf_line_count(bufnr) then self.turn.trail_start = nil end
+  end
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, {})
+  vim.bo[bufnr].modifiable = false
+  self:_shift_line_refs(lnum + 1, -1)
+end
+
 --- Insert lines into the middle of the buffer at start_lnum (1-indexed),
 --- shifting all tracked line-number state (fold_levels, fold_headers,
 --- extmark_ids, tool_blocks line refs, agent_header_lnum) down by #lines.
@@ -465,57 +631,7 @@ function Output:_insert_lines(start_lnum, lines, fold_levels, is_header)
   end
 
   local was_following = self:_is_following_tail()
-
-  local function shift_int_keyed(tbl)
-    local shifted = {}
-    for lnum, v in pairs(tbl) do
-      if type(lnum) == 'number' and lnum >= start_lnum then
-        shifted[lnum + n] = v
-      else
-        shifted[lnum] = v
-      end
-    end
-    return shifted
-  end
-  state.fold_levels = shift_int_keyed(state.fold_levels)
-  state.fold_headers = shift_int_keyed(state.fold_headers)
-  state.extmark_ids = shift_int_keyed(state.extmark_ids)
-
-  for _, meta in pairs(state.tool_blocks) do
-    if meta.header_lnum and meta.header_lnum >= start_lnum then
-      meta.header_lnum = meta.header_lnum + n
-    end
-    if meta.result_header_lnum and meta.result_header_lnum >= start_lnum then
-      meta.result_header_lnum = meta.result_header_lnum + n
-    end
-    if meta.input_end_lnum and meta.input_end_lnum >= start_lnum then
-      meta.input_end_lnum = meta.input_end_lnum + n
-    end
-  end
-
-  if state.pending_fold_closes then
-    for _, h in ipairs(state.pending_fold_closes) do
-      if h.lnum >= start_lnum then
-        h.lnum = h.lnum + n
-      end
-    end
-  end
-
-  for _, sub in pairs(state.subagents or {}) do
-    if sub.header_lnum >= start_lnum then
-      sub.header_lnum = sub.header_lnum + n
-    end
-    if sub.end_lnum >= start_lnum then
-      sub.end_lnum = sub.end_lnum + n
-    end
-  end
-
-  if self.agent_header_lnum and self.agent_header_lnum >= start_lnum then
-    self.agent_header_lnum = self.agent_header_lnum + n
-  end
-  if self.agent_end_lnum and self.agent_end_lnum >= start_lnum then
-    self.agent_end_lnum = self.agent_end_lnum + n
-  end
+  self:_shift_line_refs(start_lnum, n)
 
   for i = 1, n do
     local lnum = start_lnum + i - 1
@@ -832,6 +948,7 @@ function Output:render_user_turn(text)
   local highlight_user = config.markdown_highlight and config.markdown_highlight.user
   local is_continuation = (self.last_turn_role == 'user')
   self.last_turn_role = 'user'
+  self.turn = nil
 
   if is_continuation then
     -- Consecutive user turn: append content under the existing fold.
@@ -882,9 +999,12 @@ function Output:begin_assistant_turn()
 
   if is_continuation and self.agent_header_lnum then
     -- Consecutive agent turn: skip the header, stay inside existing fold.
-    self:_append({ '' }, { 1 }, false)
+    -- The separator is turn-level; a later tool call pulls it into the
+    -- turn's tool group.
+    self:_mark_trail(self:_append({ '' }, { 1 }, false))
     return self.agent_header_lnum
   end
+  self.turn = { tool_ids = {} }
 
   -- Blank separator (may be collapsed if buffer already ends with blank).
   self:_append({ '' }, { 0 }, false)
@@ -913,6 +1033,7 @@ function Output:on_content_block_start(block)
   local highlight_agent = config.markdown_highlight and config.markdown_highlight.agent
   if block.type == 'text' then
     local lnum = self:_append({ '  ' }, { 1 }, false)
+    self:_mark_trail(lnum)
     self.streaming_block_type = 'text'
     self.streaming_prose_start_lnum = lnum
     self._stream_revision = 0
@@ -924,6 +1045,7 @@ function Output:on_content_block_start(block)
   elseif block.type == 'thinking' then
     if config.show_thinking then
       local lnum = self:_append({ '  ∴ Thinking... ' }, { 1 }, false)
+      self:_mark_trail(lnum)
       self.streaming_block_type = 'thinking'
       self.streaming_prose_start_lnum = lnum
       self._stream_revision = 0
@@ -936,11 +1058,13 @@ function Output:on_content_block_start(block)
       self.streaming_block_type = 'thinking_hidden'
     end
   elseif block.type == 'tool_use' then
+    local turn = self:_prepare_turn_tool()
+    local lone = turn.group == nil
+    local indent = TOOL_INDENT + (lone and 0 or GROUP_INDENT)
+    local depth = lone and LONE_TOOL_DEPTH or TOOL_DEPTH
     local icon = require('cc.icons').for_tool(block.name or '')
-    local header_text = '  ' .. icon .. ' ' .. display_tool_name(block.name) .. ':'
-    -- Blank separator (may be collapsed if buffer already ends with blank).
-    self:_append({ '' }, { 1 }, false)
-    local header_lnum = self:_append({ header_text }, { '>2' }, true)
+    local header_text = string.rep(' ', indent) .. icon .. ' ' .. display_tool_name(block.name) .. ':'
+    local header_lnum = self:_append({ header_text }, { '>' .. depth }, true)
     self.streaming_block_type = 'tool_use'
     self.streaming_tool_id = block.id
     local state = M._buf_state[self.bufnr]
@@ -950,9 +1074,195 @@ function Output:on_content_block_start(block)
       tool_name = block.name,
       header_lnum = header_lnum,
       input_rendered = false,
-      depth = 2,
+      depth = depth,
+      indent = indent,
     }
+    table.insert(turn.tool_ids, block.id or '')
+    if turn.group then
+      turn.group.count = #turn.tool_ids
+      self:_update_tool_group_header(turn.group)
+    end
   end
+end
+
+--- Record a just-finished thinking block that produced no text, so a tool
+--- group can drop its bare "∴ Thinking..." line.
+---@param start_lnum integer first line of the thinking block
+function Output:_note_empty_thinking(start_lnum)
+  local bufnr = self.bufnr
+  local lines = vim.api.nvim_buf_get_lines(bufnr, start_lnum - 1, -1, false)
+  local body = table.concat(lines, '\n'):gsub('^%s*∴ Thinking%.%.%.', '')
+  if vim.trim(body) == '' then
+    M._buf_state[bufnr].empty_thinking[start_lnum] = true
+  end
+end
+
+--- The current agent turn's tool bookkeeping, created on first use.
+---@return cc.OutputTurn
+function Output:_current_turn()
+  self.turn = self.turn or { tool_ids = {} }
+  return self.turn
+end
+
+--- Remember where turn-level content after the latest tool call begins, so
+--- the next call in this turn can pull it into the group.
+---@param lnum integer
+function Output:_mark_trail(lnum)
+  local turn = self.turn
+  if turn and #turn.tool_ids > 0 and not turn.trail_start then
+    turn.trail_start = lnum
+  end
+end
+
+--- Whether the next turn-level line sits inside the turn's tool group: the
+--- group exists and nothing has been appended at turn level since its last
+--- call (permission prompts and hooks for that call belong to the group).
+---@return boolean
+function Output:_in_tool_group()
+  local turn = self.turn
+  return turn ~= nil and turn.group ~= nil and turn.trail_start == nil
+end
+
+--- Make room for the next top-level tool call and return the turn. The
+--- first call renders ungrouped. The second creates the group over
+--- everything from the start of the turn; later calls pull in whatever
+--- turn-level content followed the previous call. Blank separators may be
+--- collapsed by _append if the buffer already ends with a blank.
+---@return cc.OutputTurn
+function Output:_prepare_turn_tool()
+  local turn = self:_current_turn()
+  if #turn.tool_ids == 0 then
+    self:_append({ '' }, { 1 }, false)
+    return turn
+  end
+  if not turn.group then
+    local first = (self.agent_header_lnum or 0) + 1
+    local group = { header_lnum = first, count = #turn.tool_ids, tool_ids = turn.tool_ids }
+    self:_absorb_into_group(first, group)
+    table.insert(M._buf_state[self.bufnr].tool_groups, group)
+    turn.group = group
+  elseif turn.trail_start then
+    self:_absorb_into_group(turn.trail_start)
+  end
+  turn.trail_start = nil
+  self:_append({ '' }, { TOOL_GROUP_DEPTH }, false)
+  return turn
+end
+
+--- Move lines `first`..end of buffer into the turn's tool group: every line
+--- goes one fold level deeper (a lone tool's tree reaches its grouped depth)
+--- and indents two more columns. Empty "∴ Thinking..." lines are dropped, along with blanks
+--- they leave doubled or leading. When `group` is given, its header is
+--- inserted at `first` (the group is being created).
+---
+--- Agent prose (level-1 lines) keeps its text and gets the extra indent as
+--- inline virtual text: markdown would read four leading spaces as a code
+--- block, and re-slicing the markdown regions per row made every later
+--- parse slow. Other lines are rewritten in place: headers through _set_line
+--- (see there), the rest by inserting two spaces at column 0 with
+--- nvim_buf_set_text, which moves highlight extmarks with the text. Fold
+--- levels are recorded first so each rewrite's incremental fold update
+--- already sees the final tree; unchanged lines are rewritten with the same
+--- text for the same reason.
+---@param first integer 1-indexed
+---@param group cc.OutputToolGroup? new group whose header to insert
+function Output:_absorb_into_group(first, group)
+  self:flush_pending_delta()
+  local bufnr = self.bufnr
+  local state = M._buf_state[bufnr]
+  self:_with_tail_anchor(function()
+    local last = vim.api.nvim_buf_line_count(bufnr)
+    if first > last then first = last + 1 end
+
+    -- Drop empty thinking and the blanks it would leave doubled; a new
+    -- group also sheds blanks between its header and its first content.
+    local texts = vim.api.nvim_buf_get_lines(bufnr, first - 1, last, false)
+    local prev_blank = group ~= nil
+      or vim.trim(vim.api.nvim_buf_get_lines(bufnr, first - 2, first - 1, false)[1] or 'x') == ''
+    local drop = {}
+    for i, text in ipairs(texts) do
+      local lnum = first + i - 1
+      local turn_level = state.fold_levels[lnum] == 1
+      if turn_level and state.empty_thinking[lnum] then
+        drop[#drop + 1] = lnum
+      elseif turn_level and vim.trim(text) == '' then
+        if prev_blank then drop[#drop + 1] = lnum end
+        prev_blank = true
+      else
+        prev_blank = false
+      end
+    end
+    for i = #drop, 1, -1 do self:_delete_line(drop[i]) end
+    last = vim.api.nvim_buf_line_count(bufnr)
+
+    local prose = {}
+    for lnum = first, last do
+      local fl = state.fold_levels[lnum]
+      if fl == 1 then prose[lnum] = true end
+      if type(fl) == 'string' then
+        state.fold_levels[lnum] = '>' .. (fold_depth(fl) + 1)
+      else
+        state.fold_levels[lnum] = (fl or 1) + 1
+      end
+    end
+    for _, h in ipairs(state.pending_fold_closes or {}) do
+      if h.lnum >= first and h.lnum <= last then
+        h.depth = fold_depth(state.fold_levels[h.lnum])
+      end
+    end
+    for _, meta in pairs(state.tool_blocks) do
+      if meta.header_lnum and meta.header_lnum >= first and meta.header_lnum <= last then
+        meta.indent = (meta.indent or TOOL_INDENT) + GROUP_INDENT
+        meta.depth = (meta.depth or LONE_TOOL_DEPTH) + 1
+      end
+    end
+
+    if group then
+      self:_insert_lines(first, { tool_group_header(group.count + 1) },
+        { '>' .. TOOL_GROUP_DEPTH }, true)
+      group.header_lnum = first
+      local shifted = {}
+      for lnum in pairs(prose) do shifted[lnum + 1] = true end
+      prose = shifted
+      first, last = first + 1, last + 1
+    end
+
+    local pad = string.rep(' ', GROUP_INDENT)
+    vim.bo[bufnr].modifiable = true
+    for lnum = first, last do
+      local text = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ''
+      if text == '' or prose[lnum] then
+        -- Unchanged text, but the rewrite re-evaluates the new fold level.
+        vim.fn.setbufline(bufnr, lnum, text)
+        if text ~= '' then
+          vim.api.nvim_buf_set_extmark(bufnr, NS_GROUP_INDENT, lnum - 1, 0, {
+            virt_text = { { pad } },
+            virt_text_pos = 'inline',
+            right_gravity = false,
+          })
+        end
+      elseif type(state.fold_levels[lnum]) == 'string' then
+        vim.fn.setbufline(bufnr, lnum, pad .. text)
+      else
+        vim.api.nvim_buf_set_text(bufnr, lnum - 1, 0, lnum - 1, 0, { pad })
+      end
+    end
+    vim.bo[bufnr].modifiable = false
+  end)
+  M._flush_pending_fold_closes(bufnr)
+  M.refresh_carets(bufnr)
+end
+
+--- Rewrite a group header with its current count.
+---@param group cc.OutputToolGroup
+function Output:_update_tool_group_header(group)
+  local bufnr = self.bufnr
+  if group.header_lnum > vim.api.nvim_buf_line_count(bufnr) then return end
+  self:_with_tail_anchor(function()
+    -- In-place rewrite of a fold header: see Output:_set_line.
+    self:_set_line(group.header_lnum, tool_group_header(group.count))
+  end)
+  M.refresh_carets(bufnr)
 end
 
 --- Called on text_delta / thinking_delta within a text/thinking block.
@@ -987,6 +1297,9 @@ function Output:on_content_block_stop(block, opts)
     -- streaming.markdown_hz this is the block's only highlight pass.
     self:_maybe_update_streaming_markdown(true)
     require('cc.md_highlight').end_streaming(self.bufnr)
+    if block.type == 'thinking' then
+      self:_note_empty_thinking(self.streaming_prose_start_lnum)
+    end
     self.streaming_prose_start_lnum = nil
   end
   if block and block.type == 'tool_use' then
@@ -996,7 +1309,7 @@ function Output:on_content_block_stop(block, opts)
     -- Rewrite the header with the summary (no timer suffix).
     local summary = require('cc.output.tool_body').summarize_tool_input(block.name, block.input)
     self:_update_tool_header_summary(meta and meta.header_lnum or nil,
-      block.name, summary)
+      block.name, summary, meta and meta.indent)
     -- Live path: re-layer the timer suffix that the rewrite above stripped,
     -- so the (icon + duration) pair never disappears between content_block_stop
     -- and the next 1-second tick.
@@ -1006,9 +1319,9 @@ function Output:on_content_block_stop(block, opts)
       local uv = vim.uv or vim.loop
       self:update_tool_elapsed(block.id, (uv.now() - rec.start_ms) / 1000)
     end
-    -- Render the full input at fold level 2 (multi-line if needed)
+    -- Render the full input inside the tool fold (multi-line if needed)
     if meta and not meta.input_rendered then
-      local last_lnum = self:_render_tool_input(block.name, block.input)
+      local last_lnum = self:_render_tool_input(block.name, block.input, nil, meta)
       meta.input_rendered = true
       meta.input_end_lnum = last_lnum or meta.header_lnum
       -- If a tool_result for this tool arrived during streaming (race: client
@@ -1044,13 +1357,14 @@ end
 ---@param lnum integer?
 ---@param tool_name string
 ---@param summary string?
-function Output:_update_tool_header_summary(lnum, tool_name, summary)
+---@param indent integer? header indent in columns (default ungrouped top-level)
+function Output:_update_tool_header_summary(lnum, tool_name, summary, indent)
   if not lnum then return end
   local bufnr = self.bufnr
   if lnum > vim.api.nvim_buf_line_count(bufnr) then return end
   self:_with_tail_anchor(function()
     local icon = require('cc.icons').for_tool(tool_name)
-    local new_text = '  ' .. icon .. ' ' .. display_tool_name(tool_name) .. ':'
+    local new_text = string.rep(' ', indent or TOOL_INDENT) .. icon .. ' ' .. display_tool_name(tool_name) .. ':'
     if summary and summary ~= '' and not require('cc.output.tool_body').SUMMARY_FOLD_ONLY[tool_name] then
       new_text = new_text .. ' ' .. summary
     end
@@ -1061,17 +1375,18 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary)
   M.refresh_carets(bufnr)
 end
 
---- Render tool input block at fold level 2 (below the tool header).
+--- Render tool input block inside the tool fold (below the tool header).
 --- When insert_lnum is provided, insert there instead of appending. This is
 --- used by providers whose start event omits input that arrives on completion.
 ---@param tool_name string
 ---@param input table?
 ---@param insert_lnum integer?
----@param depth integer? fold depth of the owning tool header (default 2)
+---@param meta cc.OutputToolBlock? owning tool: its depth and indent place the body
 ---@return integer? last_lnum 1-indexed last line written, or nil if nothing rendered
-function Output:_render_tool_input(tool_name, input, insert_lnum, depth)
+function Output:_render_tool_input(tool_name, input, insert_lnum, meta)
   if not input then return nil end
-  depth = depth or 2
+  local depth = meta and meta.depth or TOOL_DEPTH
+  local indent = meta and meta.indent or TOOL_INDENT
   local config = require('cc.config').options
   local body_lines, snippets
   if type(config.tool_input_format) == 'function' then
@@ -1094,11 +1409,12 @@ function Output:_render_tool_input(tool_name, input, insert_lnum, depth)
   local lines = {}
   local levels = {}
   -- Diff renderers (Edit/MultiEdit/Write) already emit their own indentation
-  -- via the cc.diff module; other bodies get a 4-space indent. Tools nested
-  -- in a subagent Activity section sit two fold depths deeper, so both
-  -- forms shift right by a further 4 columns.
+  -- via the cc.diff module; other bodies get a 4-space indent. Both forms
+  -- are laid out for an ungrouped top-level tool (header indent 2) and shift
+  -- right with the header: by 2 inside a tool group, further when nested in
+  -- a subagent Activity section.
   local pre_indented = tool_name == 'Edit' or tool_name == 'MultiEdit' or tool_name == 'Write'
-  local nested_indent = (depth - 2) * 2
+  local nested_indent = indent - TOOL_INDENT
   local extra_indent = (pre_indented and 0 or 4) + nested_indent
   local pad = string.rep(' ', extra_indent)
   for _, l in ipairs(body_lines) do
@@ -1146,18 +1462,18 @@ function Output:update_tool_input(tool_use_id, input)
 
   meta.input = input
   local summary = require('cc.output.tool_body').summarize_tool_input(meta.tool_name, input)
-  self:_update_tool_header_summary(meta.header_lnum, meta.tool_name, summary)
+  self:_update_tool_header_summary(meta.header_lnum, meta.tool_name, summary, meta.indent)
 
   -- This API intentionally fills an input body that was empty at start. Do
   -- not duplicate or rewrite an input body a provider already rendered.
   if meta.input_rendered and meta.input_end_lnum == meta.header_lnum then
-    local last_lnum = self:_render_tool_input(meta.tool_name, input, meta.header_lnum + 1)
+    local last_lnum = self:_render_tool_input(meta.tool_name, input, meta.header_lnum + 1, meta)
     meta.input_end_lnum = last_lnum or meta.header_lnum
   end
 end
 
 --- Render a tool_result block (from a user-type NDJSON message).
---- Places a "▾ Output:" sub-header (fold level >3) and the content (level 3)
+--- Places a "▾ Output:" sub-header (fold level >4) and the content (level 4)
 --- right after the owning tool's input block. If the input hasn't rendered
 --- yet (streaming race: client finished the tool before Claude's
 --- content_block_stop fired), defer until on_content_block_stop flushes it.
@@ -1215,12 +1531,12 @@ function Output:_render_tool_result_for(meta, content, is_error)
     truncated = true
   end
 
-  -- Top-level tools (depth 2) render "    Output:" at >3 with content at 3;
-  -- tools nested in a subagent Activity section (depth 4) shift two fold
-  -- depths and four columns deeper.
-  local depth = meta.depth or 2
-  local head_pad = string.rep(' ', depth * 2)
-  local body_pad = string.rep(' ', depth * 2 + 2)
+  -- "Output:" folds one level below its tool, indented 2 past the tool
+  -- header, with content 2 further.
+  local depth = meta.depth or TOOL_DEPTH
+  local indent = meta.indent or TOOL_INDENT
+  local head_pad = string.rep(' ', indent + 2)
+  local body_pad = string.rep(' ', indent + 4)
   local lines = { head_pad .. (is_error and 'Error:' or 'Output:') }
   local levels = { '>' .. (depth + 1) }
   -- Skip rendering content lines when the result is empty; otherwise
@@ -1268,17 +1584,18 @@ end
 -- text and thinking under the parent Agent tool block. Driven by NDJSON
 -- messages carrying parent_tool_use_id (see router.lua).
 --
--- Layout (fold depths in brackets):
---     󰋘 Subagent: <description> 󰔛 42s        [>2] parent tool header
---     prompt: ...                             [2]  parent input
---     Activity:                               [>3] section header (closed by default)
---       󰘳 Bash: Count Lua files 󰔛 0.2s       [>4] nested tool header
---         find . -name '*.lua' | wc -l        [4]  nested input
---         Output:                             [>5] nested result
---           42                                [5]
---       ∴ Thinking... ...                     [3]  nested thinking
---       Found 42 source files                 [3]  nested text
---     Output:                                 [>3] parent result
+-- Layout of an ungrouped Agent call (fold depths in brackets). Inside a
+-- tool group every line indents 2 more; depths are the same.
+--       󰋘 Subagent: <description> 󰔛 42s      [>3] parent tool header
+--       prompt: ...                           [3]  parent input
+--       Activity:                             [>4] section header (closed by default)
+--         󰘳 Bash: Count Lua files 󰔛 0.2s     [>5] nested tool header
+--           find . -name '*.lua' | wc -l      [5]  nested input
+--           Output:                           [>6] nested result
+--             42                              [6]
+--         ∴ Thinking... ...                   [4]  nested thinking
+--         Found 42 source files               [4]  nested text
+--       Output:                               [>4] parent result
 -- The folded Activity header shows the most recent item via foldtext, so the
 -- live status is visible while collapsed and disappears when opened.
 -- ---------------------------------------------------------------------------
@@ -1331,8 +1648,8 @@ function Output:_subagent_insert(parent, lines, levels, is_header)
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   if not sub then
     local header_at = (parent.input_end_lnum or parent.header_lnum) + 1
-    local all_lines = { '    Activity:' }
-    local all_levels = { '>3' }
+    local all_lines = { string.rep(' ', (parent.indent or TOOL_INDENT) + 2) .. 'Activity:' }
+    local all_levels = { '>' .. ((parent.depth or TOOL_DEPTH) + 1) }
     vim.list_extend(all_lines, lines)
     vim.list_extend(all_levels, levels)
     if header_at > line_count then
@@ -1378,12 +1695,15 @@ function Output:subagent_tool_use(parent_id, block)
   local name = block.name or '?'
   local icon = require('cc.icons').for_tool(name)
   local tool_body = require('cc.output.tool_body')
-  local header = '      ' .. icon .. ' ' .. display_tool_name(name) .. ':'
+  local depth = (parent.depth or TOOL_DEPTH) + 2
+  local indent = (parent.indent or TOOL_INDENT) + 4
+  local header = string.rep(' ', indent) .. icon .. ' ' .. display_tool_name(name) .. ':'
   local summary = tool_body.summarize_tool_input(name, block.input)
   if summary and summary ~= '' and not tool_body.SUMMARY_FOLD_ONLY[name] then
     header = header .. ' ' .. summary
   end
-  local sub, header_lnum = self:_subagent_insert(parent, { header }, { '>4' }, true)
+  local sub, header_lnum = self:_subagent_insert(parent, { header },
+    { '>' .. depth }, true)
   local meta = {
     bufnr = self.bufnr,
     tool_use_id = block.id,
@@ -1392,11 +1712,12 @@ function Output:subagent_tool_use(parent_id, block)
     header_lnum = header_lnum,
     input_rendered = true,
     input_end_lnum = header_lnum,
-    depth = 4,
+    depth = depth,
+    indent = indent,
     parent_id = parent_id,
   }
   state.tool_blocks[block.id] = meta
-  local last_lnum = self:_render_tool_input(name, block.input, header_lnum + 1, 4)
+  local last_lnum = self:_render_tool_input(name, block.input, header_lnum + 1, meta)
   if last_lnum then
     meta.input_end_lnum = last_lnum
     sub.end_lnum = math.max(sub.end_lnum, last_lnum)
@@ -1437,13 +1758,14 @@ function Output:_subagent_prose(parent_id, text, kind)
   while #raw > 0 and vim.trim(raw[#raw]) == '' do table.remove(raw) end
   if #raw == 0 then return end
   local lines, levels = {}, {}
+  local pad = string.rep(' ', (parent.indent or TOOL_INDENT) + 4)
   if kind == 'thinking' then
-    table.insert(lines, '      ∴ Thinking... ' .. raw[1])
-    for i = 2, #raw do table.insert(lines, '      ' .. raw[i]) end
+    table.insert(lines, pad .. '∴ Thinking... ' .. raw[1])
+    for i = 2, #raw do table.insert(lines, pad .. raw[i]) end
   else
-    for _, l in ipairs(raw) do table.insert(lines, '      ' .. l) end
+    for _, l in ipairs(raw) do table.insert(lines, pad .. l) end
   end
-  for _ in ipairs(lines) do table.insert(levels, 3) end
+  for _ in ipairs(lines) do table.insert(levels, (parent.depth or TOOL_DEPTH) + 1) end
   local sub = self:_subagent_insert(parent, lines, levels, false)
   local first_text = nil
   for _, l in ipairs(raw) do
@@ -1467,6 +1789,45 @@ function Output:subagent_thinking(parent_id, text)
   self:_subagent_prose(parent_id, text, 'thinking')
 end
 
+--- Folded-header status for a tool: its current header line text, so a
+--- running tool's live timer (and final duration once done) shows through.
+---@param bufnr integer
+---@param tool_use_id string?
+---@return string? status
+local function tool_status(bufnr, tool_use_id)
+  local state = M._buf_state[bufnr]
+  local meta = state and state.tool_blocks[tool_use_id or '']
+  if meta and meta.header_lnum
+      and meta.header_lnum <= vim.api.nvim_buf_line_count(bufnr) then
+    local line = vim.api.nvim_buf_get_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false)[1]
+    return clip_status(line or '')
+  end
+  return nil
+end
+
+--- Status shown in a folded tool group header: the most recent call still
+--- running, as a folded Activity header shows a tool. Nothing once the
+--- group's calls have finished.
+---@param bufnr integer
+---@param header_lnum integer line of the group header
+---@return string? status
+function M.tool_group_status(bufnr, header_lnum)
+  local state = M._buf_state[bufnr]
+  if not state or not state.tool_groups then return nil end
+  for _, group in ipairs(state.tool_groups) do
+    if group.header_lnum == header_lnum then
+      for i = #group.tool_ids, 1, -1 do
+        local meta = state.tool_blocks[group.tool_ids[i]]
+        if meta and meta.running then
+          return tool_status(bufnr, group.tool_ids[i])
+        end
+      end
+      return nil
+    end
+  end
+  return nil
+end
+
 --- Status shown in a folded "Activity:" header: the most recent nested
 --- item. For a tool that is the current header line text (so a running
 --- tool's live timer shows through); for prose the first line of text.
@@ -1481,13 +1842,7 @@ function M.subagent_status(bufnr, header_lnum)
       local last = sub.last
       if not last then return nil end
       if last.kind == 'tool' then
-        local meta = state.tool_blocks[last.tool_use_id or '']
-        if meta and meta.header_lnum
-            and meta.header_lnum <= vim.api.nvim_buf_line_count(bufnr) then
-          local line = vim.api.nvim_buf_get_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false)[1]
-          return clip_status(line or '')
-        end
-        return nil
+        return tool_status(bufnr, last.tool_use_id)
       elseif last.kind == 'thinking' then
         return '∴ Thinking...'
       end
@@ -1505,6 +1860,7 @@ local turn_cost_format_errored = false
 function Output:render_result(result, append_to_tail)
   self:flush_pending_delta()
   self.last_turn_role = nil
+  self.turn = nil
   local cfg = require('cc.config').options
   if cfg.show_turn_cost == false then return end
   local text
@@ -1560,6 +1916,7 @@ end
 function Output:render_notice(text)
   self:flush_pending_delta()
   self.last_turn_role = nil
+  self.turn = nil
   self:_append({ '  ── ' .. text .. ' ──' }, { 0 }, false)
 end
 
@@ -1568,11 +1925,16 @@ end
 function Output:render_permission_request(tool_name, input)
   self:flush_pending_delta()
   local summary = require('cc.output.tool_body').summarize_tool_input(tool_name, input)
-  local text = '  ⚠ Permission: ' .. tool_name
+  -- The prompt follows its tool call. Inside a tool group it stays in the
+  -- group; otherwise it is turn-level content like before groups existed.
+  local in_group = self:_in_tool_group()
+  local text = string.rep(' ', TOOL_INDENT + (in_group and GROUP_INDENT or 0))
+    .. '⚠ Permission: ' .. tool_name
   if summary ~= '' then
     text = text .. ' — ' .. summary
   end
-  self:_append({ text }, { 1 }, false)
+  local lnum = self:_append({ text }, { in_group and TOOL_GROUP_DEPTH or 1 }, false)
+  if not in_group then self:_mark_trail(lnum) end
 end
 
 ---@param behavior 'allow'|'deny'|'remote'
@@ -1586,21 +1948,23 @@ function Output:render_permission_outcome(behavior, tool_name)
     verb = 'Answered remotely'
   end
   local bufnr = self:ensure_buffer()
-  local prefix = '  ⚠ Permission: ' .. tool_name
+  local prefix = '⚠ Permission: ' .. tool_name
   self:_with_tail_anchor(function()
     local line_count = vim.api.nvim_buf_line_count(bufnr)
     -- The prompt line is normally the tail, but the tool body and notices
     -- (e.g. Remote Control disabled while the prompt was open) can land
-    -- after it. Replace the prompt line itself, wherever it is.
-    local lnum = line_count
+    -- after it. Replace the prompt line itself, wherever it is. Its indent
+    -- depends on whether it sits in a tool group, so keep it.
+    local lnum, indent = line_count, string.rep(' ', TOOL_INDENT)
     for i = line_count, 1, -1 do
-      local line = vim.api.nvim_buf_get_lines(bufnr, i - 1, i, false)[1]
-      if line == prefix or (line and line:sub(1, #prefix + 1) == prefix .. ' ') then
-        lnum = i
+      local line = vim.api.nvim_buf_get_lines(bufnr, i - 1, i, false)[1] or ''
+      local lead, rest = line:match('^(%s*)(.*)$')
+      if rest == prefix or rest:sub(1, #prefix + 1) == prefix .. ' ' then
+        lnum, indent = i, lead
         break
       end
     end
-    self:_set_line(lnum, '  ' .. icon .. ' ' .. verb .. ': ' .. tool_name)
+    self:_set_line(lnum, indent .. icon .. ' ' .. verb .. ': ' .. tool_name)
   end)
 end
 
@@ -1625,6 +1989,7 @@ function Output:render_historical_record(rec)
         if block.type == 'text' then
           -- Append text paragraph at fold level 1.
           local start_lnum = self:_append({ '  ' }, { 1 }, false)
+          self:_mark_trail(start_lnum)
           self:_append_to_last_line(block.text or '')
           if highlight_agent then
             local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
@@ -1633,7 +1998,9 @@ function Output:render_historical_record(rec)
         elseif block.type == 'thinking' then
           if config.show_thinking then
             local start_lnum = self:_append({ '  ∴ Thinking... ' }, { 1 }, false)
+            self:_mark_trail(start_lnum)
             self:_append_to_last_line(block.thinking or '')
+            self:_note_empty_thinking(start_lnum)
             if highlight_agent then
               local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
               require('cc.md_highlight').add_range(self.bufnr, start_lnum, end_lnum)
@@ -1653,7 +2020,8 @@ function Output:render_historical_record(rec)
   end
 end
 
---- Render a dim one-line hook lifecycle event at fold level 2.
+--- Render a dim one-line hook lifecycle event, inside the preceding tool's
+--- fold when it follows a tool call, else at turn level.
 ---@param hook_name string
 ---@param phase string 'started' | 'response'
 ---@param elapsed_s number?
@@ -1664,13 +2032,25 @@ function Output:render_hook(hook_name, phase, elapsed_s)
   if elapsed_s then
     suffix = string.format(' (%.1fs)', elapsed_s)
   end
-  local text = string.format('    %s Hook: %s [%s]%s', icon, hook_name, phase, suffix)
-  self:_append({ text }, { 2 }, false)
+  -- Right after a tool call the hook joins that tool's fold, level with its
+  -- input. Anywhere else it is a plain turn-level line: a deeper level with
+  -- no header above it would open an invisible fold.
+  local turn = self.turn
+  local last_id = turn and not turn.trail_start and turn.tool_ids[#turn.tool_ids]
+  local last = last_id and M._buf_state[self.bufnr].tool_blocks[last_id]
+  local level, indent = 1, TOOL_INDENT + 2
+  if last then
+    level, indent = last.depth or TOOL_DEPTH, (last.indent or TOOL_INDENT) + 2
+  end
+  local text = string.format('%s%s Hook: %s [%s]%s',
+    string.rep(' ', indent), icon, hook_name, phase, suffix)
+  local lnum = self:_append({ text }, { level }, false)
+  if not last then self:_mark_trail(lnum) end
 end
 
 --- Render an agent plan snapshot (provider-neutral; e.g. codex
 --- turn/plan/updated). Each step gets a todo-style status marker. Renders
---- as a foldable block at tool depth so repeated updates stay compact.
+--- as a foldable block at tool-group depth so repeated updates stay compact.
 ---@param steps table[] each { step: string, status: 'pending'|'inProgress'|'completed' }?
 ---@param explanation string?
 function Output:render_plan(steps, explanation)
@@ -1678,8 +2058,9 @@ function Output:render_plan(steps, explanation)
   if (not steps or #steps == 0) and (not explanation or explanation == '') then
     return
   end
-  self:_append({ '' }, { 1 }, false)
-  local header_lnum = self:_append({ '  ▣ Plan:' }, { '>2' }, true)
+  -- A plan is turn-level content; a later tool call pulls it into the group.
+  self:_mark_trail(self:_append({ '' }, { 1 }, false))
+  local header_lnum = self:_append({ '  ▣ Plan:' }, { '>' .. TOOL_GROUP_DEPTH }, true)
   local lines = {}
   if explanation and explanation ~= '' then
     for _, l in ipairs(vim.split(explanation, '\n', { plain = true })) do
