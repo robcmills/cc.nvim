@@ -560,7 +560,7 @@ T['subagent_tasks'] = MiniTest.new_set()
 
 T['subagent_tasks']['renders nested Activity section instead of task notices'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
-  assert_any_line_matches(_G.child, '^      Activity:$')
+  assert_any_line_matches(_G.child, '^    Activity:$')
   assert_no_line_matches(_G.child, 'Task started')
   assert_no_line_matches(_G.child, 'Task done')
 end
@@ -570,8 +570,8 @@ T['subagent_tasks']['renders parent result after the activity section'] = functi
   local lines = helpers.get_buffer_lines(_G.child)
   local activity, output
   for i, l in ipairs(lines) do
-    if l:match('^      Activity:$') then activity = i end
-    if l:match('^      Output:$') then output = i end
+    if l:match('^    Activity:$') then activity = i end
+    if l:match('^    Output:$') then output = i end
   end
   eq(activity ~= nil, true)
   eq(output ~= nil, true)
@@ -1079,19 +1079,22 @@ local function level_of(pattern)
   return nil
 end
 
-T['streaming_folds']['tool group header has fold level >2'] = function()
+T['streaming_folds']['a lone tool is ungrouped: header >3 at turn indent'] = function()
   helpers.replay_streaming(_G.child, 'tool_bash')
-  eq(level_of('^  %S+ Tools: 1 call$'), '>2')
-end
-
-T['streaming_folds']['tool header has fold level >3'] = function()
-  helpers.replay_streaming(_G.child, 'tool_bash')
-  eq(level_of('^    %S+ Bash:'), '>3')
+  eq(level_of('Tools: '), nil)
+  eq(level_of('^  %S+ Bash:'), '>3')
 end
 
 T['streaming_folds']['tool result has fold level >4'] = function()
   helpers.replay_streaming(_G.child, 'tool_bash')
-  eq(level_of('^      Output:$'), '>4')
+  eq(level_of('^    Output:$'), '>4')
+end
+
+T['streaming_folds']['several tools in a turn share a >2 group'] = function()
+  helpers.replay_streaming(_G.child, 'peek_three_bash')
+  eq(level_of('^  %S+ Tools: 3 calls$'), '>2')
+  eq(level_of('^    %S+ Bash: sleep 90'), '>3')
+  eq(level_of('^    %S+ Bash: sleep 92'), '>3')
 end
 
 return T

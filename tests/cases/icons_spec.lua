@@ -1,5 +1,5 @@
 -- Tests for cc.icons: detection, icon-set selection, per-tool overrides,
--- default fallback, and rendering of the tool-header format "    <icon> Name:".
+-- default fallback, and rendering of the tool-header format "  <icon> Name:".
 local helpers = dofile('tests/helpers.lua')
 local MiniTest = require('mini.test')
 local eq = MiniTest.expect.equality
@@ -162,7 +162,7 @@ T['rendering']['unicode Read icon appears in tool header'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found
   for _, line in ipairs(lines) do
-    if line:match('^    ▤ Read: ') then found = line; break end
+    if line:match('^  ▤ Read: ') then found = line; break end
   end
   eq(type(found), 'string')
 end
@@ -174,7 +174,7 @@ T['rendering']['user override icon appears in tool header'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found
   for _, line in ipairs(lines) do
-    if line:match('^    📖 Read: ') then found = line; break end
+    if line:match('^  📖 Read: ') then found = line; break end
   end
   eq(type(found), 'string')
 end
@@ -199,7 +199,7 @@ T['rendering']['nerdfont Bash icon appears when forced on'] = function()
   local found
   for _, line in ipairs(lines) do
     -- Nerdfont Bash = U+F120 (terminal glyph): UTF-8 \xef\x84\xa0
-    if line:match('^    \xef\x84\xa0 Bash: ') then found = line; break end
+    if line:match('^  \xef\x84\xa0 Bash: ') then found = line; break end
   end
   eq(type(found), 'string')
 end
@@ -226,7 +226,7 @@ T['rendering']['default icon used for unknown tool'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   local found
   for _, line in ipairs(lines) do
-    if line:match('^    ◆ FancyCustomTool:') then found = line; break end
+    if line:match('^  ◆ FancyCustomTool:') then found = line; break end
   end
   eq(type(found), 'string')
 end

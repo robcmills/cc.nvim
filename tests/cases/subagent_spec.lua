@@ -27,36 +27,36 @@ T['layout']['activity header sits between parent prompt and parent output at dep
   helpers.replay_streaming(_G.child, 'subagent_tasks')
   local lines = helpers.get_buffer_lines(_G.child)
   local fl = helpers.get_fold_levels(_G.child)
-  local prompt = find_line(lines, '^      prompt: List all source files')
-  local activity = find_line(lines, '^      Activity:$')
-  local output = find_line(lines, '^      Output:$')
+  local prompt = find_line(lines, '^    prompt: List all source files')
+  local activity = find_line(lines, '^    Activity:$')
+  local output = find_line(lines, '^    Output:$')
   eq(prompt ~= nil and activity ~= nil and output ~= nil, true)
   eq(prompt < activity, true)
   eq(activity < output, true)
   eq(fl[activity], '>4')
   -- Parent result content follows its own header, after the section.
-  eq(lines[output + 1], '        Found 42 source files across 6 directories')
+  eq(lines[output + 1], '      Found 42 source files across 6 directories')
 end
 
 T['layout']['nested tool renders header, input and result two depths deeper'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
   local lines = helpers.get_buffer_lines(_G.child)
   local fl = helpers.get_fold_levels(_G.child)
-  local header = find_line(lines, '^        %S+ Bash: Count Lua files')
+  local header = find_line(lines, '^      %S+ Bash: Count Lua files')
   eq(header ~= nil, true)
   eq(fl[header], '>5')
-  eq(lines[header + 1], "          find . -name '*.lua' | wc -l")
+  eq(lines[header + 1], "        find . -name '*.lua' | wc -l")
   eq(fl[header + 1], 5)
-  eq(lines[header + 2], '          Output:')
+  eq(lines[header + 2], '        Output:')
   eq(fl[header + 2], '>6')
-  eq(lines[header + 3], '            42')
+  eq(lines[header + 3], '          42')
   eq(fl[header + 3], 6)
 end
 
 T['layout']['nested tool_progress updates the nested header timer'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
   local lines = helpers.get_buffer_lines(_G.child)
-  local read = find_line(lines, '^        %S+ Read: lua/cc/output%.lua')
+  local read = find_line(lines, '^      %S+ Read: lua/cc/output%.lua')
   eq(read ~= nil, true)
   eq(lines[read]:match(' 2s$') ~= nil, true)
 end
@@ -65,10 +65,10 @@ T['layout']['nested text and thinking render at depth 4 inside the section'] = f
   helpers.replay_streaming(_G.child, 'subagent_tasks', { show_thinking = true })
   local lines = helpers.get_buffer_lines(_G.child)
   local fl = helpers.get_fold_levels(_G.child)
-  local activity = find_line(lines, '^      Activity:$')
-  local output = find_line(lines, '^      Output:$')
-  local thinking = find_line(lines, '^        ∴ Thinking%.%.%. 42 files%.')
-  local text = find_line(lines, '^        Found 42 source files', activity)
+  local activity = find_line(lines, '^    Activity:$')
+  local output = find_line(lines, '^    Output:$')
+  local thinking = find_line(lines, '^      ∴ Thinking%.%.%. 42 files%.')
+  local text = find_line(lines, '^      Found 42 source files', activity)
   eq(thinking ~= nil and text ~= nil, true)
   eq(activity < thinking and thinking < text and text < output, true)
   eq(fl[thinking], 4)
@@ -80,7 +80,7 @@ T['layout']['nested thinking honours show_thinking=false'] = function()
   local lines = helpers.get_buffer_lines(_G.child)
   eq(find_line(lines, 'Thinking'), nil)
   -- The rest of the section still renders.
-  eq(find_line(lines, '^        %S+ Read: lua/cc/output%.lua') ~= nil, true)
+  eq(find_line(lines, '^      %S+ Read: lua/cc/output%.lua') ~= nil, true)
 end
 
 T['layout']['subagent prompt echo and lifecycle notices are not rendered'] = function()
@@ -117,9 +117,9 @@ T['folds']['activity is closed by default and shows the latest item as foldtext'
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     local activity, parent, nested
     for i, l in ipairs(lines) do
-      if l:match('^    %S+ Subagent:') then parent = i end
-      if l:match('^      Activity:$') then activity = i end
-      if not nested and l:match('^        %S+ Bash:') then nested = i end
+      if l:match('^  %S+ Subagent:') then parent = i end
+      if l:match('^    Activity:$') then activity = i end
+      if not nested and l:match('^      %S+ Bash:') then nested = i end
     end
     _G._activity, _G._parent, _G._nested = activity, parent, nested
     local winid = vim.fn.bufwinid(bufnr)
@@ -144,7 +144,7 @@ T['folds']['activity is closed by default and shows the latest item as foldtext'
   eq(contains(ft, 'Activity: Found 42 source files across 6 directories'), true)
   eq(_G.child.lua_get('_G._activity_after_zo'), -1)
   eq(_G.child.lua_get('_G._nested_after_zo'), _G.child.lua_get('_G._nested'))
-  eq(_G.child.lua_get('_G._header_text'), '      Activity:')
+  eq(_G.child.lua_get('_G._header_text'), '    Activity:')
 end
 
 T['folds']['foldlevel 4 opens the section but keeps nested tools closed'] = function()
@@ -155,8 +155,8 @@ T['folds']['foldlevel 4 opens the section but keeps nested tools closed'] = func
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     local activity, nested
     for i, l in ipairs(lines) do
-      if l:match('^      Activity:$') then activity = i end
-      if not nested and l:match('^        %S+ Bash:') then nested = i end
+      if l:match('^    Activity:$') then activity = i end
+      if not nested and l:match('^      %S+ Bash:') then nested = i end
     end
     _G._nested = nested
     local winid = vim.fn.bufwinid(bufnr)
@@ -172,34 +172,42 @@ T['folds']['foldlevel 4 opens the section but keeps nested tools closed'] = func
   eq(_G.child.lua_get('_G._nested_fc'), _G.child.lua_get('_G._nested'))
 end
 
-T['folds']['foldlevel 1 folds the subagent away inside its tool group'] = function()
+T['folds']['a lone Agent call stays ungrouped and folds like a grouped one'] = function()
   helpers.replay_streaming(_G.child, 'subagent_tasks')
   _G.child.lua([[
     local bufnr = _G._test_bufnr
     vim.api.nvim_exec_autocmds('BufWinEnter', { buffer = bufnr })
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    local group, parent, activity
+    local parent, activity
+    _G._has_group = false
     for i, l in ipairs(lines) do
-      if not group and l:match('^  %S+ Tools: ') then group = i end
-      if l:match('^    %S+ Subagent:') then parent = i end
-      if l:match('^      Activity:$') then activity = i end
+      if l:match('Tools: ') then _G._has_group = true end
+      if l:match('^  %S+ Subagent:') then parent = i end
+      if l:match('^    Activity:$') then activity = i end
     end
-    _G._group = group
+    _G._parent = parent
+    _G._parent_fl = require('cc.output')._buf_state[bufnr].fold_levels[parent]
     local winid = vim.fn.bufwinid(bufnr)
     _G._test_output.winid = winid
-    _G._test_output:set_fold_level(1)
-    vim.api.nvim_win_call(winid, function()
-      vim.cmd('redraw')
-      _G._group_fc = vim.fn.foldclosed(group)
-      _G._parent_fc = vim.fn.foldclosed(parent)
-      _G._activity_fc = vim.fn.foldclosed(activity)
-    end)
+    _G._fc = {}
+    for _, level in ipairs({ 1, 2, 3 }) do
+      _G._test_output:set_fold_level(level)
+      vim.api.nvim_win_call(winid, function()
+        vim.cmd('redraw')
+        _G._fc[level] = { vim.fn.foldclosed(parent), vim.fn.foldclosed(activity) }
+      end)
+    end
   ]])
-  local group = _G.child.lua_get('_G._group')
-  eq(group ~= nil, true)
-  eq(_G.child.lua_get('_G._group_fc'), group)
-  eq(_G.child.lua_get('_G._parent_fc'), group)
-  eq(_G.child.lua_get('_G._activity_fc'), group)
+  local parent = _G.child.lua_get('_G._parent')
+  eq(_G.child.lua_get('_G._has_group'), false)
+  eq(_G.child.lua_get('_G._parent_fl'), '>3')
+  local fc = _G.child.lua_get('_G._fc')
+  -- Levels 1 and 2 both show only the collapsed tool header.
+  eq(fc[1], { parent, parent })
+  eq(fc[2], { parent, parent })
+  -- Level 3 opens the tool; its Activity section stays closed.
+  eq(fc[3][1], -1)
+  eq(fc[3][2] ~= -1, true)
 end
 
 -- ---------------------------------------------------------------------------
@@ -240,7 +248,7 @@ T['live']['status tracks the running nested tool and then the latest text'] = fu
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     local act
     for i, l in ipairs(lines) do
-      if l:match('^      Activity:$') then act = i end
+      if l:match('^    Activity:$') then act = i end
     end
     _G._act = act
     vim.api.nvim_win_call(winid, function()
@@ -270,13 +278,13 @@ T['live']['status tracks the running nested tool and then the latest text'] = fu
   eq(contains(_G.child.lua_get('_G._ft_text'), 'Activity: All done here.'), true)
 
   local lines = _G.child.lua_get('_G._lines')
-  local nested_out = find_line(lines, '^          Output:$')
-  local text = find_line(lines, '^        All done here%.$')
-  local parent_out = find_line(lines, '^      Output:$')
+  local nested_out = find_line(lines, '^        Output:$')
+  local text = find_line(lines, '^      All done here%.$')
+  local parent_out = find_line(lines, '^    Output:$')
   eq(nested_out ~= nil and text ~= nil and parent_out ~= nil, true)
-  eq(lines[nested_out + 1], '            file contents')
+  eq(lines[nested_out + 1], '          file contents')
   eq(act < nested_out and nested_out < text and text < parent_out, true)
-  eq(lines[parent_out + 1], '        parent summary')
+  eq(lines[parent_out + 1], '      parent summary')
 end
 
 T['live']['messages for an unknown parent are dropped without error'] = function()

@@ -155,7 +155,7 @@ T['highlight_groups']['CcDiffHunk syntax match is defined'] = function()
   eq(_G.child.lua_get('_G._test_syn_exists'), true)
 end
 
-T['highlight_groups']['Codex paths and 8-space diffs are highlighted'] = function()
+T['highlight_groups']['Codex paths and 6-space diffs are highlighted'] = function()
   _G.child.lua([==[
     local Output = require('cc.output')
     local Session = require('cc.session')
@@ -199,7 +199,7 @@ T['highlight_groups']['Codex paths and 8-space diffs are highlighted'] = functio
     local found = false
     for row, line in ipairs(lines) do
       local col = line:find(needle, 1, true)
-      local is_body_path = group ~= 'CcDiffPath' or line:sub(1, 6) == '      '
+      local is_body_path = group ~= 'CcDiffPath' or line:sub(1, 4) == '    '
       if col and is_body_path then
         assert_hl_in_stack(_G.child, row, col, group)
         found = true

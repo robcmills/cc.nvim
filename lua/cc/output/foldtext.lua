@@ -33,8 +33,8 @@ local function build_fold_info(bufnr, foldstart, foldend)
   local line_count = foldend - foldstart + 1
 
   -- Fold depth of the header (">3" → 3). Tool groups sit at depth 2, tool
-  -- headers at 3 (5 when nested in a subagent Activity section), and their
-  -- Output: folds one deeper.
+  -- headers at 3 grouped or not (5 when nested in a subagent Activity
+  -- section), and their Output: folds one deeper.
   local output = require('cc.output')
   local raw = state and state.fold_levels and state.fold_levels[foldstart]
   local depth = 0
@@ -70,8 +70,9 @@ local function build_fold_info(bufnr, foldstart, foldend)
     role = 'activity'
   elseif group then
     role = 'tool_group'
-  elseif tool_block or depth == output.TOOL_GROUP_DEPTH then
-    -- Untracked tool-group-depth folds are plan snapshots and stray hooks.
+  elseif tool_block or depth == output.TOOL_GROUP_DEPTH or header:match('^%s*▣ Plan:') then
+    -- Untracked tool-group-depth folds are plan snapshots and stray hooks;
+    -- a plan inside a tool group sits one level deeper.
     role = 'tool'
   elseif depth > output.TOOL_GROUP_DEPTH then
     role = 'result'
@@ -97,7 +98,7 @@ local function build_fold_info(bufnr, foldstart, foldend)
     info.status = output.subagent_status(bufnr, foldstart)
   end
 
-  -- Tool groups show their current or most recent call the same way.
+  -- Tool groups show their running call the same way.
   if group then
     info.tool_count = group.count
     info.status = output.tool_group_status(bufnr, foldstart)
@@ -115,12 +116,17 @@ local function build_fold_info(bufnr, foldstart, foldend)
     local tool_count = 0
     local last_block_text = nil
     local prev_was_text = false
-    local tool_header = '>' .. output.TOOL_DEPTH
+    local tool_headers = {}
+    for _, block in pairs(state.tool_blocks or {}) do
+      if not block.parent_id and block.header_lnum then
+        tool_headers[block.header_lnum] = true
+      end
+    end
     local fold_lines = vim.fn.getline(foldstart + 1, foldend)
     for i, line in ipairs(fold_lines) do
       local lnum = foldstart + i
       local fl = state.fold_levels[lnum]
-      if fl == tool_header then
+      if tool_headers[lnum] then
         tool_count = tool_count + 1
         prev_was_text = false
       elseif fl == 1 then
@@ -168,8 +174,8 @@ end
 ---@return table list of { text, hl } chunks
 function M.default_foldtext(info)
   local hl = role_hl(info)
-  -- Caret indent matches the header's visual depth (see refresh_carets).
-  local caret = string.rep(' ', math.max(0, (info.depth or 1) - 1) * 2) .. '▸ '
+  -- Caret sits at the header's indent, as refresh_carets places it.
+  local caret = (info.header or ''):match('^ *') .. '▸ '
   if info.role == 'user' then
     local body
     if info.first_text and #info.first_text > 0 then
@@ -301,10 +307,11 @@ function M.refresh_carets(bufnr)
         if old_id then
           pcall(vim.api.nvim_buf_del_extmark, bufnr, NS_CARETS, old_id)
         end
-        -- Indent the inline caret to match the header's visual depth so the
-        -- expanded view aligns with the folded (foldtext) view. Depth 1
-        -- headers sit at col 0, depth 2 at col 2, depth 3 at col 4, etc.
-        local caret_col = math.max(0, (my_level - 1) * 2)
+        -- Place the inline caret at the header's indent so the expanded view
+        -- aligns with the folded (foldtext) view. Indent, not fold depth: a
+        -- lone tool call sits at depth 3 but at the turn-text indent.
+        local header = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ''
+        local caret_col = #header:match('^ *')
         local ok, id = pcall(vim.api.nvim_buf_set_extmark, bufnr, NS_CARETS, lnum - 1, caret_col, {
           virt_text = { { char .. ' ', 'CcCaret' } },
           virt_text_pos = 'inline',

@@ -50,7 +50,7 @@ local defaults = {
     validate = nil,
   },
 
-  -- Folding: 0=turn headers, 1=agent text + tool group headers,
+  -- Folding: 0=turn headers, 1=final agent text + collapsed tool groups,
   -- 2=tool headers, 3=tool inputs, 4=all.
   default_fold_level = 3,
 
@@ -232,8 +232,8 @@ local defaults = {
     tokens_icon = 'τ',
   },
 
-  -- function(count) -> string: label of the header folding each run of
-  -- consecutive tool calls, after its icon (tool_icons.icons.ToolGroup).
+  -- function(count) -> string: label of the header folding a turn's tool
+  -- calls, after its icon (tool_icons.icons.ToolGroup).
   -- nil → 'Tools: N calls'.
   tool_group_format = nil,
 

@@ -63,9 +63,10 @@ Additionally, there were some issues with claude code when I built this,
 - **Verbose tool output overflows everything.** Tool results are folded
   by default so session output stays scannable; when you do expand
   something, a configurable `max_tool_result_lines` caps how much renders.
-  `:CcFold 0..4` toggles global disclosure levels. Foldlevel 1 folds every
-  run of tool calls into one line, so a session reads as User, Agent, User,
-  Agent. Then open folds to dig in.
+  `:CcFold 0..4` toggles global disclosure levels. Foldlevel 1 folds each
+  turn's tool calls and working notes into one line, leaving the final
+  answer, so a session reads as User, Agent, User, Agent. Then open folds
+  to dig in.
 
 On top of avoiding the pain points above, cc.nvim uses the `claude/codex` CLI
 directly (zero extra dependencies beyond what you already have), so all
@@ -93,7 +94,7 @@ Nearly every visible element is configurable:
 - **Per-tool icons.** Every tool gets a glyph (nerdfont auto-detected,
   unicode fallback). Swap any of them: `tool_icons.icons = { Read = '📖',
   Bash = '$', MyMcpTool = '🔧' }`. Set a `default` for unknown tools.
-  `ToolGroup` is the icon on the header folding each run of tool calls.
+  `ToolGroup` is the icon on the header folding a turn's tool calls.
 - **Full highlight control.** `CcUser`, `CcAgent`, `CcTool`, `CcToolInput`,
   `CcOutput`, `CcError`, `CcCost`, `CcDiffAdd/Delete/Hunk`, `CcCaret`,
   `CcStl*`, and more — all link to existing colorscheme groups by default,
@@ -388,16 +389,21 @@ The output buffer is foldable with five logical levels:
 | `foldlevel` | What's visible |
 |---|---|
 | 0 | Only User / Agent turn headers |
-| 1 | + agent text, with each run of tool calls folded to one `Tools: N calls` line |
-| 2 | + tool summary lines (one-liners) |
+| 1 | + each turn's final agent text, with its tool calls folded to one `Tools: N calls` line |
+| 2 | + tool summary lines (one-liners) and the text between calls |
 | 3 *(default)* | + tool inputs (Bash commands, Edit diffs) |
 | 4 | + tool results (stdout, read file contents) |
 
-Consecutive tool calls in an agent turn share a group; agent text or
-thinking between them starts a new one. The header's count updates as calls
-stream in, and while the group is folded it also shows the running or most
-recent call with its timer, the way a folded subagent `Activity:` header does. A lone tool call still gets its own group, so every level hides
-the same kind of line everywhere.
+An agent turn with two or more tool calls gets one group. It runs from the
+start of the turn through its last call, so the text and thinking between
+calls fold away with them; only the text after the last call, usually the
+summary, stays outside. While a turn streams, text after the latest call
+shows at turn level until the next call pulls it into the group. Empty
+`∴ Thinking...` lines are left out of groups. A turn with a single tool call
+has no group and looks as it always did; a second call groups the turn. The
+header's count updates as calls stream in, and while a call is running the
+folded header also shows it with its timer, the way a folded subagent
+`Activity:` header does.
 
 Every foldable header gets a caret prefix rendered as inline `virt_text`:
 `▾` when open, `▸` when folded. Carets stay in sync with Vim's fold state
@@ -411,9 +417,7 @@ Example at `foldlevel=1`:
   Fix the bug in auth.ts where tokens expire too early
 
 ▾ Agent:
-  I'll look into the token expiration.
-
-  ▸ ⚒ Tools: 3 calls · ❯ Bash: npm test ⏱ 4s
+  ▸ ⚒ Tools: 3 calls
 
   Fixed. The expiry was '1h'; changed to '24h'.
   ── $0.05 │ 12k in │ 55 out ──
@@ -423,12 +427,14 @@ The same turn at `foldlevel=2`:
 
 ```
 ▾ Agent:
-  I'll look into the token expiration.
-
   ▾ ⚒ Tools: 3 calls
+    I'll look into the token expiration.
+
     ▸ ▤ Read: src/auth.ts
 
     ▸ ✎ Edit: src/auth.ts
+
+    Now the tests.
 
     ▸ ❯ Bash: npm test
 
@@ -454,10 +460,9 @@ only via `:CcFold` or your own `zo` / `zc`.
 ▾ Agent:
   Let me analyze the codebase.
 
-  ▾  Tools: 1 call
-    ▾ 󰋘 Subagent: Explore codebase structure 󰔛 42s
-        prompt: List all source files
-      ▸ Activity: 󰈙 Read: lua/cc/output.lua 󰔛 2s
+  ▾ 󰋘 Subagent: Explore codebase structure 󰔛 42s
+      prompt: List all source files
+    ▸ Activity: 󰈙 Read: lua/cc/output.lua 󰔛 2s
 ```
 
 Subagent tool calls always stream; text and thinking need the

@@ -403,7 +403,8 @@ T['tool_groups'] = MiniTest.new_set()
 -- the tool_use block, then its result.
 local TG_PRELUDE = [[
   local Output = require('cc.output')
-  require('cc.config').setup({ tool_icons = { use_nerdfont = false } })
+  require('cc.config').setup({ tool_icons = { use_nerdfont = false }, show_thinking = true,
+    tool_timer_interval_ms = 600000 })
   local output = Output.new(require('cc.session').new(), 'cc-test-tool-groups')
   local bufnr = output:ensure_buffer()
   vim.api.nvim_set_current_buf(bufnr)
@@ -413,26 +414,45 @@ local TG_PRELUDE = [[
   _G._test_bufnr = bufnr
   _G._test_output = output
   _G._tg = {}
-  function _G._tg.tool(id, command, result)
+  function _G._tg.tool(id, command, result, is_error)
     output:begin_assistant_turn()
     local block = { type = 'tool_use', id = id, name = 'Bash', input = { command = command } }
     output:on_content_block_start(block)
     output:on_content_block_stop(block)
-    if result then output:render_tool_result(id, result, false) end
+    if result then output:render_tool_result(id, result, is_error or false) end
   end
-  function _G._tg.text(text)
+  function _G._tg.prose(kind, text)
     output:begin_assistant_turn()
-    output:on_content_block_start({ type = 'text' })
-    output:on_delta('text', text)
-    output:on_content_block_stop({ type = 'text' })
+    output:on_content_block_start({ type = kind })
+    if text then output:on_delta(kind, text) end
+    output:on_content_block_stop({ type = kind })
   end
+  function _G._tg.text(text) _G._tg.prose('text', text) end
   function _G._tg.find(pattern)
     for i, l in ipairs(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)) do
       if l:match(pattern) then return i end
     end
   end
-  -- What the window shows at `level`: open lines verbatim, a closed fold
-  -- as its foldtext, blank lines as ''.
+  -- Line text as displayed: inline virtual indent (absorbed prose) + text.
+  function _G._tg.display(lnum)
+    local text = vim.fn.getline(lnum)
+    local marks = vim.api.nvim_buf_get_extmarks(bufnr, Output.NS_GROUP_INDENT,
+      { lnum - 1, 0 }, { lnum - 1, 0 }, { details = true })
+    for _, m in ipairs(marks) do
+      text = m[4].virt_text[1][1] .. text
+    end
+    return text
+  end
+  function _G._tg.displayed()
+    local out = {}
+    for l = 1, vim.api.nvim_buf_line_count(bufnr) do out[l] = _G._tg.display(l) end
+    return out
+  end
+  function _G._tg.level(pattern)
+    return Output._buf_state[bufnr].fold_levels[_G._tg.find(pattern)]
+  end
+  -- What the window shows at `level`: open lines trimmed, a closed fold as
+  -- its foldtext.
   function _G._tg.visible(level)
     vim.wo.foldlevel = level
     vim.cmd('redraw')
@@ -449,38 +469,326 @@ local TG_PRELUDE = [[
     end
     return out
   end
+  -- Lines where Vim's fold level disagrees with the recorded foldexpr.
+  function _G._tg.mismatches()
+    local state = Output._buf_state[bufnr]
+    local bad = {}
+    for l = 1, vim.api.nvim_buf_line_count(bufnr) do
+      local raw = state.fold_levels[l]
+      local ours = type(raw) == 'number' and raw or (tonumber(tostring(raw):match('%d+')) or 0)
+      if vim.fn.foldlevel(l) ~= ours then
+        bad[#bad + 1] = ('%d: vim=%d ours=%s'):format(l, vim.fn.foldlevel(l), tostring(raw))
+      end
+    end
+    return bad
+  end
 ]]
 
 local function tg(script)
   _G.child.lua(TG_PRELUDE .. script)
 end
 
-T['tool_groups']['a run of tool calls is one group whose header counts them'] = function()
+T['tool_groups']['a lone tool call renders ungrouped at the turn indent'] = function()
+  tg([[
+    output:render_user_turn('go')
+    _G._tg.tool('t1', 'ls', 'a')
+    _G._tg.text('Done.')
+    _G._groups = #Output._buf_state[bufnr].tool_groups
+    _G._lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    _G._tool_fl = _G._tg.level('Bash: ls')
+    _G._out_fl = _G._tg.level('Output:')
+  ]])
+  eq(_G.child.lua_get('_G._groups'), 0)
+  eq(_G.child.lua_get('_G._lines'), {
+    'User:', '  go', '', 'Agent:', '', '  ❯ Bash: ls', '    Output:', '      a', '', '  Done.',
+  })
+  -- Same depths as a grouped tool, so :CcFold levels mean the same thing.
+  eq(_G.child.lua_get('_G._tool_fl'), '>3')
+  eq(_G.child.lua_get('_G._out_fl'), '>4')
+end
+
+T['tool_groups']['a second call groups the turn after the fact'] = function()
+  tg([[
+    output:render_user_turn('go')
+    _G._tg.text('Let me look.')
+    _G._tg.tool('t1', 'ls', 'a')
+    _G._tg.tool('t2', 'pwd', 'b')
+    local state = Output._buf_state[bufnr]
+    _G._groups = #state.tool_groups
+    _G._lines = _G._tg.displayed()
+    _G._fl = {}
+    for i = 1, #_G._lines do _G._fl[i] = state.fold_levels[i] end
+    _G._indent = state.tool_blocks.t1.indent
+    vim.cmd('redraw')
+    _G._bad = _G._tg.mismatches()
+  ]])
+  eq(_G.child.lua_get('_G._groups'), 1)
+  eq(_G.child.lua_get('_G._lines'), {
+    'User:', '  go', '', 'Agent:',
+    '  ⚒ Tools: 2 calls',
+    '    Let me look.',
+    '',
+    '    ❯ Bash: ls', '      Output:', '        a',
+    '',
+    '    ❯ Bash: pwd', '      Output:', '        b',
+  })
+  eq(_G.child.lua_get('_G._fl'), {
+    '>1', 1, 0, '>1', '>2', 2, 2, '>3', '>4', 4, 2, '>3', '>4', 4,
+  })
+  eq(_G.child.lua_get('_G._indent'), 4)
+  eq(_G.child.lua_get('_G._bad'), {})
+end
+
+T['tool_groups']['text between calls is in the group, trailing text is not'] = function()
+  tg([[
+    output:render_user_turn('go')
+    _G._tg.tool('t1', 'ls', 'a')
+    _G._tg.text('Looked around.')
+    _G._tg.tool('t2', 'pwd', 'b')
+    _G._tg.text('All done.')
+    output:end_assistant_turn()
+    _G._between = { _G._tg.display(_G._tg.find('Looked around')), _G._tg.level('Looked around') }
+    _G._trailing = { _G._tg.display(_G._tg.find('All done')), _G._tg.level('All done') }
+    vim.cmd('redraw')
+    _G._bad = _G._tg.mismatches()
+  ]])
+  eq(_G.child.lua_get('_G._between'), { '    Looked around.', 2 })
+  eq(_G.child.lua_get('_G._trailing'), { '  All done.', 1 })
+  eq(_G.child.lua_get('_G._bad'), {})
+end
+
+T['tool_groups']['a later call pulls the trailing text into the group'] = function()
+  tg([[
+    vim.wo.foldlevel = 1
+    output:render_user_turn('go')
+    _G._tg.tool('t1', 'ls', 'a')
+    _G._tg.tool('t2', 'pwd', 'b')
+    _G._tg.text('Checking **one** more thing.')
+    vim.cmd('redraw')
+    _G._before = { _G._tg.display(_G._tg.find('Checking')), _G._tg.level('Checking') }
+    _G._tg.tool('t3', 'date', 'c')
+    vim.cmd('redraw')
+    local row = _G._tg.find('Checking')
+    _G._after = { _G._tg.display(row), _G._tg.level('Checking') }
+    _G._text = vim.fn.getline(row)
+    _G._header = vim.fn.getline(_G._tg.find('Tools:'))
+    local header = _G._tg.find('Tools:')
+    _G._closed_to_end = vim.fn.foldclosed(header) == header
+      and vim.fn.foldclosedend(header) == vim.api.nvim_buf_line_count(bufnr)
+    _G._bad = _G._tg.mismatches()
+    -- Markdown still highlights the prose: its text keeps a 2-space indent
+    -- (4 would make it an indented code block) and its region still covers it.
+    _G._md_covered = false
+    local ok, parser = pcall(vim.treesitter.get_parser, bufnr, 'markdown')
+    if ok and parser then
+      for _, region in ipairs(parser:included_regions()) do
+        for _, r in ipairs(region) do
+          local er = r[#r == 6 and 4 or 3]
+          if r[1] <= row - 1 and er >= row - 1 then _G._md_covered = true end
+        end
+      end
+    end
+  ]])
+  eq(_G.child.lua_get('_G._before'), { '  Checking **one** more thing.', 1 })
+  eq(_G.child.lua_get('_G._after'), { '    Checking **one** more thing.', 2 })
+  eq(_G.child.lua_get('_G._header'), '  ⚒ Tools: 3 calls')
+  eq(_G.child.lua_get('_G._closed_to_end'), true)
+  eq(_G.child.lua_get('_G._bad'), {})
+  eq(_G.child.lua_get('_G._text'), '  Checking **one** more thing.')
+  eq(_G.child.lua_get('_G._md_covered'), true)
+end
+
+T['tool_groups']['empty thinking is dropped from the group, thinking with text kept'] = function()
+  tg([[
+    output:render_user_turn('go')
+    _G._tg.prose('thinking')
+    _G._tg.tool('t1', 'ls', 'a')
+    _G._tg.prose('thinking', 'pondering the output')
+    _G._tg.prose('thinking')
+    _G._tg.tool('t2', 'pwd', 'b')
+    _G._lines = _G._tg.displayed()
+    vim.cmd('redraw')
+    _G._bad = _G._tg.mismatches()
+  ]])
+  eq(_G.child.lua_get('_G._lines'), {
+    'User:', '  go', '', 'Agent:',
+    '  ⚒ Tools: 2 calls',
+    '    ❯ Bash: ls', '      Output:', '        a',
+    '',
+    '    ∴ Thinking... pondering the output',
+    '',
+    '    ❯ Bash: pwd', '      Output:', '        b',
+  })
+  eq(_G.child.lua_get('_G._bad'), {})
+end
+
+T['tool_groups']['empty thinking outside a group stays'] = function()
+  tg([[
+    output:render_user_turn('go')
+    _G._tg.prose('thinking')
+    _G._tg.tool('t1', 'ls', 'a')
+    _G._thinking = _G._tg.find('∴ Thinking%.%.%.')
+  ]])
+  eq(_G.child.lua_get('_G._thinking') ~= nil, true)
+end
+
+T['tool_groups']['level 1 matches the collapsed mock'] = function()
+  tg([[
+    output:render_user_turn('go')
+    _G._tg.prose('thinking')
+    _G._tg.tool('t1', 'ls', 'a')
+    _G._tg.tool('t2', 'pwd', 'b')
+    _G._tg.text('Now the last check.')
+    _G._tg.tool('t3', 'date', 'c')
+    _G._tg.text('Report: all good.')
+    output:end_assistant_turn()
+    _G._visible = _G._tg.visible(1)
+  ]])
+  eq(_G.child.lua_get('_G._visible'), {
+    'User:', 'go', '',
+    'Agent:',
+    '  ▸ ⚒ Tools: 3 calls',
+    '',
+    'Report: all good.',
+  })
+end
+
+T['tool_groups']['level 2 opens the group with each tool collapsed'] = function()
+  tg([[
+    output:render_user_turn('go')
+    _G._tg.tool('t1', 'ls', 'a')
+    _G._tg.text('Between.')
+    _G._tg.tool('t2', 'pwd', 'b')
+    _G._tg.text('Report.')
+    _G._visible = _G._tg.visible(2)
+  ]])
+  eq(_G.child.lua_get('_G._visible'), {
+    'User:', 'go', '',
+    'Agent:',
+    '⚒ Tools: 2 calls',
+    '    ▸ ❯ Bash: ls',
+    '',
+    'Between.',
+    '',
+    '    ▸ ❯ Bash: pwd',
+    '',
+    'Report.',
+  })
+end
+
+T['tool_groups']['level 3 is the default: inputs open, results collapsed'] = function()
+  tg([[
+    output:render_user_turn('go')
+    _G._tg.tool('t1', 'ls', 'a\nb')
+    _G._tg.tool('t2', 'pwd', 'c\nd')
+    _G._visible = _G._tg.visible(3)
+  ]])
+  local visible = _G.child.lua_get('_G._visible')
+  eq(visible[#visible - 1], '❯ Bash: pwd')
+  eq(visible[#visible], '      ▸ Output: ⟨3 lines⟩')
+  eq(_G.child.lua_get('require("cc.config").options.default_fold_level'), 3)
+end
+
+T['tool_groups']['a lone tool folds the same at levels 1 and 2'] = function()
+  tg([[
+    output:render_user_turn('go')
+    _G._tg.tool('t1', 'ls', 'a')
+    _G._tg.text('Report.')
+    _G._one = _G._tg.visible(1)
+    _G._two = _G._tg.visible(2)
+    _G._three = _G._tg.visible(3)
+  ]])
+  local collapsed = { 'User:', 'go', '', 'Agent:', '', '  ▸ ❯ Bash: ls', '', 'Report.' }
+  eq(_G.child.lua_get('_G._one'), collapsed)
+  eq(_G.child.lua_get('_G._two'), collapsed)
+  eq(_G.child.lua_get('_G._three')[6], '❯ Bash: ls')
+end
+
+T['tool_groups']['carets sit at each header indent'] = function()
   tg([[
     output:render_user_turn('go')
     _G._tg.tool('t1', 'ls', 'a')
     _G._tg.tool('t2', 'pwd', 'b')
-    _G._tg.tool('t3', 'date', 'c')
-    local state = Output._buf_state[bufnr]
-    _G._groups = #state.tool_groups
-    _G._header = _G._tg.find('Tools:')
-    _G._header_text = vim.fn.getline(_G._header)
-    _G._header_fl = state.fold_levels[_G._header]
-    _G._tool_fl = state.fold_levels[_G._tg.find('Bash: ls')]
+    Output.refresh_carets(bufnr)
+    local ns = vim.api.nvim_create_namespace('cc.carets')
+    _G._cols = {}
+    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(bufnr, ns, 0, -1, {})) do
+      local text = vim.fn.getline(m[2] + 1)
+      _G._cols[vim.trim(text)] = m[3]
+    end
   ]])
-  eq(_G.child.lua_get('_G._groups'), 1)
-  eq(_G.child.lua_get('_G._header_text'), '  ⚒ Tools: 3 calls')
-  eq(_G.child.lua_get('_G._header_fl'), '>2')
-  eq(_G.child.lua_get('_G._tool_fl'), '>3')
+  local cols = _G.child.lua_get('_G._cols')
+  eq(cols['Agent:'], 0)
+  eq(cols['⚒ Tools: 2 calls'], 2)
+  eq(cols['❯ Bash: ls'], 4)
+  eq(cols['Output:'], 6)
 end
 
-T['tool_groups']['a single tool call still gets a group'] = function()
+T['tool_groups']['collapsed header shows the running call, then only the count'] = function()
+  tg([[
+    vim.wo.foldlevel = 1
+    output:render_user_turn('go')
+    _G._tg.tool('t1', 'ls', 'a')
+    local header
+    output:begin_assistant_turn()
+    local block = { type = 'tool_use', id = 't2', name = 'Bash', input = { command = 'yarn lint' } }
+    output:on_content_block_start(block)
+    output:start_tool_timer('t2')
+    output:on_content_block_stop(block)
+    output:update_tool_elapsed('t2', 5)
+    header = _G._tg.find('Tools:')
+    vim.cmd('redraw')
+    _G._running = vim.fn.foldtextresult(header)
+    output:update_tool_elapsed('t2', 7)
+    vim.cmd('redraw')
+    _G._ticked = vim.fn.foldtextresult(header)
+    output:render_tool_result('t2', 'clean', false)
+    vim.cmd('redraw')
+    _G._done = vim.fn.foldtextresult(header)
+    _G._line = vim.fn.getline(header)
+  ]])
+  eq(_G.child.lua_get('_G._running'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: yarn lint ⏱ 5s')
+  eq(_G.child.lua_get('_G._ticked'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: yarn lint ⏱ 7s')
+  eq(_G.child.lua_get('_G._done'), '  ▸ ⚒ Tools: 2 calls')
+  eq(_G.child.lua_get('_G._line'), '  ⚒ Tools: 2 calls')
+end
+
+T['tool_groups']['an error result also clears the status'] = function()
+  tg([[
+    vim.wo.foldlevel = 1
+    output:render_user_turn('go')
+    _G._tg.tool('t1', 'ls', 'a')
+    output:begin_assistant_turn()
+    local block = { type = 'tool_use', id = 't2', name = 'Bash', input = { command = 'false' } }
+    output:on_content_block_start(block)
+    output:start_tool_timer('t2')
+    output:on_content_block_stop(block)
+    output:render_tool_result('t2', 'exit 1', true)
+    local header = _G._tg.find('Tools:')
+    vim.cmd('redraw')
+    _G._ft = vim.fn.foldtextresult(header)
+    _G._err_fl = _G._tg.level('Error:')
+  ]])
+  eq(_G.child.lua_get('_G._ft'), '  ▸ ⚒ Tools: 2 calls')
+  eq(_G.child.lua_get('_G._err_fl'), '>4')
+end
+
+T['tool_groups']['a permission prompt for a grouped call stays in the group'] = function()
   tg([[
     output:render_user_turn('go')
     _G._tg.tool('t1', 'ls', 'a')
-    _G._header_text = vim.fn.getline(_G._tg.find('Tools:'))
+    _G._tg.tool('t2', 'rm x')
+    output:render_permission_request('Bash', { command = 'rm x' })
+    output:render_permission_outcome('allow', 'Bash')
+    output:render_tool_result('t2', 'ok', false)
+    _G._tg.text('Report.')
+    _G._perm = { vim.fn.getline(_G._tg.find('Allowed: Bash')), _G._tg.level('Allowed: Bash') }
+    _G._visible = _G._tg.visible(1)
   ]])
-  eq(_G.child.lua_get('_G._header_text'), '  ⚒ Tools: 1 call')
+  eq(_G.child.lua_get('_G._perm'), { '    ✓ Allowed: Bash', 2 })
+  eq(_G.child.lua_get('_G._visible'), {
+    'User:', 'go', '', 'Agent:', '  ▸ ⚒ Tools: 2 calls', '', 'Report.',
+  })
 end
 
 T['tool_groups']['tool_group_format and the ToolGroup icon override the header'] = function()
@@ -497,218 +805,26 @@ T['tool_groups']['tool_group_format and the ToolGroup icon override the header']
   eq(_G.child.lua_get('_G._header_text'), '  # 2 tool calls')
 end
 
-T['tool_groups']['agent text between tool calls splits them into separate groups'] = function()
-  tg([[
-    output:render_user_turn('go')
-    _G._tg.tool('t1', 'ls', 'a')
-    _G._tg.tool('t2', 'pwd', 'b')
-    _G._tg.text('Looked around.')
-    _G._tg.tool('t3', 'date', 'c')
-    _G._tg.text('Done.')
-    local state = Output._buf_state[bufnr]
-    _G._counts = {}
-    for _, g in ipairs(state.tool_groups) do table.insert(_G._counts, g.count) end
+T['tool_groups']['the nerdfont group icon is the wrench'] = function()
+  _G.child.lua([[
+    require('cc.config').setup({ tool_icons = { use_nerdfont = true } })
+    _G._icon = require('cc.icons').for_tool('ToolGroup')
   ]])
-  eq(_G.child.lua_get('_G._counts'), { 2, 1 })
+  eq(_G.child.lua_get('_G._icon'), '\xef\x82\xad')
 end
 
-T['tool_groups']['level 1 shows only turn text and group headers'] = function()
-  tg([[
-    output:render_user_turn('go')
-    _G._tg.text('Let me look.')
-    _G._tg.tool('t1', 'ls', 'a')
-    _G._tg.tool('t2', 'pwd', 'b')
-    _G._tg.text('Looked around.')
-    _G._tg.tool('t3', 'date', 'c')
-    _G._tg.text('Done.')
-    output:end_assistant_turn()
-    _G._visible = _G._tg.visible(1)
-  ]])
-  eq(_G.child.lua_get('_G._visible'), {
-    'User:',
-    'go',
-    '',
-    'Agent:',
-    'Let me look.',
-    '',
-    '  ▸ ⚒ Tools: 2 calls · ❯ Bash: pwd',
-    '',
-    'Looked around.',
-    '',
-    '  ▸ ⚒ Tools: 1 call · ❯ Bash: date',
-    '',
-    'Done.',
-  })
-end
-
-T['tool_groups']['level 2 opens groups and keeps each tool collapsed'] = function()
-  tg([[
-    output:render_user_turn('go')
-    _G._tg.tool('t1', 'ls', 'a')
-    _G._tg.tool('t2', 'pwd', 'b')
-    _G._tg.text('Done.')
-    _G._visible = _G._tg.visible(2)
-  ]])
-  local visible = _G.child.lua_get('_G._visible')
-  local joined = table.concat(visible, '\n')
-  eq(joined:find('Tools: 2 calls', 1, true) ~= nil, true)
-  eq(joined:find('▸ ⚒ Tools', 1, true), nil) -- group is open
-  eq(joined:find('▸ ❯ Bash: ls', 1, true) ~= nil, true)
-  eq(joined:find('▸ ❯ Bash: pwd', 1, true) ~= nil, true)
-  eq(joined:find('Output:', 1, true), nil)
-end
-
-T['tool_groups']['level 3 matches the old default: inputs open, results collapsed'] = function()
-  tg([[
-    output:render_user_turn('go')
-    _G._tg.tool('t1', 'ls', 'a\nb')
-    _G._visible = _G._tg.visible(3)
-  ]])
-  local visible = _G.child.lua_get('_G._visible')
-  -- The tool fold is open (its closed Output: shows), the result is not.
-  eq(visible[#visible - 1], '❯ Bash: ls')
-  eq(visible[#visible], '      ▸ Output: ⟨3 lines⟩')
-  eq(_G.child.lua_get('require("cc.config").options.default_fold_level'), 3)
-end
-
-T['tool_groups']['streaming a tool into the run bumps the count and extends the fold'] = function()
-  tg([[
-    vim.wo.foldlevel = 1
-    output:render_user_turn('go')
-    _G._tg.tool('t1', 'ls', 'a')
-    local header = _G._tg.find('Tools:')
-    vim.cmd('redraw')
-    _G._before = vim.fn.getline(header)
-    -- Next tool streams in before its result arrives.
-    output:begin_assistant_turn()
-    local block = { type = 'tool_use', id = 't2', name = 'Bash', input = { command = 'pwd' } }
-    output:on_content_block_start(block)
-    _G._during = vim.fn.getline(header)
-    output:on_content_block_stop(block)
-    output:render_tool_result('t2', 'b\nc', false)
-    vim.cmd('redraw')
-    _G._after = vim.fn.getline(header)
-    _G._closed = vim.fn.foldclosed(header) == header
-    _G._extends_to_end = vim.fn.foldclosedend(header) == vim.api.nvim_buf_line_count(bufnr)
-    _G._ft = vim.fn.foldtextresult(header)
-  ]])
-  eq(_G.child.lua_get('_G._before'), '  ⚒ Tools: 1 call')
-  eq(_G.child.lua_get('_G._during'), '  ⚒ Tools: 2 calls')
-  eq(_G.child.lua_get('_G._after'), '  ⚒ Tools: 2 calls')
-  eq(_G.child.lua_get('_G._closed'), true)
-  eq(_G.child.lua_get('_G._extends_to_end'), true)
-  eq(_G.child.lua_get('_G._ft'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: pwd')
-end
-
-T['tool_groups']['collapsed header tracks the running call as calls stream in'] = function()
-  tg([[
-    vim.wo.foldlevel = 1
-    output:render_user_turn('go')
-    _G._tg.tool('t1', 'ls', 'a')
-    local header = _G._tg.find('Tools:')
-    output:begin_assistant_turn()
-    local block = { type = 'tool_use', id = 't2', name = 'Bash', input = { command = 'yarn lint' } }
-    output:on_content_block_start(block)
-    output:on_content_block_stop(block)
-    output:update_tool_elapsed('t2', 5)
-    vim.cmd('redraw')
-    _G._running = vim.fn.foldtextresult(header)
-    output:update_tool_elapsed('t2', 7)
-    vim.cmd('redraw')
-    _G._ticked = vim.fn.foldtextresult(header)
-    output:begin_assistant_turn()
-    output:on_content_block_start({ type = 'tool_use', id = 't3', name = 'Read' })
-    vim.cmd('redraw')
-    _G._next = vim.fn.foldtextresult(header)
-  ]])
-  eq(_G.child.lua_get('_G._running'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: yarn lint ⏱ 5s')
-  eq(_G.child.lua_get('_G._ticked'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: yarn lint ⏱ 7s')
-  eq(_G.child.lua_get('_G._next'), '  ▸ ⚒ Tools: 3 calls · ▤ Read:')
-end
-
-T['tool_groups']['collapsed header keeps the last call once the run ends'] = function()
-  tg([[
-    output:render_user_turn('go')
-    _G._tg.tool('t1', 'ls', 'a')
-    _G._tg.tool('t2', 'yarn lint')
-    output:update_tool_elapsed('t2', 3)
-    output:render_tool_result('t2', 'ok', false)
-    _G._tg.text('Lint is clean.')
-    output:end_assistant_turn()
-    local header = _G._tg.find('Tools:')
-    vim.wo.foldlevel = 1
-    vim.cmd('redraw')
-    _G._ft = vim.fn.foldtextresult(header)
-    -- Open, the header line itself carries no status.
-    _G._line = vim.fn.getline(header)
-  ]])
-  eq(_G.child.lua_get('_G._ft'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: yarn lint ⏱ 3s')
-  eq(_G.child.lua_get('_G._line'), '  ⚒ Tools: 2 calls')
-end
-
-T['tool_groups']['an error result still shows the call like an Activity header'] = function()
-  tg([[
-    output:render_user_turn('go')
-    _G._tg.tool('t1', 'ls', 'a')
-    _G._tg.tool('t2', 'false')
-    output:render_tool_result('t2', 'exit 1', true)
-    local header = _G._tg.find('Tools:')
-    vim.wo.foldlevel = 1
-    vim.cmd('redraw')
-    _G._ft = vim.fn.foldtextresult(header)
-    _G._err_fl = Output._buf_state[bufnr].fold_levels[_G._tg.find('Error:')]
-  ]])
-  -- Activity headers mark no running/done/error state; neither do groups.
-  eq(_G.child.lua_get('_G._ft'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: false')
-  eq(_G.child.lua_get('_G._err_fl'), '>4')
-end
-
-T['tool_groups']['hidden thinking between tool calls keeps the run together'] = function()
-  tg([[
-    require('cc.config').setup({ tool_icons = { use_nerdfont = false }, show_thinking = false })
-    output:render_user_turn('go')
-    _G._tg.tool('t1', 'ls', 'a')
-    output:begin_assistant_turn()
-    output:on_content_block_start({ type = 'thinking' })
-    output:on_content_block_stop({ type = 'thinking' })
-    _G._tg.tool('t2', 'pwd', 'b')
-    _G._groups = #Output._buf_state[bufnr].tool_groups
-  ]])
-  eq(_G.child.lua_get('_G._groups'), 1)
-end
-
-T['tool_groups']['a permission prompt stays inside the run'] = function()
-  tg([[
-    output:render_user_turn('go')
-    _G._tg.tool('t1', 'ls')
-    output:render_permission_request('Bash', { command = 'ls' })
-    output:render_permission_outcome('allow', 'Bash')
-    output:render_tool_result('t1', 'a', false)
-    _G._tg.tool('t2', 'pwd', 'b')
-    local state = Output._buf_state[bufnr]
-    _G._groups = #state.tool_groups
-    _G._perm_fl = state.fold_levels[_G._tg.find('Allowed: Bash')]
-    _G._visible = _G._tg.visible(1)
-  ]])
-  eq(_G.child.lua_get('_G._groups'), 1)
-  eq(_G.child.lua_get('_G._perm_fl'), 2)
-  eq(_G.child.lua_get('_G._visible[#_G._visible]'), '  ▸ ⚒ Tools: 2 calls · ❯ Bash: pwd')
-end
-
-T['tool_groups']['resumed transcripts render groups too'] = function()
-  helpers.render_fixture(_G.child, 'multi_turn', { tool_icons = { use_nerdfont = false } })
+T['tool_groups']['a resumed multi-tool turn renders one group without empty thinking'] = function()
+  helpers.render_fixture(_G.child, 'multi_turn', { tool_icons = { use_nerdfont = false }, show_thinking = true })
   local lines = helpers.get_buffer_lines(_G.child)
   local fl = helpers.get_fold_levels(_G.child)
-  local headers = {}
-  for i, l in ipairs(lines) do
-    if l:match('^  ⚒ Tools: ') then
-      eq(fl[i], '>2')
-      eq(fl[i + 1], '>3') -- a tool header follows directly
-      table.insert(headers, l)
-    end
+  eq(lines[1], 'Agent:')
+  eq(lines[2], '  ⚒ Tools: 5 calls')
+  eq(fl[2], '>2')
+  local bare_thinking = 0
+  for _, l in ipairs(lines) do
+    if vim.trim(l) == '∴ Thinking...' then bare_thinking = bare_thinking + 1 end
   end
-  eq(headers[1], '  ⚒ Tools: 1 call')
-  eq(headers[2], '  ⚒ Tools: 2 calls')
+  eq(bare_thinking, 0)
 end
 
 T['tool_groups']['agent and group foldtext report tool counts'] = function()
