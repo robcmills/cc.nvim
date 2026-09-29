@@ -50,9 +50,10 @@ local defaults = {
     validate = nil,
   },
 
-  -- Folding: 0=turn headers, 1=final agent text + collapsed tool groups,
-  -- 2=tool headers, 3=tool inputs, 4=all.
-  default_fold_level = 3,
+  -- Folding: 0=turn headers, 1=agent text with tool groups and lone tools
+  -- collapsed, 2=group tool headers and lone tool inputs, 3=grouped tool
+  -- inputs and lone tool results, 4=all.
+  default_fold_level = 2,
 
   -- function(info) -> string; nil uses output.default_foldtext.
   foldtext = nil,

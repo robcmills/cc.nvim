@@ -218,7 +218,7 @@ require('cc').setup({
     validate = nil,
   },
 
-  default_fold_level = 3,
+  default_fold_level = 2,
   foldtext = nil,
 
   highlights = {
@@ -390,8 +390,8 @@ The output buffer is foldable with five logical levels:
 |---|---|---|
 | 0 | Only User / Agent turn headers | same |
 | 1 | + final agent text, tool calls folded to one `Work: N tool calls` line | + agent text, the tool's one-line summary |
-| 2 | + tool summary lines and the text between calls | + tool input |
-| 3 *(default)* | + tool inputs (Bash commands, Edit diffs) | + tool result |
+| 2 *(default)* | + tool summary lines and the text between calls | + tool input |
+| 3 | + tool inputs (Bash commands, Edit diffs) | + tool result |
 | 4 | + tool results (stdout, read file contents) | same |
 
 An agent turn with two or more tool calls gets one group. It runs from the
@@ -451,10 +451,11 @@ the standard `zM` / `zR`.
 
 When Claude delegates to a subagent, everything the subagent does streams
 into an `Activity:` section nested inside the `Subagent:` tool block. The
-section is a level-4 fold, so at the default `foldlevel=3` it stays closed
+section folds one level below its `Subagent:` header (level 3 for a lone
+call, 4 inside a Work group), so at the default `foldlevel=2` it stays closed
 and its header shows the subagent's most recent step: the running tool with
 its live timer, or the first line of its latest message. Open it (`zo`, or
-`:CcFold 4`) to see each nested tool call with its input and result, plus
+`:CcFold 3` / `:CcFold 4`) to see each nested tool call with its input and result, plus
 the subagent's text and thinking, laid out like top-level tools two depths
 deeper. Fold state is never changed behind your back: sections open or close
 only via `:CcFold` or your own `zo` / `zc`.

@@ -27,8 +27,8 @@
 -- User-facing :CcFold N maps to Vim foldlevel=N:
 --   0 = turns collapsed (only User/Agent headers visible)
 --   1 = turns open: tool groups and lone tools collapsed
---   2 = groups open with their tools collapsed; lone tools open, results collapsed
---   3 = grouped tools open, results collapsed; lone tool results open (default)
+--   2 = groups open with their tools collapsed; lone tools open, results collapsed (default)
+--   3 = grouped tools open, results collapsed; lone tool results open
 --   4 = everything visible
 
 -- Carets (▸ folded, ▾ open) are inline virt_text extmarks at the start of

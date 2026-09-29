@@ -109,9 +109,9 @@ end
 T['folds'] = MiniTest.new_set()
 
 -- The fixture's Agent call is the turn's only tool call, so it is ungrouped
--- one level shallower: Activity at depth 3, closed from foldlevel 2 down.
-T['folds']['activity is closed at foldlevel 2 and shows the latest item as foldtext'] = function()
-  helpers.replay_streaming(_G.child, 'subagent_tasks', { default_fold_level = 2 })
+-- one level shallower: Activity at depth 3, closed at the default level 2.
+T['folds']['activity is closed by default and shows the latest item as foldtext'] = function()
+  helpers.replay_streaming(_G.child, 'subagent_tasks')
   _G.child.lua([[
     local bufnr = _G._test_bufnr
     vim.api.nvim_exec_autocmds('BufWinEnter', { buffer = bufnr })
@@ -221,7 +221,7 @@ T['live']['status tracks the running nested tool and then the latest text'] = fu
   _G.child.lua([[
     local Output = require('cc.output')
     local Session = require('cc.session')
-    require('cc.config').setup({ default_fold_level = 2 }) -- lone call: Activity at depth 3
+    require('cc.config').setup({})
     local session = Session.new()
     local output = Output.new(session, 'cc-test-subagent-live')
     local bufnr = output:ensure_buffer()
@@ -312,7 +312,9 @@ end
 T['live']['interleaved agents keep activity folds closed during every update'] = function()
   _G.child.lua([[
     local Output = require('cc.output')
-    require('cc.config').setup({})
+    -- Three calls form a Work group; level 3 opens the grouped Agent tools
+    -- while their depth-4 Activity sections stay closed.
+    require('cc.config').setup({ default_fold_level = 3 })
     local output = Output.new(require('cc.session').new(), 'cc-test-interleaved')
     local buf = output:ensure_buffer()
     vim.api.nvim_set_current_buf(buf)
@@ -384,7 +386,7 @@ end
 T['live']['closing a tail activity keeps subsequent updates following the tail'] = function()
   _G.child.lua([[
     local Output = require('cc.output')
-    require('cc.config').setup({ default_fold_level = 2 }) -- lone call: Activity at depth 3
+    require('cc.config').setup({})
     local o = Output.new(require('cc.session').new(), 'cc-test-tail-activity')
     local b = o:ensure_buffer()
     vim.api.nvim_set_current_buf(b)
