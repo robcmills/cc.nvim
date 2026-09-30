@@ -24,7 +24,8 @@ local M = {}
 ---  currently in-flight streaming region (set by begin_streaming, cleared
 ---  by end_streaming). The list order is stable across edits — on_bytes
 ---  shifts ranges within regions but does not reorder regions — so the
----  index remains valid for the life of the streaming block.
+---  index stays valid unless before_delete_row drops an earlier region,
+---  and that function re-points it.
 
 ---@type table<integer, cc.MdHl.State>
 local buf_state = {}
@@ -186,6 +187,56 @@ end
 function M.end_streaming(bufnr)
   local state = buf_state[bufnr]
   if state then state.streaming_idx = nil end
+end
+
+--- Shorten or drop the regions that end on buffer row `row` (0-indexed),
+--- which the caller is about to delete. Tree-sitter clamps a range end that
+--- falls inside a deleted span to the span's start byte. If the row is the
+--- buffer's last line, that byte is the new EOF, and every later append at
+--- EOF drags the range end along with it: the region swallows every tool
+--- rendered afterwards, and their indented bodies parse as markdown code.
+--- A region ending on the row is cut back to the end of the row above; one
+--- that lives only on the row is dropped. Tree-sitter's own edit handling is
+--- correct for every other region.
+---@param bufnr integer
+---@param row integer 0-indexed row about to be deleted
+function M.before_delete_row(bufnr, row)
+  local state = buf_state[bufnr]
+  if not state then return end
+  if not vim.api.nvim_buf_is_valid(bufnr) then return end
+
+  local current = state.parser:included_regions() or {}
+  if regions_are_void(current) then return end
+
+  -- Ranges read back from the parser are Range6:
+  -- { start_row, start_col, start_byte, end_row, end_col, end_byte }.
+  local fresh = {}
+  local streaming_idx
+  local changed = false
+  for i, region in ipairs(current) do
+    local r = region[1]
+    local kept = region
+    if #region == 1 and r[4] == row then
+      changed = true
+      if r[1] < row then
+        local prev = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1] or ''
+        kept = { { r[1], r[2], row - 1, #prev } }
+      else
+        kept = nil
+      end
+    end
+    if kept then
+      fresh[#fresh + 1] = kept
+      if i == state.streaming_idx then streaming_idx = #fresh end
+    end
+  end
+  if not changed then return end
+
+  -- Dropping a region shifts every later index, including the streaming one.
+  state.streaming_idx = streaming_idx
+  if #fresh == 0 then fresh = vim.deepcopy(VOID_REGIONS) end
+  pcall(state.parser.set_included_regions, state.parser, fresh)
+  pcall(state.parser.parse, state.parser, true)
 end
 
 --- Detach parser/highlighter and drop tracked state for a buffer.
