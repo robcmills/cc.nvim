@@ -1682,24 +1682,36 @@ function M.rename(name)
   M._handle_rename(inst, name or '')
 end
 
---- Public: interrupt the current turn without killing the CLI process.
---- Routed through the provider (claude: interrupt control_request; codex:
---- turn/interrupt). The "Interrupted" notice renders on acknowledgement.
-function M.stop()
-  local inst = get_current_instance()
-  if not inst or not inst.process or not inst.process:is_alive() then return end
-  if not inst.session or not inst.session.turn_active then return end
-  if inst.session.interrupt_pending then return end
+--- Public: interrupt a turn without killing the CLI process. Routed through
+--- the provider (claude: interrupt control_request; codex: turn/interrupt).
+--- The "Interrupted" notice renders on acknowledgement. With `bufnr` (output
+--- or prompt) the target instance is interrupted wherever it is; without it,
+--- the instance owning the current buffer.
+---@param bufnr integer?
+---@return boolean ok
+---@return string? err
+function M.stop(bufnr)
+  local inst
+  if bufnr ~= nil then
+    inst = type(bufnr) == 'number' and find_instance(bufnr) or nil
+    if not inst then return false, 'no cc.nvim instance owns buffer ' .. tostring(bufnr) end
+  else
+    inst = get_current_instance()
+    if not inst then return false, 'current buffer is not a cc.nvim buffer' end
+  end
+  if not inst.process or not inst.process:is_alive() then return false, 'agent process is not running' end
+  if not inst.session or not inst.session.turn_active then return false, 'no turn active' end
+  if inst.session.interrupt_pending then return false, 'interrupt already pending' end
   local sent
   if inst.provider then
     sent = inst.provider:interrupt()
   else
     sent = inst.process.send_control_interrupt and inst.process:send_control_interrupt()
   end
-  if sent then
-    inst.session.interrupt_pending = true
-    require('cc.statusline').refresh(inst)
-  end
+  if not sent then return false, 'interrupt could not be sent' end
+  inst.session.interrupt_pending = true
+  require('cc.statusline').refresh(inst)
+  return true
 end
 
 --- Public: close a cc.nvim session (kill process, close windows, wipe
