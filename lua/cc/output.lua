@@ -601,6 +601,9 @@ function Output:_delete_line(lnum)
     -- The next line (if any) takes its place once the refs shift up.
     if lnum >= vim.api.nvim_buf_line_count(bufnr) then self.turn.trail_start = nil end
   end
+  -- A markdown region ending on the deleted tail row would otherwise pin
+  -- its end to EOF and grow with every later append.
+  require('cc.md_highlight').before_delete_row(bufnr, lnum - 1)
   vim.bo[bufnr].modifiable = true
   vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, {})
   vim.bo[bufnr].modifiable = false
