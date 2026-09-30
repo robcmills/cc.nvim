@@ -1,5 +1,5 @@
 -- Public API for external agent control: open(opts) with focus/cwd/name/
--- prompt, send_prompt, get_last_assistant_message, close(bufnr). Everything
+-- prompt, send_prompt, get_last_assistant_message, stop(bufnr), close(bufnr). Everything
 -- here must work over `nvim --remote-expr`, so return values matter more
 -- than notifications.
 local helpers = dofile('tests/helpers.lua')
@@ -24,6 +24,11 @@ local INSTALL_FAKE = [==[
     function p:is_alive() return self.alive end
     function p:close() self.alive = false end
     function p:send(text) table.insert(self.sent, text) end
+    p.interrupts = 0
+    function p:interrupt()
+      self.interrupts = self.interrupts + 1
+      return self.interrupt_result ~= false
+    end
     _G._fake_provider = p
     return p
   end
@@ -318,6 +323,76 @@ T['get_last_assistant_message']['codex: completed agentMessage items are recorde
   eq(r.t0, nil)
   eq(r.t1, 'pong')
   eq(r.t2, 'pong again')
+end
+
+T['stop'] = MiniTest.new_set()
+
+T['stop']['interrupts a target instance by output or prompt bufnr'] = function()
+  _G.child.lua(INSTALL_FAKE .. [==[
+    local cc = require('cc')
+    vim.cmd('enew')
+    local scratch = vim.api.nvim_get_current_buf()
+    local a = cc.open({ focus = false })
+    local a_provider = _G._fake_provider
+    local b = cc.open({ focus = false })
+    local b_provider = _G._fake_provider
+    local a_inst, b_inst = cc.find_instance(a), cc.find_instance(b)
+    local r = {}
+    r.idle = { cc.stop(a) }
+    a_inst.session.turn_active = true
+    b_inst.session.turn_active = true
+    r.first = { cc.stop(a) }
+    r.pending_flag = a_inst.session.interrupt_pending
+    r.again = { cc.stop(a) }
+    r.by_prompt = { cc.stop(b_inst.prompt.bufnr) }
+    r.missing = { cc.stop(scratch) }
+    r.not_number = { cc.stop('x') }
+    r.current = { cc.stop() }
+    r.a_interrupts = a_provider.interrupts
+    r.b_interrupts = b_provider.interrupts
+    b_inst.session.interrupt_pending = false
+    b_provider.interrupt_result = false
+    r.unsent = { cc.stop(b) }
+    r.unsent_flag = b_inst.session.interrupt_pending
+    b_provider.alive = false
+    r.dead = { cc.stop(b) }
+    r.still_on_scratch = vim.api.nvim_get_current_buf() == scratch
+    _G._r = r
+    b_provider.alive = true
+    cc.close(a); cc.close(b)
+  ]==] .. RESTORE_FAKE)
+  local r = _G.child.lua_get('_G._r')
+  eq(r.idle, { false, 'no turn active' })
+  eq(r.first, { true })
+  eq(r.pending_flag, true)
+  eq(r.again, { false, 'interrupt already pending' })
+  eq(r.by_prompt, { true })
+  eq(r.missing[1], false)
+  eq(r.missing[2]:find('no cc.nvim instance owns buffer', 1, true) ~= nil, true)
+  eq(r.not_number[1], false)
+  eq(r.current, { false, 'current buffer is not a cc.nvim buffer' })
+  eq(r.a_interrupts, 1)
+  eq(r.b_interrupts, 1)
+  eq(r.unsent, { false, 'interrupt could not be sent' })
+  eq(r.unsent_flag, false)
+  eq(r.dead, { false, 'agent process is not running' })
+  eq(r.still_on_scratch, true)
+end
+
+T['stop']['without an argument interrupts the current instance'] = function()
+  _G.child.lua(INSTALL_FAKE .. [==[
+    local cc = require('cc')
+    local bufnr = cc.open()
+    vim.cmd('stopinsert')
+    cc.find_instance(bufnr).session.turn_active = true
+    local ok, err = cc.stop()
+    _G._r = { ok = ok, err = err, interrupts = _G._fake_provider.interrupts }
+    cc.close(bufnr)
+  ]==] .. RESTORE_FAKE)
+  local r = _G.child.lua_get('_G._r')
+  eq(r.ok, true)
+  eq(r.err, nil)
+  eq(r.interrupts, 1)
 end
 
 T['close'] = MiniTest.new_set()
