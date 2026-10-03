@@ -1037,27 +1037,55 @@ function M.submit_for(inst, text)
   return true
 end
 
---- Public: submit current prompt buffer content to the agent.
-function M.submit()
-  local inst = get_current_instance()
+--- Public: submit a prompt buffer's content to the agent and clear it.
+--- With `bufnr` (output or prompt) the target instance is submitted wherever
+--- it is, without notifications; without it, the instance owning the current
+--- buffer, with the old notifications. The prompt is cleared only when the
+--- text was consumed.
+---@param bufnr integer?
+---@return boolean ok
+---@return string? err
+function M.submit(bufnr)
+  local inst
+  if bufnr ~= nil then
+    inst = type(bufnr) == 'number' and find_instance(bufnr) or nil
+    if not inst then return false, 'no cc.nvim instance owns buffer ' .. tostring(bufnr) end
+  else
+    inst = get_current_instance()
+  end
+  local function fail(err)
+    if bufnr == nil then vim.notify(err, vim.log.levels.WARN) end
+    return false, err
+  end
   if inst and inst.is_fixture then
-    vim.notify(FIXTURE_PLACEHOLDER, vim.log.levels.WARN)
-    return
+    return fail(FIXTURE_PLACEHOLDER)
   end
   if not inst or not inst.process or not inst.process:is_alive() then
-    vim.notify('cc.nvim: not open. Run :CcNew first.', vim.log.levels.WARN)
-    return
+    return fail('cc.nvim: not open. Run :CcNew first.')
   end
   if not inst.prompt:has_content() then
-    return
+    return false, 'prompt is empty'
   end
   local ok, err = M.submit_for(inst, inst.prompt:read())
   if not ok then
-    vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.WARN)
-    return
+    return fail('cc.nvim: ' .. tostring(err))
   end
   inst.prompt:clear()
   require('cc.autosize').reset(inst)
+  return true
+end
+
+--- Public: the prompt bufnr of the instance that owns `bufnr` (output or
+--- prompt), so a caller of `open()` can write into the new session's prompt.
+---@param bufnr integer output or prompt bufnr
+---@return integer? prompt_bufnr
+---@return string? err
+function M.prompt_bufnr(bufnr)
+  local inst = type(bufnr) == 'number' and find_instance(bufnr) or nil
+  if not inst or not inst.prompt then
+    return nil, 'no cc.nvim instance owns buffer ' .. tostring(bufnr)
+  end
+  return inst.prompt:ensure_buffer()
 end
 
 --- Public: submit `text` to the instance that owns `bufnr` (output or

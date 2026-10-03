@@ -247,6 +247,48 @@ T['send_prompt']['prompt-buffer submit still clears the prompt on success only']
   eq(r.sent, { 'typed' })
 end
 
+T['submit'] = MiniTest.new_set()
+
+T['submit']['submits and clears a target prompt from any buffer'] = function()
+  _G.child.lua(INSTALL_FAKE .. [==[
+    local cc = require('cc')
+    local out = cc.open({ focus = false })
+    local inst = cc.find_instance(out)
+    vim.cmd('enew')
+    local scratch = vim.api.nvim_get_current_buf()
+    local r = {}
+    r.prompt_ok = cc.prompt_bufnr(out) == inst.prompt.bufnr
+      and cc.prompt_bufnr(inst.prompt.bufnr) == inst.prompt.bufnr
+    r.prompt_missing = { cc.prompt_bufnr(scratch) }
+    r.empty = { cc.submit(out) }
+    vim.api.nvim_buf_set_lines(inst.prompt.bufnr, 0, -1, false, { 'dictated' })
+    r.first = { cc.submit(inst.prompt.bufnr) }
+    r.after_first = vim.api.nvim_buf_get_lines(inst.prompt.bufnr, 0, -1, false)
+    inst.session.turn_active = true
+    vim.api.nvim_buf_set_lines(inst.prompt.bufnr, 0, -1, false, { 'while busy' })
+    r.busy = { cc.submit(out) }
+    r.after_busy = vim.api.nvim_buf_get_lines(inst.prompt.bufnr, 0, -1, false)
+    r.missing = { cc.submit(scratch) }
+    r.sent = _G._fake_provider.sent
+    r.still_on_scratch = vim.api.nvim_get_current_buf() == scratch
+    _G._r = r
+    inst.session.turn_active = false
+    cc.close(out)
+  ]==] .. RESTORE_FAKE)
+  local r = _G.child.lua_get('_G._r')
+  eq(r.prompt_ok, true)
+  eq(r.prompt_missing[1], vim.NIL)
+  eq(r.empty, { false, 'prompt is empty' })
+  eq(r.first, { true })
+  eq(r.after_first, { '' })
+  eq(r.busy[1], false)
+  eq(r.busy[2]:find('turn in progress', 1, true) ~= nil, true)
+  eq(r.after_busy, { 'while busy' })
+  eq(r.missing[1], false)
+  eq(r.sent, { 'dictated' })
+  eq(r.still_on_scratch, true)
+end
+
 T['get_last_assistant_message'] = MiniTest.new_set()
 
 T['get_last_assistant_message']['claude: last text-bearing message, skipping tool-only ones'] = function()

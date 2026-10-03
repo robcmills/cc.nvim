@@ -851,7 +851,7 @@ focus also marks that instance seen.
 
 ### Driving sessions from outside Neovim
 
-Five functions let a shell script or another agent create, prompt, read,
+These functions let a shell script or another agent create, prompt, read,
 interrupt, and close sessions in a running Neovim over `nvim --server <socket> --remote-expr`.
 Every one returns its result or `nil, err` (`false, err` for the boolean ones)
 rather than relying on `vim.notify`, so callers can branch on the answer.
@@ -870,6 +870,10 @@ require('cc').open({
 require('cc').send_prompt(output_bufnr, 'text')
 ---@return string? text, string? err
 require('cc').get_last_assistant_message(output_bufnr)
+---@return integer? prompt_bufnr, string? err
+require('cc').prompt_bufnr(output_bufnr)
+---@return boolean ok, string? err
+require('cc').submit(output_bufnr)  -- submit and clear the prompt buffer; no arg: the current instance
 ---@return boolean ok, string? err
 require('cc').stop(output_bufnr)    -- interrupt the turn; no arg: the current instance
 ---@return boolean ok, string? err
@@ -880,7 +884,13 @@ require('cc').close(output_bufnr)   -- no arg: the current instance, as before
 current window alone. The instance still appears in `list_instances()` and the
 buffer sidebar, and opening the buffer later builds the prompt companion the
 usual way. Either the output or the prompt bufnr identifies an instance for
-`send_prompt`, `get_last_assistant_message`, `stop`, and `close`.
+`send_prompt`, `get_last_assistant_message`, `prompt_bufnr`, `submit`, `stop`,
+and `close`.
+
+`prompt_bufnr` gives a caller of `open` the new session's prompt buffer to
+write into. `submit` is `:CcSend` for a target instance: it sends what is in
+that prompt buffer and clears it, and returns `false, err` with `prompt is
+empty` or the `send_prompt` refusals when nothing was sent.
 
 `stop` is the same interrupt as `<C-c>` and `:CcStop`: the turn ends and the
 process stays alive for the next prompt. It returns `false, err` with
