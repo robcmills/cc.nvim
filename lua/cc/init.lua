@@ -1867,6 +1867,17 @@ function M.list_instances()
   return snapshots
 end
 
+--- Mark the instance owning `bufnr` (output or prompt) unread until it is
+--- next viewed.
+---@param bufnr integer
+---@return boolean marked false when bufnr is not a cc.nvim buffer
+function M.mark_unread(bufnr)
+  local inst = type(bufnr) == 'number' and find_instance(bufnr) or nil
+  if not inst then return false end
+  require('cc.seen').mark_unread(inst)
+  return true
+end
+
 --- Focus an existing instance by its output buffer, restoring its companion
 --- layout through the same BufWinEnter path used by normal buffer navigation.
 ---@param output_bufnr integer

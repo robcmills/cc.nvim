@@ -849,6 +849,23 @@ navigation through `require('cc').focus_instance(output_bufnr)`. A turn finishin
 in the current instance is seen immediately while Neovim is focused; returning
 focus also marks that instance seen.
 
+`:CcMarkUnread` (or `require('cc').mark_unread(bufnr)` with an output or prompt
+buffer) flags an instance `unread` until you next view it, like Slack's "Mark
+unread". Busier states still take precedence, so a working agent shows
+`unread` once its turn ends. The flag is not saved across restarts.
+
+To react to state changes without polling, subscribe to `User CcStateChanged`.
+It fires once per transition, with `data = { bufnr, prompt_bufnr, state,
+previous }` where `bufnr` is the output buffer and `previous` is `nil` on an
+instance's first event:
+
+```lua
+vim.api.nvim_create_autocmd('User', {
+  pattern = 'CcStateChanged',
+  callback = function(ev) print(ev.data.bufnr, ev.data.previous, '->', ev.data.state) end,
+})
+```
+
 ### Driving sessions from outside Neovim
 
 These functions let a shell script or another agent create, prompt, read,

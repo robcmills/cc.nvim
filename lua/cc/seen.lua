@@ -14,6 +14,18 @@ function M.mark_seen(inst)
   if not inst then return end
   local seconds, microseconds = (vim.uv or vim.loop).gettimeofday()
   inst.output_seen_at = (seconds * 1000) + math.floor(microseconds / 1000)
+  inst.marked_unread = nil
+  require('cc.state_events').check(inst)
+end
+
+--- Flag the instance unread until it is next viewed, like Slack's "Mark
+--- unread". Busier states (waiting, working, monitoring) still take
+--- precedence; the flag shows once the agent is idle.
+---@param inst cc.Instance?
+function M.mark_unread(inst)
+  if not inst then return end
+  inst.marked_unread = true
+  require('cc.state_events').check(inst)
 end
 
 ---@param inst cc.Instance?
@@ -33,6 +45,7 @@ end
 ---@param inst cc.Instance?
 ---@return boolean
 function M.has_unseen_output(inst)
+  if inst and inst.marked_unread then return true end
   local finished_at = inst and inst.session and inst.session.turn_finished_at
   return type(finished_at) == 'number' and (inst.output_seen_at or 0) < finished_at
 end
