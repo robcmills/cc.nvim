@@ -869,32 +869,39 @@ vim.api.nvim_create_autocmd('User', {
 
 ### Delegation
 
-An agent that hands work to another agent can show `delegating` until that
-work is done. The child is linked to its parent with a `delegator = { key,
-socket, bufnr, session_id }` passed to `open` (before the first prompt is
-sent) or to `send_prompt` (which links an unlinked instance and keeps an
-existing parent). `key` is the parent's `<nvim-pid>:<output-bufnr>`. The
-`agents` CLI fills it in from the agent running the command.
+An agent that hands work to other agents shows `delegating` while any of
+them is busy. The parent owns the link; the child's cc.nvim needs no
+delegation code, so a child on an older cc.nvim is tracked too.
+
+The `agents` CLI makes the link (`agents new`, `agents send`): it registers
+the child in the parent's Neovim with
+`require('cc.delegation').register_bufnr(parent_bufnr, { key, socket,
+nvim_pid, bufnr, session_id, state })`, where `key` is the child's
+`<nvim-pid>:<output-bufnr>`, then installs a forwarder in the child's Neovim.
+The forwarder is an autocmd on `User CcStateChanged` that sends the child's
+state and a sequence number to the parent with `rpcnotify`.
+`unregister_bufnr(parent_bufnr, child_key)` drops a child. Pushes for
+unregistered children, stale sequence numbers, and a parent buffer that now
+holds another session are ignored.
 
 The parent is `delegating` while at least one child is `starting`,
 `working`, `waiting`, `interrupting`, `monitoring`, or itself `delegating`,
-so nesting composes. A child going `ready`, `unread`, or `exited` clears its
-share. The link outlives idle turns: any later turn the child runs makes the
-parent `delegating` again, until `require('cc.delegation').detach_bufnr(bufnr)`
-or the child closes. Each child has one parent; self-links and cycles are
-refused. Busier local states win, so a parent mid-turn shows `working`, and
-`list_instances()` adds `delegateCount` (busy children), `children` (`{ key,
-sessionId, state, nvimPid, uid }`), and `delegator` (`{ key, sessionId,
-socket, bufnr }` or `nil`) to each snapshot.
+so nesting composes when the child runs this version. A child going `ready`,
+`unread`, or `exited` clears its share. The link outlives idle turns: any
+later turn the child runs makes the parent `delegating` again, until the
+child is detached or closes. Busier local states win, so a parent mid-turn
+shows `working`. `list_instances()` adds `delegateCount` (busy children) and
+`children` (`{ key, sessionId, state, nvimPid }`) to each snapshot.
 
-Nothing runs on a timer. The child pushes a full snapshot of its state to
-the parent on every `CcStateChanged`, as an `rpcnotify` over a cached socket
-channel (or a direct call when both run in one Neovim); closing an instance,
-`:CcNew` in its windows, and quitting Neovim push `exited` first. Gaps are
-repaired during activity that already happens: `list_instances()` drops
-children whose Neovim pid is dead, and a parent's turn start and end ask each
-child to push again. The `agents` CLI compares parents and children across
-Neovims on every inventory and repairs the rest.
+Closing an instance (`close`, `:CcNew` in its windows, quitting Neovim) now
+fires a final `CcStateChanged` with `state = 'exited'` and `closed = true`
+before the instance is removed, so any subscriber hears about it.
+
+Nothing runs on a timer. Gaps are repaired during activity that already
+happens: `list_instances()` drops children whose Neovim pid is dead (a
+failed `kill(pid, 0)` other than ESRCH counts as alive), and a parent's turn
+start and end ask its children's forwarders to push again. The `agents`
+inventory compares both sides across Neovims and repairs the rest.
 
 ### Driving sessions from outside Neovim
 
@@ -912,10 +919,9 @@ require('cc').open({
   name = 'api-test',            -- session title, same path as :CcRename
   prompt = 'Reply with pong',   -- submitted as the first turn
   focus = false,                -- default true
-  delegator = parent,           -- optional: link to a parent agent (see Delegation)
 })
 ---@return boolean ok, string? err
-require('cc').send_prompt(output_bufnr, 'text', { delegator = parent }) -- opts optional
+require('cc').send_prompt(output_bufnr, 'text')
 ---@return string? text, string? err
 require('cc').get_last_assistant_message(output_bufnr)
 ---@return integer? prompt_bufnr, string? err
