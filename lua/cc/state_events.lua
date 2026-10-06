@@ -27,6 +27,12 @@ function M.check(inst)
       previous = previous,
     },
   })
+  -- Push the new state to this instance's parent, and ping this instance's
+  -- children at its own turn boundary (cc.delegation).
+  local ok, err = pcall(require('cc.delegation').on_state_changed, inst, state, previous)
+  if not ok then
+    vim.notify('cc.nvim: delegation update failed: ' .. tostring(err), vim.log.levels.DEBUG)
+  end
 end
 
 return M

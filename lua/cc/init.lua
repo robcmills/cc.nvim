@@ -55,6 +55,9 @@ vim.api.nvim_create_autocmd('VimLeavePre', {
   group = vim.api.nvim_create_augroup('cc.shutdown', { clear = true }),
   callback = function()
     for _, inst in pairs(instances) do
+      -- Best effort: the notification may not leave before Neovim exits.
+      -- A parent that misses it finds this Neovim's pid dead later.
+      require('cc.delegation').release(inst)
       if inst then require('cc.permission_prompt').close_pending(inst) end
       if inst and inst.process then
         pcall(function() inst.process:close() end)
@@ -485,6 +488,8 @@ end
 --- that name (E95: buffer with this name already exists).
 ---@param inst cc.Instance
 local function teardown_instance_keep_windows(inst)
+  -- Tell a parent this child is gone while the instance can still address it.
+  require('cc.delegation').release(inst)
   require('cc.permission_prompt').close_pending(inst)
   require('cc.statusline_spinner').stop(inst)
   if inst.output and inst.output.bufnr > 0 then
@@ -519,6 +524,8 @@ end
 --- same `cc-<title>` without colliding with the stale buffer.
 ---@param inst cc.Instance
 local function close_instance(inst)
+  -- Tell a parent this child is gone while the instance can still address it.
+  require('cc.delegation').release(inst)
   require('cc.permission_prompt').close_pending(inst)
   require('cc.statusline_spinner').stop(inst)
   if inst.output and inst.output.bufnr > 0 then
@@ -654,6 +661,7 @@ end
 ---@field name string? session title, applied through the `/rename` path
 ---@field prompt string? submitted as the first turn once the provider is spawned
 ---@field focus boolean? default true; false creates a hidden listed buffer and leaves the current window alone
+---@field delegator table? parent agent { key, socket, bufnr, session_id }; linked before the first prompt is sent (cc.delegation)
 
 --- Public: open a new cc.nvim session.
 --- Returns the output bufnr (the key `list_instances`, `send_prompt`,
@@ -726,6 +734,14 @@ function M.open(opts)
     -- an `exited` entry in the inventory.
     if not focus then close_instance(inst) end
     return nil, err
+  end
+  -- Link to the parent before the first prompt, so a fast child cannot
+  -- finish before its parent knows about it.
+  if opts.delegator ~= nil then
+    local linked, lerr = require('cc.delegation').link(inst, opts.delegator)
+    if not linked then
+      vim.notify('cc.nvim: not linked to parent: ' .. tostring(lerr), vim.log.levels.WARN)
+    end
   end
   -- `remote=<name>` already named the session inside attach_provider.
   if type(opts.name) == 'string' and opts.name:match('%S') and opts.name ~= opts.remote then
@@ -1091,15 +1107,21 @@ end
 --- Public: submit `text` to the instance that owns `bufnr` (output or
 --- prompt buffer). Same pipeline as the prompt-buffer submit, including the
 --- mid-turn guard. Returns `false, err` for an unknown buffer, a dead
---- process, or an active turn.
+--- process, or an active turn. `opts.delegator` links an unlinked instance
+--- to that parent first; an existing parent is kept.
 ---@param bufnr integer output or prompt bufnr
 ---@param text string
+---@param opts { delegator: table? }?
 ---@return boolean ok
 ---@return string? err
-function M.send_prompt(bufnr, text)
+function M.send_prompt(bufnr, text, opts)
   local inst = type(bufnr) == 'number' and find_instance(bufnr) or nil
   if not inst then
     return false, 'no cc.nvim instance owns buffer ' .. tostring(bufnr)
+  end
+  if type(opts) == 'table' and opts.delegator ~= nil and opts.delegator ~= vim.NIL
+      and not inst.delegator then
+    require('cc.delegation').link(inst, opts.delegator)
   end
   return M.submit_for(inst, text)
 end
@@ -1827,8 +1849,12 @@ end
 ---@return table[]
 function M.list_instances()
   local State = require('cc.instance_state')
+  local Delegation = require('cc.delegation')
   local snapshots = {}
   for output_bufnr, inst in pairs(instances) do
+    -- Sidebar renders and `agents` inventories land here: real activity, so
+    -- it is where dead children are pruned (never on a timer).
+    Delegation.reconcile(inst)
     local session = inst.session
     local provider = inst.provider and inst.provider.name or nil
     local prompt_bufnr = inst.prompt and inst.prompt.bufnr or nil
@@ -1860,6 +1886,9 @@ function M.list_instances()
         backgroundTaskCount = (session and session.background_task_count
           and session:background_task_count()) or 0,
         lastModifiedAt = (session and session.last_modified_at) or vim.NIL,
+        delegateCount = Delegation.busy_count(inst),
+        children = Delegation.children(inst),
+        delegator = Delegation.delegator_ref(inst),
       }
     end
   end

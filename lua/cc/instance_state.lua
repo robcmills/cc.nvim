@@ -4,7 +4,7 @@
 
 local M = {}
 
----@alias cc.InstanceState 'waiting'|'interrupting'|'working'|'monitoring'|'unread'|'starting'|'ready'|'exited'
+---@alias cc.InstanceState 'waiting'|'interrupting'|'working'|'delegating'|'monitoring'|'unread'|'starting'|'ready'|'exited'
 
 ---@param inst cc.Instance?
 ---@return cc.InstanceState
@@ -16,6 +16,9 @@ function M.get(inst)
   local session = inst.session
   if session and session.interrupt_pending then return 'interrupting' end
   if session and session.turn_active then return 'working' end
+  -- A linked child is busy. Reads memory only, so the spinner path that
+  -- reaches here through statusline.refresh never probes or messages peers.
+  if require('cc.delegation').busy_count(inst) > 0 then return 'delegating' end
   if session and session.background_task_count
       and session:background_task_count() > 0 then return 'monitoring' end
   if require('cc.seen').has_unseen_output(inst) then return 'unread' end

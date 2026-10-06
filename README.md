@@ -839,6 +839,7 @@ The snapshot's `state`, `:CcStatus`, and statusline lifecycle share this precede
 | `waiting` | The agent needs user input. |
 | `interrupting` | A turn interruption is pending. |
 | `working` | A turn is active. |
+| `delegating` | A linked child agent is busy (see Delegation below). |
 | `monitoring` | Background tasks are still running. |
 | `unread` | The last turn finished and you have not viewed the instance since. |
 | `starting` | The agent has no session ID yet. |
@@ -866,6 +867,35 @@ vim.api.nvim_create_autocmd('User', {
 })
 ```
 
+### Delegation
+
+An agent that hands work to another agent can show `delegating` until that
+work is done. The child is linked to its parent with a `delegator = { key,
+socket, bufnr, session_id }` passed to `open` (before the first prompt is
+sent) or to `send_prompt` (which links an unlinked instance and keeps an
+existing parent). `key` is the parent's `<nvim-pid>:<output-bufnr>`. The
+`agents` CLI fills it in from the agent running the command.
+
+The parent is `delegating` while at least one child is `starting`,
+`working`, `waiting`, `interrupting`, `monitoring`, or itself `delegating`,
+so nesting composes. A child going `ready`, `unread`, or `exited` clears its
+share. The link outlives idle turns: any later turn the child runs makes the
+parent `delegating` again, until `require('cc.delegation').detach_bufnr(bufnr)`
+or the child closes. Each child has one parent; self-links and cycles are
+refused. Busier local states win, so a parent mid-turn shows `working`, and
+`list_instances()` adds `delegateCount` (busy children), `children` (`{ key,
+sessionId, state, nvimPid, uid }`), and `delegator` (`{ key, sessionId,
+socket, bufnr }` or `nil`) to each snapshot.
+
+Nothing runs on a timer. The child pushes a full snapshot of its state to
+the parent on every `CcStateChanged`, as an `rpcnotify` over a cached socket
+channel (or a direct call when both run in one Neovim); closing an instance,
+`:CcNew` in its windows, and quitting Neovim push `exited` first. Gaps are
+repaired during activity that already happens: `list_instances()` drops
+children whose Neovim pid is dead, and a parent's turn start and end ask each
+child to push again. The `agents` CLI compares parents and children across
+Neovims on every inventory and repairs the rest.
+
 ### Driving sessions from outside Neovim
 
 These functions let a shell script or another agent create, prompt, read,
@@ -882,9 +912,10 @@ require('cc').open({
   name = 'api-test',            -- session title, same path as :CcRename
   prompt = 'Reply with pong',   -- submitted as the first turn
   focus = false,                -- default true
+  delegator = parent,           -- optional: link to a parent agent (see Delegation)
 })
 ---@return boolean ok, string? err
-require('cc').send_prompt(output_bufnr, 'text')
+require('cc').send_prompt(output_bufnr, 'text', { delegator = parent }) -- opts optional
 ---@return string? text, string? err
 require('cc').get_last_assistant_message(output_bufnr)
 ---@return integer? prompt_bufnr, string? err
