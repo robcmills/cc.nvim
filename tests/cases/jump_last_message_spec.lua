@@ -225,35 +225,119 @@ T['target inside a closed fold lands on the fold line'] = function()
   eq(_G.child.lua_get('vim.fn.foldclosed(vim.fn.line("."))'), header)
 end
 
-T['jump while hidden applies when the output is shown again'] = function()
+T['hidden output gets the jump written into its saved view'] = function()
   setup()
   _G.child.lua([[
     _G._stream_turn(1)
+    _G._test_inst.saved_output_view = { lnum = 40, topline = 31 }
+    _G._test_inst.saved_output_following_tail = true
     vim.cmd('enew')
     _G._end_turn()
-    _G._jumped = _G._test_output:take_pending_jump()
   ]])
-  eq(_G.child.lua_get('_G._jumped'), false) -- no window yet: still pending
-  _G.child.lua([[
-    vim.api.nvim_set_current_buf(_G._test_bufnr)
-    _G._test_output:set_window(vim.api.nvim_get_current_win())
-    _G._jumped = _G._test_output:take_pending_jump()
-  ]])
-  eq(_G.child.lua_get('_G._jumped'), true)
+  _G.child.lua('vim.api.nvim_set_current_buf(_G._test_bufnr)')
   local target = find('Final 1.1')
-  eq(view().lnum, target)
-  eq(view().topline, target)
+  local inst = _G.child.lua_get('{ view = _G._test_inst.saved_output_view, tail = _G._test_inst.saved_output_following_tail }')
+  eq(inst.view.lnum, target)
+  eq(inst.view.topline, target)
+  eq(inst.tail, false)
 end
 
-T['hidden output scrolled away when hidden does not jump'] = function()
+T['hidden output scrolled away when hidden keeps its saved view'] = function()
   setup()
   _G.child.lua([[
     _G._stream_turn(1)
+    _G._test_inst.saved_output_view = { lnum = 3, topline = 1 }
     _G._test_inst.saved_output_following_tail = false
     vim.cmd('enew')
     _G._end_turn()
   ]])
-  eq(_G.child.lua_get('_G._test_output._jump_pending'), vim.NIL)
+  eq(_G.child.lua_get('_G._test_inst.saved_output_view'), { lnum = 3, topline = 1 })
+end
+
+T['output in an inactive tab jumps at turn end'] = function()
+  setup()
+  _G.child.lua([[
+    _G._stream_turn(1)
+    _G._out_win = vim.api.nvim_get_current_win()
+    vim.cmd('tabnew')
+    _G._end_turn()
+    _G._out_view = vim.api.nvim_win_call(_G._out_win, vim.fn.winsaveview)
+  ]])
+  local v = _G.child.lua_get('_G._out_view')
+  local target = find('Final 1.1')
+  eq(v.lnum, target)
+  eq(v.topline, target)
+  eq(_G.child.lua_get('vim.api.nvim_win_get_buf(0) ~= _G._test_bufnr'), true)
+end
+
+T['reopening hidden output draws the target first, never the tail'] = function()
+  -- A real instance (fixture-loaded, so no process) with cc's BufWinEnter
+  -- restore path. A decoration provider records every redraw of the output
+  -- window, which is every frame the user could see.
+  _G.child.lua([==[
+    require('cc.config').setup({})
+    local cc = require('cc')
+    cc.load_fixture('tool_bash.ndjson')
+    local inst = cc._get_instance()
+    _G._test_inst = inst
+    _G._test_bufnr = inst.output.bufnr
+    vim.api.nvim_set_current_win(inst.output_winid)
+    vim.cmd('normal! G')
+  ]==])
+  -- Leave the output (tailing), then let the layout collapse.
+  _G.child.lua("vim.cmd('enew')")
+  _G.child.lua('vim.wait(50)')
+  _G.child.lua([==[
+    local inst = _G._test_inst
+    local router = inst.router
+    local function ev(e) router:dispatch({ type = 'stream_event', event = e }) end
+    inst.session.turn_active = true
+    ev({ type = 'message_start', message = { id = 'x', role = 'assistant' } })
+    ev({ type = 'content_block_start', index = 0,
+      content_block = { type = 'tool_use', id = 't9', name = 'Bash', input = {} } })
+    ev({ type = 'content_block_stop', index = 0 })
+    ev({ type = 'message_stop' })
+    router:dispatch({ type = 'user', message = { role = 'user', content = {
+      { type = 'tool_result', tool_use_id = 't9', content = 'out', is_error = false } } } })
+    ev({ type = 'message_start', message = { id = 'y', role = 'assistant' } })
+    local lines = {}
+    for i = 1, 60 do lines[i] = 'Reopen ' .. i end
+    ev({ type = 'content_block_start', index = 0, content_block = { type = 'text', text = '' } })
+    ev({ type = 'content_block_delta', index = 0,
+      delta = { type = 'text_delta', text = table.concat(lines, '\n') } })
+    ev({ type = 'content_block_stop', index = 0 })
+    ev({ type = 'message_stop' })
+    router:dispatch({ type = 'result', subtype = 'success', total_cost_usd = 0.01,
+      usage = { input_tokens = 1, output_tokens = 1 } })
+    _G._target = inst.output:last_message_lnum()
+
+    _G._frames = {}
+    local ns = vim.api.nvim_create_namespace('test.jump_frames')
+    vim.api.nvim_set_decoration_provider(ns, {
+      on_win = function(_, winid, bufnr, toprow)
+        if bufnr == _G._test_bufnr then
+          table.insert(_G._frames, { top = toprow + 1, cursor = vim.api.nvim_win_get_cursor(winid)[1] })
+        end
+        return false
+      end,
+    })
+  ]==])
+  -- Typed, like a user switching buffers, so the main loop gets its normal
+  -- chance to redraw after the command and before scheduled callbacks.
+  _G.child.type_keys('<Esc>', ':buffer ' .. _G.child.lua_get('_G._test_bufnr') .. '<CR>')
+  _G.child.lua('vim.wait(100)')
+  _G.child.lua("vim.cmd('redraw')")
+  local target = _G.child.lua_get('_G._target')
+  local frames = _G.child.lua_get('_G._frames')
+  eq(type(target), 'number')
+  eq(vim.trim(_G.child.lua_get('vim.api.nvim_buf_get_lines(_G._test_bufnr, ' .. (target - 1) .. ', ' .. target .. ', false)[1]')), 'Reopen 1')
+  eq(#frames > 0, true)
+  for i, f in ipairs(frames) do
+    if f.top ~= target or f.cursor ~= target then
+      error(string.format('frame %d shows top=%d cursor=%d, want %d: %s',
+        i, f.top, f.cursor, target, vim.inspect(frames)))
+    end
+  end
 end
 
 T['codex turn end jumps to the final agent message'] = function()

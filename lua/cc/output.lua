@@ -158,7 +158,6 @@ M._buf_state = {}
 ---@field _last_markdown_update_ns number?
 ---@field _message_candidate integer? first line of the live turn's text after its last tool call
 ---@field _last_message integer? extmark on the first line of the latest finished turn's last agent message
----@field _jump_pending boolean? a turn-end jump waits for the output to be shown again
 local Output = {}
 Output.__index = Output
 
@@ -995,30 +994,29 @@ end
 
 --- Put the cursor on the first line of the last agent message and scroll it
 --- to the top of the window. A line inside a closed fold lands on the fold.
---- With no window showing the buffer, the jump waits for `take_pending_jump`.
----@return boolean jumped false when there is no message to jump to
-function Output:jump_to_last_message()
+--- With no window showing the buffer, `inst`'s saved output view becomes that
+--- position instead, so the view restored on reopen already shows it.
+---@param inst cc.Instance?
+---@return boolean jumped false when there is no message or nowhere to jump
+function Output:jump_to_last_message(inst)
   local lnum = self:last_message_lnum()
   if not lnum then return false end
   local winid = self:visible_window()
-  if not winid then
-    self._jump_pending = true
+  if winid then
+    pcall(vim.api.nvim_win_call, winid, function()
+      local closed = vim.fn.foldclosed(lnum)
+      vim.api.nvim_win_set_cursor(winid, { closed ~= -1 and closed or lnum, 0 })
+      vim.cmd('normal! zt')
+    end)
     return true
   end
-  self._jump_pending = nil
-  pcall(vim.api.nvim_win_call, winid, function()
-    local closed = vim.fn.foldclosed(lnum)
-    vim.api.nvim_win_set_cursor(winid, { closed ~= -1 and closed or lnum, 0 })
-    vim.cmd('normal! zt')
-  end)
+  if not inst then return false end
+  inst.saved_output_view = {
+    lnum = lnum, col = 0, coladd = 0, curswant = 0,
+    topline = lnum, topfill = 0, leftcol = 0, skipcol = 0,
+  }
+  inst.saved_output_following_tail = false
   return true
-end
-
---- Apply a jump that was made while no window showed the buffer.
----@return boolean jumped
-function Output:take_pending_jump()
-  if not self._jump_pending or not self:visible_window() then return false end
-  return self:jump_to_last_message()
 end
 
 --- A turn finished and its closing lines are rendered. Its last message
@@ -1035,7 +1033,7 @@ function Output:on_turn_finished(inst)
   else
     tailing = not (inst and inst.saved_output_following_tail == false)
   end
-  if tailing then self:jump_to_last_message() end
+  if tailing then self:jump_to_last_message(inst) end
 end
 
 --- Render a user turn header + content.

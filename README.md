@@ -397,8 +397,9 @@ replying, does not move anything.
 
 Because the cursor is no longer on the last line, tailing stops there: later
 output, including new turns, does not scroll the window until you move back
-to the last line (`G`). A turn that ends while the output is hidden jumps when
-you return to it, provided it was tailing when you left.
+to the last line (`G`). The jump also applies to an output window in another
+split or tab. If the output is hidden and was tailing when you left it, the
+jump becomes its saved view, so it reopens on the message.
 
 `:CcJumpToLastMessage` makes the same jump on demand, from any position and
 whether or not the option is on. It targets the most recent turn that has a

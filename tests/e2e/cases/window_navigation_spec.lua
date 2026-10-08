@@ -699,11 +699,13 @@ T['tail_follow_resumes_after_nav_away_during_active_stream'] = function()
 end
 
 -- ---------------------------------------------------------------------------
--- Test 10: a turn-end jump made while the layout is collapsed survives reopen.
+-- Test 10: a turn that ends while the layout is collapsed reopens on its
+-- last message.
 --
 -- With jump_to_last_message_on_turn_end, a turn that ends while the user is
--- away (and was tailing when they left) jumps to its last message. The reopen
--- path must apply that jump instead of re-pinning to the tail.
+-- away (and was tailing when they left) writes its last message into the
+-- saved output view. Reopening restores that view instead of re-pinning to
+-- the tail.
 -- ---------------------------------------------------------------------------
 
 --- Cursor, topline and the jump target in the output window.

@@ -235,11 +235,39 @@ local function setup_buffer_autocmds(inst)
     end,
   })
 
+  -- Re-pin to the tail when the user was following it on leave (the saved
+  -- view points at a now-stale line if the buffer grew while the layout was
+  -- collapsed); otherwise restore their exact scroll position, or the last
+  -- agent message a turn-end jump wrote there while the output was hidden.
+  local function restore_output_view(winid, saved_view, following_tail)
+    pcall(vim.api.nvim_win_call, winid, function()
+      if saved_view and not following_tail then
+        vim.fn.winrestview(saved_view)
+      else
+        local last = vim.api.nvim_buf_line_count(output_bufnr)
+        vim.api.nvim_win_set_cursor(winid, { last, 0 })
+        vim.cmd('normal! zb')
+      end
+    end)
+  end
+
   -- When output enters a window, recreate the prompt companion below.
   vim.api.nvim_create_autocmd('BufWinEnter', {
     group = group,
     buffer = output_bufnr,
     callback = function()
+      -- Apply a snapshotted view now, before the first redraw, so the window
+      -- never shows the cursor position Neovim remembered for the buffer and
+      -- then moves. The layout pass below restores it again after the split.
+      if inst.saved_output_view then
+        local winid = vim.api.nvim_get_current_win()
+        if vim.api.nvim_win_get_buf(winid) ~= output_bufnr then
+          winid = vim.fn.bufwinid(output_bufnr)
+        end
+        if winid > 0 then
+          restore_output_view(winid, inst.saved_output_view, inst.saved_output_following_tail)
+        end
+      end
       vim.schedule(function()
         if not vim.api.nvim_buf_is_valid(prompt_bufnr) then return end
         -- Fixture-loaded sessions have no process; gate only on liveness for
@@ -299,23 +327,7 @@ local function setup_buffer_autocmds(inst)
         vim.schedule(function()
           if output_winid and vim.api.nvim_win_is_valid(output_winid)
               and vim.api.nvim_win_get_buf(output_winid) == output_bufnr then
-            -- A jump to the last message made while the output was hidden
-            -- replaces both the saved view and the re-pin.
-            if not inst.output:take_pending_jump() then
-              pcall(vim.api.nvim_win_call, output_winid, function()
-                -- Re-pin to the tail when the user was following it on leave (the
-                -- saved view points at a now-stale line if the buffer grew while
-                -- the layout was collapsed); otherwise restore their exact
-                -- scroll position.
-                if saved_output_view and not saved_output_following_tail then
-                  vim.fn.winrestview(saved_output_view)
-                else
-                  local last = vim.api.nvim_buf_line_count(output_bufnr)
-                  vim.api.nvim_win_set_cursor(output_winid, { last, 0 })
-                  vim.cmd('normal! zb')
-                end
-              end)
-            end
+            restore_output_view(output_winid, saved_output_view, saved_output_following_tail)
           end
           if saved_prompt_view and prompt_winid and vim.api.nvim_win_is_valid(prompt_winid)
               and vim.api.nvim_win_get_buf(prompt_winid) == prompt_bufnr then
@@ -1903,7 +1915,7 @@ end
 function M.jump_to_last_message(bufnr)
   local inst = type(bufnr) == 'number' and find_instance(bufnr) or nil
   if not inst or not inst.output then return nil end
-  return inst.output:jump_to_last_message()
+  return inst.output:jump_to_last_message(inst)
 end
 
 --- Focus an existing instance by its output buffer, restoring its companion
