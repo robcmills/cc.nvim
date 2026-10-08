@@ -63,6 +63,7 @@ M.TOOL_DEPTH = TOOL_DEPTH
 local TOOL_INDENT = 2
 local GROUP_INDENT = 2
 local NS_GROUP_INDENT = vim.api.nvim_create_namespace('cc.group_indent')
+local LAST_MESSAGE_NS = vim.api.nvim_create_namespace('cc.last_message')
 M.NS_GROUP_INDENT = NS_GROUP_INDENT
 
 --- Normalize a foldexpr value (">3", 3) to its depth.
@@ -155,6 +156,9 @@ M._buf_state = {}
 ---@field _stream_revision integer
 ---@field _markdown_revision integer
 ---@field _last_markdown_update_ns number?
+---@field _message_candidate integer? first line of the live turn's text after its last tool call
+---@field _last_message integer? extmark on the first line of the latest finished turn's last agent message
+---@field _jump_pending boolean? a turn-end jump waits for the output to be shown again
 local Output = {}
 Output.__index = Output
 
@@ -576,6 +580,7 @@ function Output:_shift_line_refs(from, delta)
   if self.turn then
     self.turn.trail_start = moved(self.turn.trail_start)
   end
+  self._message_candidate = moved(self._message_candidate)
 end
 
 --- Delete one plain (non-header) line and shift the line state below it.
@@ -943,6 +948,96 @@ function Output:_with_tail_anchor(mutate)
   end
 end
 
+--- Agent text starts at `lnum`. The first text after a turn's last tool call
+--- is the start of its last message; later text blocks belong to it. Kept as
+--- a line number while the turn streams: an extmark would be pushed down by
+--- the `set_lines` rewrites of `_append_to_last_line`.
+---@param lnum integer 1-indexed
+function Output:_note_message_text(lnum)
+  self._message_candidate = self._message_candidate or lnum
+end
+
+--- A tool call follows: the text before it was not the turn's last message.
+function Output:_drop_message_candidate()
+  self._message_candidate = nil
+end
+
+--- The turn is over: its last message (if it had one) becomes the jump
+--- target. A turn without text leaves the previous target in place.
+---@return boolean committed
+function Output:commit_last_message()
+  local lnum = self._message_candidate
+  if not lnum then return false end
+  self._message_candidate = nil
+  if lnum > vim.api.nvim_buf_line_count(self.bufnr) then return false end
+  self._last_message = vim.api.nvim_buf_set_extmark(self.bufnr, LAST_MESSAGE_NS, lnum - 1, 0,
+    { id = self._last_message })
+  return true
+end
+
+--- First line of the latest finished turn's last agent message.
+---@return integer? lnum 1-indexed
+function Output:last_message_lnum()
+  if not self._last_message or not vim.api.nvim_buf_is_valid(self.bufnr) then return nil end
+  local pos = vim.api.nvim_buf_get_extmark_by_id(self.bufnr, LAST_MESSAGE_NS, self._last_message, {})
+  return pos[1] and pos[1] + 1 or nil
+end
+
+--- The window showing this output buffer, if any.
+---@return integer?
+function Output:visible_window()
+  if self.winid and vim.api.nvim_win_is_valid(self.winid)
+      and vim.api.nvim_win_get_buf(self.winid) == self.bufnr then
+    return self.winid
+  end
+  return nil
+end
+
+--- Put the cursor on the first line of the last agent message and scroll it
+--- to the top of the window. A line inside a closed fold lands on the fold.
+--- With no window showing the buffer, the jump waits for `take_pending_jump`.
+---@return boolean jumped false when there is no message to jump to
+function Output:jump_to_last_message()
+  local lnum = self:last_message_lnum()
+  if not lnum then return false end
+  local winid = self:visible_window()
+  if not winid then
+    self._jump_pending = true
+    return true
+  end
+  self._jump_pending = nil
+  pcall(vim.api.nvim_win_call, winid, function()
+    local closed = vim.fn.foldclosed(lnum)
+    vim.api.nvim_win_set_cursor(winid, { closed ~= -1 and closed or lnum, 0 })
+    vim.cmd('normal! zt')
+  end)
+  return true
+end
+
+--- Apply a jump that was made while no window showed the buffer.
+---@return boolean jumped
+function Output:take_pending_jump()
+  if not self._jump_pending or not self:visible_window() then return false end
+  return self:jump_to_last_message()
+end
+
+--- A turn finished and its closing lines are rendered. Its last message
+--- becomes the jump target and, with `jump_to_last_message_on_turn_end`, the
+--- cursor moves there if the view is tailing. Hidden output counts as tailing
+--- unless it was scrolled away from the tail when it was hidden.
+---@param inst cc.Instance?
+function Output:on_turn_finished(inst)
+  if not self:commit_last_message() then return end
+  if not require('cc.config').options.jump_to_last_message_on_turn_end then return end
+  local tailing
+  if self:visible_window() then
+    tailing = self:_is_following_tail()
+  else
+    tailing = not (inst and inst.saved_output_following_tail == false)
+  end
+  if tailing then self:jump_to_last_message() end
+end
+
 --- Render a user turn header + content.
 ---@param text string
 function Output:render_user_turn(text)
@@ -952,6 +1047,7 @@ function Output:render_user_turn(text)
   local is_continuation = (self.last_turn_role == 'user')
   self.last_turn_role = 'user'
   self.turn = nil
+  self:commit_last_message()
 
   if is_continuation then
     -- Consecutive user turn: append content under the existing fold.
@@ -1037,6 +1133,7 @@ function Output:on_content_block_start(block)
   if block.type == 'text' then
     local lnum = self:_append({ '  ' }, { 1 }, false)
     self:_mark_trail(lnum)
+    self:_note_message_text(lnum)
     self.streaming_block_type = 'text'
     self.streaming_prose_start_lnum = lnum
     self._stream_revision = 0
@@ -1061,6 +1158,7 @@ function Output:on_content_block_start(block)
       self.streaming_block_type = 'thinking_hidden'
     end
   elseif block.type == 'tool_use' then
+    self:_drop_message_candidate()
     local turn = self:_prepare_turn_tool()
     local lone = turn.group == nil
     local indent = TOOL_INDENT + (lone and 0 or GROUP_INDENT)
@@ -1993,6 +2091,7 @@ function Output:render_historical_record(rec)
           -- Append text paragraph at fold level 1.
           local start_lnum = self:_append({ '  ' }, { 1 }, false)
           self:_mark_trail(start_lnum)
+          self:_note_message_text(start_lnum)
           self:_append_to_last_line(block.text or '')
           if highlight_agent then
             local end_lnum = vim.api.nvim_buf_line_count(self.bufnr)
@@ -2102,6 +2201,7 @@ function Output:finalize_history_replay()
   local bufnr = self.bufnr
   if not (bufnr and bufnr > 0 and vim.api.nvim_buf_is_valid(bufnr)) then return end
   M._flush_pending_fold_closes(bufnr)
+  self:commit_last_message()
   for _, winid in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_get_buf(winid) == bufnr then
       self:_ensure_fold_opts(winid)

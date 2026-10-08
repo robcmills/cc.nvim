@@ -299,19 +299,23 @@ local function setup_buffer_autocmds(inst)
         vim.schedule(function()
           if output_winid and vim.api.nvim_win_is_valid(output_winid)
               and vim.api.nvim_win_get_buf(output_winid) == output_bufnr then
-            pcall(vim.api.nvim_win_call, output_winid, function()
-              -- Re-pin to the tail when the user was following it on leave (the
-              -- saved view points at a now-stale line if the buffer grew while
-              -- the layout was collapsed); otherwise restore their exact
-              -- scroll position.
-              if saved_output_view and not saved_output_following_tail then
-                vim.fn.winrestview(saved_output_view)
-              else
-                local last = vim.api.nvim_buf_line_count(output_bufnr)
-                vim.api.nvim_win_set_cursor(output_winid, { last, 0 })
-                vim.cmd('normal! zb')
-              end
-            end)
+            -- A jump to the last message made while the output was hidden
+            -- replaces both the saved view and the re-pin.
+            if not inst.output:take_pending_jump() then
+              pcall(vim.api.nvim_win_call, output_winid, function()
+                -- Re-pin to the tail when the user was following it on leave (the
+                -- saved view points at a now-stale line if the buffer grew while
+                -- the layout was collapsed); otherwise restore their exact
+                -- scroll position.
+                if saved_output_view and not saved_output_following_tail then
+                  vim.fn.winrestview(saved_output_view)
+                else
+                  local last = vim.api.nvim_buf_line_count(output_bufnr)
+                  vim.api.nvim_win_set_cursor(output_winid, { last, 0 })
+                  vim.cmd('normal! zb')
+                end
+              end)
+            end
           end
           if saved_prompt_view and prompt_winid and vim.api.nvim_win_is_valid(prompt_winid)
               and vim.api.nvim_win_get_buf(prompt_winid) == prompt_bufnr then
@@ -1889,6 +1893,17 @@ function M.mark_unread(bufnr)
   if not inst then return false end
   require('cc.seen').mark_unread(inst)
   return true
+end
+
+--- Jump the instance owning `bufnr` (output or prompt) to the first line of
+--- its latest turn's last agent message, scrolled to the top of the window.
+---@param bufnr integer
+---@return boolean? jumped nil when bufnr is not a cc.nvim buffer, false when
+---  no turn has an agent message yet
+function M.jump_to_last_message(bufnr)
+  local inst = type(bufnr) == 'number' and find_instance(bufnr) or nil
+  if not inst or not inst.output then return nil end
+  return inst.output:jump_to_last_message()
 end
 
 --- Focus an existing instance by its output buffer, restoring its companion

@@ -269,9 +269,11 @@ function M.open_with_fixture(child, fixture_name, setup_opts)
   local slow = setup_opts.slow_delay_ms
   setup_opts.slow_delay_ms = nil
   local cmd = slow and M.fake_claude_slow or M.fake_claude
+  -- The viewport specs assert the tail invariant across turn ends, so the
+  -- turn-end jump is off unless a spec turns it on.
   local opts_str = vim.inspect(vim.tbl_deep_extend(
     'force',
-    { providers = { claude = { cmd = cmd } } },
+    { providers = { claude = { cmd = cmd } }, jump_to_last_message_on_turn_end = false },
     setup_opts
   ))
   local delay_str = slow and string.format('vim.env.CC_TEST_DELAY_MS = %q\n', tostring(slow)) or ''

@@ -181,6 +181,7 @@ instead of being guessed.
 | `:CcEffort [level]` | Set reasoning effort on the active session; without a session, set the in-memory default for the next `:CcNew` |
 | `:CcModel [model]` | Set the active session's model for subsequent turns; no argument reports the current model |
 | `:CcModelsUpdate [provider]` | Fetch the available models from the `claude` and `codex` CLIs (or just one) and refresh model completion |
+| `:CcJumpToLastMessage` | Move the output cursor to the start of the latest turn's last agent message and scroll it to the top (see [Jump to the last message](#jump-to-the-last-message)) |
 | `:CcPeek` | Tail a running Bash tool call in a floating window (see [Peeking at running Bash](#peeking-at-running-bash)) |
 | `:CcPeekInstall` / `:CcPeekUninstall` | Install / remove the `PreToolUse` hook that wires up `:CcPeek` |
 | `:CcDumpNdjson [path]` | Tee raw NDJSON from the subprocess to a file (no arg = stop) |
@@ -303,6 +304,7 @@ require('cc').setup({
   show_thinking = true,
   show_turn_cost = true,
   splash = true,
+  jump_to_last_message_on_turn_end = true, -- see "Jump to the last message"
 
   streaming = {
     -- Coalesce text/thinking deltas into one output-buffer update per frame.
@@ -381,6 +383,27 @@ Invalid streaming values are ignored with a warning and fall back to the
 defaults shown above. Delta rendering and Markdown highlighting are throttled
 independently: text remains responsive at the render interval even when
 Markdown is configured to refresh less often or only at block completion.
+
+### Jump to the last message
+
+While a turn streams, the output window tails the newest line. When the turn
+ends, the cursor moves to the first line of its last agent message (the text
+after its final tool call) and that line scrolls to the top of the window, so
+you can read the answer from its start. This only happens if the window was
+tailing (cursor on the last line); a view you have scrolled away is left
+alone. If the line sits inside a closed fold, the cursor lands on the fold. A
+turn with no text after its last tool call, such as one interrupted before
+replying, does not move anything.
+
+Because the cursor is no longer on the last line, tailing stops there: later
+output, including new turns, does not scroll the window until you move back
+to the last line (`G`). A turn that ends while the output is hidden jumps when
+you return to it, provided it was tailing when you left.
+
+`:CcJumpToLastMessage` makes the same jump on demand, from any position and
+whether or not the option is on. It targets the most recent turn that has a
+last message. Set `jump_to_last_message_on_turn_end = false` to keep tailing
+through turn ends.
 
 ## Progressive disclosure
 

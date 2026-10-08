@@ -287,6 +287,12 @@ function M.create()
     end
   end, { desc = 'Mark the current cc.nvim session unread until next viewed' })
 
+  vim.api.nvim_create_user_command('CcJumpToLastMessage', function()
+    if require('cc').jump_to_last_message(vim.api.nvim_get_current_buf()) == nil then
+      vim.notify('cc.nvim: not a cc.nvim buffer', vim.log.levels.WARN)
+    end
+  end, { desc = "Jump to the start of the latest turn's last agent message" })
+
   vim.api.nvim_create_user_command('CcPeek', function()
     require('cc.peek').peek_command()
   end, { desc = 'Tail a running Bash tool call in a floating window' })

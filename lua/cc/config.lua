@@ -187,6 +187,11 @@ local defaults = {
   -- Set to false to suppress the new-session splash.
   splash = true,
 
+  -- When a turn ends while the output window is tailing, move the cursor to
+  -- the first line of the turn's last agent message and scroll it to the top
+  -- of the window. Tailing then stops until you return to the last line.
+  jump_to_last_message_on_turn_end = true,
+
   -- Streaming output is coalesced to one buffer update per interval. Markdown
   -- highlighting is throttled independently because reparsing a growing prose
   -- block is substantially more expensive than appending its text.

@@ -698,4 +698,83 @@ T['tail_follow_resumes_after_nav_away_during_active_stream'] = function()
   h.assert_pinned_to_bottom(_G.child, out_winid)
 end
 
+-- ---------------------------------------------------------------------------
+-- Test 10: a turn-end jump made while the layout is collapsed survives reopen.
+--
+-- With jump_to_last_message_on_turn_end, a turn that ends while the user is
+-- away (and was tailing when they left) jumps to its last message. The reopen
+-- path must apply that jump instead of re-pinning to the tail.
+-- ---------------------------------------------------------------------------
+
+--- Cursor, topline and the jump target in the output window.
+local function jump_view(child, winid)
+  return child:lua(string.format([[
+    local winid = %d
+    local bufnr = vim.api.nvim_win_get_buf(winid)
+    local inst = require('cc').find_instance(bufnr)
+    local view = vim.api.nvim_win_call(winid, vim.fn.winsaveview)
+    return {
+      lnum = view.lnum,
+      topline = view.topline,
+      target = inst.output:last_message_lnum(),
+      line_count = vim.api.nvim_buf_line_count(bufnr),
+    }
+  ]], winid))
+end
+
+T['turn_end_jump_survives_nav_away_and_back'] = function()
+  _G.child = h.spawn({ lines = 22, columns = 100 })
+  h.open_with_fixture(_G.child, 'many_lines',
+    { slow_delay_ms = 30, jump_to_last_message_on_turn_end = true })
+
+  local winid
+  local ok = _G.child:wait_for(function(c)
+    winid = c:find_winid_for_buf('cc-nvim-output')
+    if not winid then return false end
+    local lc = c:lua([[ return vim.api.nvim_buf_line_count(vim.fn.bufnr('cc-nvim-output')) ]])
+    return lc and lc >= 12
+  end, 4000)
+  if not ok then error('output never overflowed mid-stream') end
+
+  _G.child:lua(string.format([[
+    vim.api.nvim_set_current_win(%d)
+    vim.cmd('normal! G')
+  ]], winid))
+  _G.child:sleep(30)
+  _G.child:lua([[ pcall(vim.cmd, 'edit plugin/cc.lua') ]])
+  _G.child:sleep(50)
+
+  if not h.wait_for_session_end(_G.child, 8000) then
+    error('session did not end while navigated away')
+  end
+  force_alive(_G.child)
+
+  switch_to_buf_by_name(_G.child, 'cc-nvim-output')
+  _G.child:sleep(300)
+
+  local out_winid = _G.child:find_winid_for_buf('cc-nvim-output')
+  if not out_winid then error('output window not recreated on return') end
+  local v = jump_view(_G.child, out_winid)
+  if type(v.target) ~= 'number' or v.lnum ~= v.target or v.topline ~= v.target
+      or v.target >= v.line_count then
+    error('turn-end jump not applied on reopen: ' .. vim.inspect(v)
+      .. ' ' .. h.dump_viewport(_G.child, out_winid))
+  end
+end
+
+T['turn_end_jump_while_visible'] = function()
+  _G.child = h.spawn({ lines = 20, columns = 100 })
+  h.open_with_fixture(_G.child, 'multi_block', { jump_to_last_message_on_turn_end = true })
+  if not h.wait_for_session_end(_G.child, 8000) then
+    error('session did not end. ' .. h.dump_viewport(_G.child, _G.child:find_winid_for_buf('cc-nvim-output')))
+  end
+  _G.child:sleep(300)
+  local winid = _G.child:find_winid_for_buf('cc-nvim-output')
+  if not winid then error('no window for cc-nvim-output') end
+  local v = jump_view(_G.child, winid)
+  if type(v.target) ~= 'number' or v.lnum ~= v.target or v.topline ~= v.target then
+    error('turn-end jump not applied: ' .. vim.inspect(v) .. ' ' .. h.dump_viewport(_G.child, winid))
+  end
+end
+
 return T

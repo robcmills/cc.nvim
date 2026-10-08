@@ -677,6 +677,7 @@ function Codex:_on_turn_completed(params)
   else
     self.output:render_result(result)
   end
+  self.output:on_turn_finished(self.instance)
   self.turn_id = nil
   self:_refresh()
 end

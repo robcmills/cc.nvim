@@ -371,6 +371,7 @@ function Router:_finish_interrupted_turn(text)
   local timing = self.session:finish_turn()
   require('cc.seen').on_turn_finished(self.instance)
   self.output:render_interrupted(timing, text)
+  self.output:on_turn_finished(self.instance)
 end
 
 --- A turn we did not ask to stop was aborted from claude.ai. When we did ask
@@ -403,6 +404,7 @@ function Router:_handle_result(msg)
       vim.notify('cc.nvim: ' .. err, vim.log.levels.WARN)
     end
     self.output:render_result(msg)
+    self.output:on_turn_finished(self.instance)
   end
   self.last_error_text = nil
   if self.instance then
