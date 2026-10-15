@@ -301,6 +301,11 @@ require('cc').setup({
     resume = 'off', -- 'auto' re-enables on :CcResume when the session exited with it on
   },
 
+  resume_guard = {
+    enabled = true, -- ask before resuming a Claude session another process holds
+    picker_marker = '●', -- marks those sessions in :CcHistory; '' hides it
+  },
+
   show_thinking = true,
   show_turn_cost = true,
   splash = true,
@@ -1025,6 +1030,19 @@ When resuming, the prior transcript is re-rendered into the output buffer
 (with inline diffs, tool calls, etc.) before the live session picks up.
 Records are capped at `history_max_records` to keep long sessions snappy.
 
+### Sessions already running elsewhere
+
+Resuming a Claude session that is still live in another process (another
+Neovim, a terminal `claude`) would run it twice, with both copies writing
+one transcript. Before resuming, cc.nvim reads
+`~/.claude/sessions/<pid>.json` (under `$CLAUDE_CONFIG_DIR` when set),
+which every running `claude` writes, and treats an entry as live only if
+its pid is still running. When a live process holds the session, cc.nvim
+names its pid, tmux window, and session name, and asks whether to resume
+anyway or cancel. The history picker marks those sessions with
+`resume_guard.picker_marker`. Set `resume_guard.enabled = false` to turn
+the check off. Codex sessions are not checked.
+
 ### Renaming a session
 
 Give the current session a custom title with either `/rename <name>` in
@@ -1213,6 +1231,7 @@ tests/
 │   ├── statusline_spinner_spec.lua  # spinner timer lifecycle and frame resolution
 │   ├── streaming_spec.lua           # streaming-only types: hooks, tool_progress, api_retry, etc.
 │   ├── history_resume_spec.lua      # :CcResume transcript re-rendering
+│   ├── resume_guard_spec.lua        # live-session check before :CcResume
 │   ├── process_integration_spec.lua # full pipeline via fake_claude.sh subprocess
 │   ├── provider_spec.lua            # provider interface contract + selection
 │   ├── codex_provider_spec.lua      # codex JSON-RPC protocol (stubbed transport)
