@@ -182,6 +182,7 @@ instead of being guessed.
 | `:CcModel [model]` | Set the active session's model for subsequent turns; no argument reports the current model |
 | `:CcModelsUpdate [provider]` | Fetch the available models from the `claude` and `codex` CLIs (or just one) and refresh model completion |
 | `:CcJumpToLastMessage` | Move the output cursor to the start of the latest turn's last agent message and scroll it to the top (see [Jump to the last message](#jump-to-the-last-message)) |
+| `:CcJumpToNextMessage` / `:CcJumpToPrevMessage` | Step the output cursor to the next or previous turn's last agent message (see [Jump to the last message](#jump-to-the-last-message)) |
 | `:CcPeek` | Tail a running Bash tool call in a floating window (see [Peeking at running Bash](#peeking-at-running-bash)) |
 | `:CcPeekInstall` / `:CcPeekUninstall` | Install / remove the `PreToolUse` hook that wires up `:CcPeek` |
 | `:CcDumpNdjson [path]` | Tee raw NDJSON from the subprocess to a file (no arg = stop) |
@@ -411,6 +412,14 @@ jump becomes its saved view, so it reopens on the message.
 whether or not the option is on. It targets the most recent turn that has a
 last message. Set `jump_to_last_message_on_turn_end = false` to keep tailing
 through turn ends.
+
+`:CcJumpToNextMessage` and `:CcJumpToPrevMessage` step through every turn's
+last message, including turns replayed by `:CcResume`. Next goes to the
+nearest one below the cursor line, prev to the nearest one above, and both
+land the same way. From inside a closed fold they search from the fold's end
+or start, so a fold never traps the cursor. With nothing further in that
+direction, the cursor stays put and a short notice says so. Like
+`:CcJumpToLastMessage`, they work from the prompt buffer too.
 
 ## Progressive disclosure
 

@@ -961,17 +961,28 @@ function Output:_drop_message_candidate()
   self._message_candidate = nil
 end
 
---- The turn is over: its last message (if it had one) becomes the jump
---- target. A turn without text leaves the previous target in place.
+--- The turn is over: its last message (if it had one) gets its own mark and
+--- becomes the jump target. A turn without text gets no mark and leaves the
+--- previous target in place.
 ---@return boolean committed
 function Output:commit_last_message()
   local lnum = self._message_candidate
   if not lnum then return false end
   self._message_candidate = nil
   if lnum > vim.api.nvim_buf_line_count(self.bufnr) then return false end
-  self._last_message = vim.api.nvim_buf_set_extmark(self.bufnr, LAST_MESSAGE_NS, lnum - 1, 0,
-    { id = self._last_message })
+  self._last_message = vim.api.nvim_buf_set_extmark(self.bufnr, LAST_MESSAGE_NS, lnum - 1, 0, {})
   return true
+end
+
+--- First lines of every finished turn's last agent message, ascending.
+---@return integer[] lnums 1-indexed
+function Output:message_lnums()
+  if not (self.bufnr > 0 and vim.api.nvim_buf_is_valid(self.bufnr)) then return {} end
+  local lnums = {}
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(self.bufnr, LAST_MESSAGE_NS, 0, -1, {})) do
+    lnums[#lnums + 1] = mark[2] + 1
+  end
+  return lnums
 end
 
 --- First line of the latest finished turn's last agent message.
@@ -1001,6 +1012,49 @@ end
 function Output:jump_to_last_message(inst)
   local lnum = self:last_message_lnum()
   if not lnum then return false end
+  return self:_jump_to_message(lnum, inst)
+end
+
+--- Step to the nearest turn's last agent message below (`dir` 1) or above
+--- (`dir` -1) the cursor, landing like `jump_to_last_message`. A cursor in a
+--- closed fold searches from the fold's end or start, so the fold never
+--- traps it. With the output hidden, the saved view's line is the cursor.
+---@param dir 1|-1
+---@param inst cc.Instance?
+---@return boolean jumped false when there is no message in that direction
+function Output:jump_to_adjacent_message(dir, inst)
+  local winid = self:visible_window()
+  local from
+  if winid then
+    vim.api.nvim_win_call(winid, function()
+      local cursor = vim.fn.line('.')
+      local edge = dir > 0 and vim.fn.foldclosedend(cursor) or vim.fn.foldclosed(cursor)
+      from = edge ~= -1 and edge or cursor
+    end)
+  elseif inst and inst.saved_output_view then
+    from = inst.saved_output_view.lnum
+  else
+    return false
+  end
+  local lnums = self:message_lnums()
+  local first, last, step = 1, #lnums, 1
+  if dir < 0 then first, last, step = #lnums, 1, -1 end
+  for i = first, last, step do
+    local lnum = lnums[i]
+    if (dir > 0 and lnum > from) or (dir < 0 and lnum < from) then
+      return self:_jump_to_message(lnum, inst)
+    end
+  end
+  return false
+end
+
+--- Put the cursor on `lnum` (or the closed fold holding it) and scroll it to
+--- the top of the window, or write that view into `inst`'s saved view when
+--- no window shows the buffer.
+---@param lnum integer
+---@param inst cc.Instance?
+---@return boolean jumped
+function Output:_jump_to_message(lnum, inst)
   local winid = self:visible_window()
   if winid then
     pcall(vim.api.nvim_win_call, winid, function()
