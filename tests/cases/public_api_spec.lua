@@ -249,6 +249,20 @@ end
 
 T['submit'] = MiniTest.new_set()
 
+T['submit']['keypad Enter submits from the prompt buffer'] = function()
+  _G.child.lua(INSTALL_FAKE .. [==[
+    local cc = require('cc')
+    local bufnr = cc.open()
+    vim.cmd('stopinsert')
+    local inst = cc.find_instance(bufnr)
+    vim.api.nvim_set_current_buf(inst.prompt.bufnr)
+    vim.api.nvim_buf_set_lines(inst.prompt.bufnr, 0, -1, false, { 'typed' })
+    vim.api.nvim_feedkeys(vim.keycode('<kEnter>'), 'x', false)
+    _G._r = { sent = _G._fake_provider.sent }
+  ]==] .. RESTORE_FAKE)
+  eq(_G.child.lua_get('_G._r').sent, { 'typed' })
+end
+
 T['submit']['submits and clears a target prompt from any buffer'] = function()
   _G.child.lua(INSTALL_FAKE .. [==[
     local cc = require('cc')

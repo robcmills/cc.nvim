@@ -73,6 +73,7 @@ local defaults = {
     goto_prompt = 'gp',
     interrupt = '<C-c>',
     submit = '<CR>',
+    submit_keypad = '<kEnter>', -- keypad Enter (fn+Return on a MacBook); nil → off
   },
 
   layout = 'horizontal', -- 'horizontal' | 'vertical'

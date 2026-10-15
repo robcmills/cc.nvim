@@ -102,6 +102,10 @@ local function setup_prompt_keymaps(inst)
   local keys = Config.options.keymaps
   vim.keymap.set('n', keys.submit, function() M.submit() end,
     { buffer = bufnr, silent = true, desc = 'cc.nvim: submit prompt' })
+  if keys.submit_keypad then
+    vim.keymap.set('n', keys.submit_keypad, function() M.submit() end,
+      { buffer = bufnr, silent = true, desc = 'cc.nvim: submit prompt' })
+  end
   vim.keymap.set({ 'n', 'i' }, keys.interrupt, function() M.stop() end,
     { buffer = bufnr, silent = true, desc = 'cc.nvim: interrupt' })
   vim.keymap.set('n', keys.clear_prompt, function()

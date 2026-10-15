@@ -235,6 +235,7 @@ require('cc').setup({
     goto_prompt = 'gp',
     interrupt = '<C-c>',
     submit = '<CR>',
+    submit_keypad = '<kEnter>',
   },
 
   layout = 'horizontal',
