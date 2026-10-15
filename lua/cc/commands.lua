@@ -293,6 +293,23 @@ function M.create()
     end
   end, { desc = "Jump to the start of the latest turn's last agent message" })
 
+  local function step_message(fn, none)
+    local jumped = require('cc')[fn](vim.api.nvim_get_current_buf())
+    if jumped == nil then
+      vim.notify('cc.nvim: not a cc.nvim buffer', vim.log.levels.WARN)
+    elseif not jumped then
+      vim.notify('cc.nvim: ' .. none, vim.log.levels.INFO)
+    end
+  end
+
+  vim.api.nvim_create_user_command('CcJumpToNextMessage', function()
+    step_message('jump_to_next_message', 'no newer reply')
+  end, { desc = "Jump to the next turn's last agent message below the cursor" })
+
+  vim.api.nvim_create_user_command('CcJumpToPrevMessage', function()
+    step_message('jump_to_prev_message', 'no older reply')
+  end, { desc = "Jump to the previous turn's last agent message above the cursor" })
+
   vim.api.nvim_create_user_command('CcPeek', function()
     require('cc.peek').peek_command()
   end, { desc = 'Tail a running Bash tool call in a floating window' })

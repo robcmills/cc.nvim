@@ -419,4 +419,161 @@ T['command works on a resumed transcript'] = function()
   eq(_G.child.lua_get('vim.fn.line(".")'), target)
 end
 
+-- :CcJumpToNextMessage / :CcJumpToPrevMessage step through every finished
+-- turn's last message. _G._notes collects their notices.
+
+local function setup_steps()
+  setup('{ jump_to_last_message_on_turn_end = false }')
+  _G.child.lua([[
+    _G._notes = {}
+    vim.notify = function(msg, level) table.insert(_G._notes, { msg, level }) end
+  ]])
+end
+
+local function step(cmd)
+  _G.child.lua("vim.cmd('" .. cmd .. "')")
+  return view().lnum
+end
+
+local function notes() return _G.child.lua_get('_G._notes') end
+
+T['next and prev step through every turn'] = function()
+  setup_steps()
+  _G.child.lua('_G._turn(1) _G._turn(2) _G._turn(3)')
+  local f1, f2, f3 = find('Final 1.1'), find('Final 2.1'), find('Final 3.1')
+  _G.child.lua('vim.api.nvim_win_set_cursor(0, { 1, 0 })')
+  eq(step('CcJumpToNextMessage'), f1)
+  eq(view().topline, f1)
+  eq(step('CcJumpToNextMessage'), f2)
+  eq(step('CcJumpToNextMessage'), f3)
+  eq(view().topline, f3)
+  eq(step('CcJumpToPrevMessage'), f2)
+  eq(step('CcJumpToPrevMessage'), f1)
+  eq(view().topline, f1)
+  eq(notes(), {})
+end
+
+T['next and prev search from the cursor line'] = function()
+  setup_steps()
+  _G.child.lua('_G._turn(1) _G._turn(2) _G._turn(3)')
+  _G.child.lua('vim.api.nvim_win_set_cursor(0, { _G._find("Final 2.5"), 0 })')
+  eq(step('CcJumpToNextMessage'), find('Final 3.1'))
+  _G.child.lua('vim.api.nvim_win_set_cursor(0, { _G._find("Final 2.5"), 0 })')
+  eq(step('CcJumpToPrevMessage'), find('Final 2.1'))
+end
+
+T['both ends keep the cursor and notify'] = function()
+  setup_steps()
+  _G.child.lua('_G._turn(1) _G._turn(2)')
+  _G.child.lua('vim.cmd("CcJumpToLastMessage")')
+  local last = view()
+  eq(step('CcJumpToNextMessage'), last.lnum)
+  eq(view(), last)
+  eq(notes(), { { 'cc.nvim: no newer reply', vim.log.levels.INFO } })
+  _G.child.lua('_G._notes = {}')
+  local f1 = find('Final 1.1')
+  eq(step('CcJumpToPrevMessage'), f1)
+  local first = view()
+  eq(step('CcJumpToPrevMessage'), f1)
+  eq(view(), first)
+  eq(notes(), { { 'cc.nvim: no older reply', vim.log.levels.INFO } })
+end
+
+T['a turn with no text gets no mark'] = function()
+  setup_steps()
+  _G.child.lua('_G._turn(1) _G._turn(2, { no_final = true }) _G._turn(3)')
+  eq(#_G.child.lua_get('_G._test_output:message_lnums()'), 2)
+  _G.child.lua('vim.api.nvim_win_set_cursor(0, { 1, 0 })')
+  eq(step('CcJumpToNextMessage'), find('Final 1.1'))
+  eq(step('CcJumpToNextMessage'), find('Final 3.1'))
+  eq(step('CcJumpToPrevMessage'), find('Final 1.1'))
+end
+
+T['a closed fold does not trap the cursor'] = function()
+  setup_steps()
+  _G.child.lua('_G._turn(1) _G._turn(2) _G._turn(3)')
+  local fold = _G.child.lua_get([[(function()
+    vim.api.nvim_win_set_cursor(0, { _G._find('Final 2.1'), 0 })
+    vim.cmd('normal! zc')
+    return { vim.fn.foldclosed('.'), vim.fn.foldclosedend('.') }
+  end)()]])
+  eq(fold[1] > find('Final 1.1'), true)
+  eq(fold[2] < find('Final 3.1'), true)
+  eq(step('CcJumpToNextMessage'), find('Final 3.1'))
+  -- Prev lands on the closed fold holding turn 2's message, then leaves it.
+  eq(step('CcJumpToPrevMessage'), fold[1])
+  eq(_G.child.lua_get('vim.fn.foldclosed(".")'), fold[1])
+  eq(step('CcJumpToPrevMessage'), find('Final 1.1'))
+  eq(step('CcJumpToNextMessage'), fold[1])
+  eq(step('CcJumpToNextMessage'), find('Final 3.1'))
+end
+
+T['commands act on the output window from the prompt buffer'] = function()
+  setup_steps()
+  _G.child.lua([[
+    _G._turn(1) _G._turn(2)
+    _G._out_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    local prompt = vim.api.nvim_create_buf(false, true)
+    _G._test_inst.prompt = { bufnr = prompt }
+    vim.cmd('split')
+    vim.api.nvim_set_current_buf(prompt)
+    vim.cmd('CcJumpToNextMessage')
+    vim.cmd('CcJumpToNextMessage')
+    _G._out_lnum = vim.api.nvim_win_get_cursor(_G._out_win)[1]
+  ]])
+  eq(_G.child.lua_get('_G._out_lnum'), find('Final 2.1'))
+  eq(notes(), {})
+end
+
+T['a replayed transcript has a mark for every turn with a reply'] = function()
+  _G.child.lua([==[
+    require('cc.config').setup({ jump_to_last_message_on_turn_end = false })
+    local function user(text) return { type = 'user', message = { role = 'user', content = text } } end
+    local function assistant(blocks) return { type = 'assistant', message = { role = 'assistant', content = blocks } } end
+    local function result(id) return { type = 'user', message = { role = 'user', content = {
+      { type = 'tool_result', tool_use_id = id, content = 'out', is_error = false } } } } end
+    local function bash(id) return { type = 'tool_use', id = id, name = 'Bash', input = { command = 'ls' } } end
+    local function text(t) return { type = 'text', text = t } end
+    local records = {
+      user('one'), assistant({ text('Reply one') }),
+      user('two'), assistant({ text('Looking two'), bash('t2') }), result('t2'),
+      user('three'), assistant({ text('Looking three'), bash('t3') }), result('t3'),
+      assistant({ text('Reply three') }),
+      user('four'), assistant({ text('Reply four') }),
+    }
+    local path = vim.fn.tempname() .. '.jsonl'
+    vim.fn.writefile(vim.tbl_map(vim.json.encode, records), path)
+
+    local output = require('cc.output').new(require('cc.session').new(), 'cc-test-output')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+    vim.cmd('resize 10')
+    output:set_window(vim.api.nvim_get_current_win())
+    for _, rec in ipairs(require('cc.history').read_transcript(path)) do
+      output:render_historical_record(rec)
+    end
+    output:finalize_history_replay()
+    require('cc')._register_test_instance(bufnr, { output = output })
+    _G._test_output = output
+    _G._find = function(t)
+      for i, l in ipairs(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)) do
+        if vim.trim(l) == t then return i end
+      end
+    end
+    _G._view = function()
+      local v = vim.fn.winsaveview()
+      return { lnum = v.lnum, topline = v.topline, last = vim.api.nvim_buf_line_count(bufnr) }
+    end
+  ]==])
+  local want = { find('Reply one'), find('Reply three'), find('Reply four') }
+  eq(_G.child.lua_get('_G._test_output:message_lnums()'), want)
+  eq(_G.child.lua_get('_G._test_output:last_message_lnum()'), want[3])
+  _G.child.lua('vim.api.nvim_win_set_cursor(0, { 1, 0 })')
+  eq(step('CcJumpToNextMessage'), want[1])
+  eq(step('CcJumpToNextMessage'), want[2])
+  eq(step('CcJumpToNextMessage'), want[3])
+  eq(step('CcJumpToPrevMessage'), want[2])
+end
+
 return T

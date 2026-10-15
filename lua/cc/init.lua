@@ -1918,6 +1918,28 @@ function M.jump_to_last_message(bufnr)
   return inst.output:jump_to_last_message(inst)
 end
 
+--- Jump the instance owning `bufnr` (output or prompt) to the next turn's
+--- last agent message below its output cursor.
+---@param bufnr integer
+---@return boolean? jumped nil when bufnr is not a cc.nvim buffer, false when
+---  no later turn has an agent message
+function M.jump_to_next_message(bufnr)
+  local inst = type(bufnr) == 'number' and find_instance(bufnr) or nil
+  if not inst or not inst.output then return nil end
+  return inst.output:jump_to_adjacent_message(1, inst)
+end
+
+--- Jump the instance owning `bufnr` (output or prompt) to the previous
+--- turn's last agent message above its output cursor.
+---@param bufnr integer
+---@return boolean? jumped nil when bufnr is not a cc.nvim buffer, false when
+---  no earlier turn has an agent message
+function M.jump_to_prev_message(bufnr)
+  local inst = type(bufnr) == 'number' and find_instance(bufnr) or nil
+  if not inst or not inst.output then return nil end
+  return inst.output:jump_to_adjacent_message(-1, inst)
+end
+
 --- Focus an existing instance by its output buffer, restoring its companion
 --- layout through the same BufWinEnter path used by normal buffer navigation.
 ---@param output_bufnr integer
