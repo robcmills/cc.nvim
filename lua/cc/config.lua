@@ -180,6 +180,15 @@ local defaults = {
     resume = 'off', -- 'off' | 'auto'
   },
 
+  -- Before resuming a Claude session, look for a live `claude` process that
+  -- already holds it (<CLAUDE_CONFIG_DIR or ~/.claude>/sessions/<pid>.json
+  -- with a running pid). If one does, ask before starting a second copy;
+  -- :CcHistory marks such entries with picker_marker ('' hides the mark).
+  resume_guard = {
+    enabled = true,
+    picker_marker = '●',
+  },
+
   show_thinking = true,
 
   show_turn_cost = true,

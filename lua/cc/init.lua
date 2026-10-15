@@ -912,15 +912,41 @@ function M.resume(session_id, provider_name, opts)
     return
   end
 
-  local inst = create_instance()
-  -- Pre-render transcript so the UI shows past conversation. Claude reads
-  -- the local JSONL; Codex replays history from the thread/resume response
-  -- once the app-server connects.
-  if P.prerender_resume then
-    P.prerender_resume(inst, session_id)
+  local function start()
+    local inst = create_instance()
+    -- Pre-render transcript so the UI shows past conversation. Claude reads
+    -- the local JSONL; Codex replays history from the thread/resume response
+    -- once the app-server connects.
+    if P.prerender_resume then
+      P.prerender_resume(inst, session_id)
+    end
+    inst.last_session_id = session_id
+    attach_provider(inst, { resume_id = session_id, provider = P.name, remote = opts.remote })
   end
-  inst.last_session_id = session_id
-  attach_provider(inst, { resume_id = session_id, provider = P.name, remote = opts.remote })
+
+  local holder = P.name == 'claude' and Config.options.resume_guard.enabled
+    and require('cc.live_sessions').find(session_id)
+  if not holder then return start() end
+
+  -- Two processes resuming one id both append to its transcript and split
+  -- its state, so never start the second copy without asking.
+  local where = require('cc.live_sessions').describe(holder, M._local_pids())
+  vim.ui.select({ 'Resume anyway', 'Cancel' }, {
+    prompt = 'Session ' .. session_id:sub(1, 8) .. ' is already running (' .. where .. '):',
+  }, function(choice)
+    if choice == 'Resume anyway' then start() end
+  end)
+end
+
+--- Pids of the CLI processes this Neovim spawned.
+---@return table<integer, boolean>
+function M._local_pids()
+  local pids = {}
+  for _, inst in pairs(instances) do
+    local pid = inst.process and inst.process.pid
+    if pid then pids[pid] = true end
+  end
+  return pids
 end
 
 --- Public: resume most recent session for the current cwd.
@@ -948,11 +974,25 @@ function M.history(all_projects, provider_name, resume_opts)
       vim.notify('cc.nvim: no sessions found' .. suffix, vim.log.levels.INFO)
       return
     end
+    -- Mark rows held by a live process elsewhere. The marker column only
+    -- appears when at least one row needs it.
+    local guard = Config.options.resume_guard
+    local live, marker, pad = {}, nil, nil
+    if guard.enabled and guard.picker_marker and guard.picker_marker ~= '' then
+      live = require('cc.live_sessions').scan()
+      if next(live) then
+        marker = guard.picker_marker .. ' '
+        pad = string.rep(' ', vim.fn.strdisplaywidth(marker))
+      end
+    end
     require('cc.picker').select(entries, {
       prompt = (all_projects and 'Resume session (all projects)' or 'Resume session')
         .. (provider_name and (' — ' .. provider_name) or ''),
       format_item = function(e)
-        return require('cc.history').format_entry(e, all_projects or false, true)
+        local line = require('cc.history').format_entry(e, all_projects or false, true)
+        if not marker then return line end
+        local held = e.provider == 'claude' and live[e.session_id]
+        return (held and marker or pad) .. line
       end,
     }, function(choice)
       if choice then M.resume(choice.session_id, choice.provider, resume_opts) end
