@@ -65,6 +65,8 @@ local GROUP_INDENT = 2
 local NS_GROUP_INDENT = vim.api.nvim_create_namespace('cc.group_indent')
 local LAST_MESSAGE_NS = vim.api.nvim_create_namespace('cc.last_message')
 M.NS_GROUP_INDENT = NS_GROUP_INDENT
+-- Diff highlights on Edit/MultiEdit/Write/FileChange input bodies.
+local NS_DIFF = vim.api.nvim_create_namespace('cc.diff')
 
 --- Normalize a foldexpr value (">3", 3) to its depth.
 ---@param fl string|integer|nil
@@ -719,9 +721,18 @@ function M._flush_pending_fold_closes(bufnr)
     if vim.api.nvim_win_get_buf(w) == bufnr then
       local wfl = vim.wo[w].foldlevel
       vim.api.nvim_win_call(w, function()
-        local view = vim.fn.winsaveview()
+        -- Save and restore the view only when some fold actually needs zc.
+        local todo = {}
         for _, h in ipairs(ready) do
           if h.depth > wfl and vim.fn.foldclosed(h.lnum) == -1 then
+            todo[#todo + 1] = h
+          end
+        end
+        if #todo == 0 then return end
+        local view = vim.fn.winsaveview()
+        for _, h in ipairs(todo) do
+          -- An earlier zc may have closed a fold around this one.
+          if vim.fn.foldclosed(h.lnum) == -1 then
             vim.api.nvim_win_set_cursor(w, { h.lnum, 0 })
             pcall(vim.cmd, 'silent! normal! zc')
           end
@@ -747,21 +758,27 @@ function Output:_append_to_last_line(text, opts)
   local last_row = line_count - 1
   local last_line = vim.api.nvim_buf_get_lines(bufnr, last_row, last_row + 1, false)[1] or ''
 
+  -- Insert at the end of the line rather than replacing it. Replacing the
+  -- whole line collapsed the streaming markdown region that ends on it
+  -- (Tree-sitter clamps a range end inside a replaced span to its start),
+  -- so earlier inline styling on the line blinked off until the next
+  -- markdown update. An insert at the range end extends it instead.
+  local col = #last_line
   local chunks = vim.split(text, '\n', { plain = true })
   if #chunks == 1 then
-    vim.api.nvim_buf_set_lines(bufnr, last_row, last_row + 1, false, { last_line .. chunks[1] })
+    vim.api.nvim_buf_set_text(bufnr, last_row, col, last_row, col, { chunks[1] })
   else
     local indent = '  '
-    local new_lines = { last_line .. chunks[1] }
+    local new_lines = { chunks[1] }
     for i = 2, #chunks do
       table.insert(new_lines, indent .. chunks[i])
     end
-    -- Record fold levels before set_lines so foldexpr sees them.
+    -- Record fold levels before the edit so foldexpr sees them.
     local inherit = state.fold_levels[last_row + 1] or 0
     for i = 2, #chunks do
       state.fold_levels[last_row + i] = inherit
     end
-    vim.api.nvim_buf_set_lines(bufnr, last_row, last_row + 1, false, new_lines)
+    vim.api.nvim_buf_set_text(bufnr, last_row, col, last_row, col, new_lines)
   end
   vim.bo[bufnr].modifiable = false
   if anchor_tail and was_following then
@@ -982,8 +999,7 @@ end
 
 --- Agent text starts at `lnum`. The first text after a turn's last tool call
 --- is the start of its last message; later text blocks belong to it. Kept as
---- a line number while the turn streams: an extmark would be pushed down by
---- the `set_lines` rewrites of `_append_to_last_line`.
+--- a line number while the turn streams.
 ---@param lnum integer 1-indexed
 function Output:_note_message_text(lnum)
   self._message_candidate = self._message_candidate or lnum
@@ -1559,20 +1575,26 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary, indent)
   M.refresh_caret(bufnr, lnum)
 end
 
---- Render tool input block inside the tool fold (below the tool header).
---- When insert_lnum is provided, insert there instead of appending. This is
---- used by providers whose start event omits input that arrives on completion.
+---@class cc.OutputToolInputBody
+---@field lines string[] body lines, already indented under the header
+---@field levels integer[] fold level per line
+---@field snippets table[]? Tree-sitter fragments to highlight once written
+---@field diff_marks {idx: integer, col: integer, end_col: integer?, hl: string}[]?
+---  diff highlight spans, columns relative to the unpadded body line
+---@field extra_indent integer columns added in front of each body line
+
+--- Build the input body shown inside a tool fold, laid out for `meta`'s
+--- depth and indent. Nothing is written.
 ---@param tool_name string
 ---@param input table?
----@param insert_lnum integer?
----@param meta cc.OutputToolBlock? owning tool: its depth and indent place the body
----@return integer? last_lnum 1-indexed last line written, or nil if nothing rendered
-function Output:_render_tool_input(tool_name, input, insert_lnum, meta)
+---@param meta {depth: integer?, indent: integer?}? owning tool
+---@return cc.OutputToolInputBody?
+function Output:_tool_input_body(tool_name, input, meta)
   if not input then return nil end
   local depth = meta and meta.depth or TOOL_DEPTH
   local indent = meta and meta.indent or TOOL_INDENT
   local config = require('cc.config').options
-  local body_lines, snippets
+  local body_lines, snippets, marks
   if type(config.tool_input_format) == 'function' then
     local ok, result = pcall(config.tool_input_format, tool_name, input)
     if ok and type(result) == 'string' then
@@ -1584,6 +1606,7 @@ function Output:_render_tool_input(tool_name, input, insert_lnum, meta)
     if type(body) == 'table' and body.lines then
       body_lines = body.lines
       snippets = body.snippets
+      marks = body.diff_marks
     else
       body_lines = body
     end
@@ -1605,32 +1628,68 @@ function Output:_render_tool_input(tool_name, input, insert_lnum, meta)
     table.insert(lines, pad .. l)
     table.insert(levels, depth)
   end
-  local first_lnum
-  if insert_lnum then
-    self:_insert_lines(insert_lnum, lines, levels, false)
-    first_lnum = insert_lnum
-  else
-    first_lnum = self:_append(lines, levels, false)
-  end
+  return {
+    lines = lines, levels = levels, snippets = snippets, diff_marks = marks,
+    extra_indent = extra_indent,
+  }
+end
 
-  if snippets and #snippets > 0 then
-    local tshl = require('cc.tshl')
-    for _, snip in ipairs(snippets) do
-      local frag = snip.fragment
-      if frag and frag.text and frag.row_map then
-        local row_map = {}
-        for i, m in ipairs(frag.row_map) do
-          row_map[i] = {
-            row = (first_lnum - 1) + m.body_idx,
-            col_offset = extra_indent + m.col_offset,
-          }
-        end
-        pcall(tshl.apply_fragment, self.bufnr, snip.lang, frag.text, row_map)
-      end
+--- Highlight a written input body: diff lines, then code snippets.
+---@param body cc.OutputToolInputBody
+---@param first_lnum integer 1-indexed line holding body.lines[1]
+function Output:_highlight_input_body(body, first_lnum)
+  -- Extmarks on the body's own rows. Buffer-wide syntax matches on the diff
+  -- indent also painted prose list items nested to the same column. They
+  -- sit below the code snippets (priority 110), so code keeps its colors
+  -- on the diff background.
+  for _, m in ipairs(body.diff_marks or {}) do
+    local line = body.lines[m.idx + 1]
+    if line then
+      pcall(vim.api.nvim_buf_set_extmark, self.bufnr, NS_DIFF, first_lnum - 1 + m.idx,
+        body.extra_indent + m.col, {
+          end_col = m.end_col and body.extra_indent + m.end_col or #line,
+          hl_group = m.hl,
+          priority = 105,
+        })
     end
   end
+  if not body.snippets or #body.snippets == 0 then return end
+  local tshl = require('cc.tshl')
+  for _, snip in ipairs(body.snippets) do
+    local frag = snip.fragment
+    if frag and frag.text and frag.row_map then
+      local row_map = {}
+      for i, m in ipairs(frag.row_map) do
+        row_map[i] = {
+          row = (first_lnum - 1) + m.body_idx,
+          col_offset = body.extra_indent + m.col_offset,
+        }
+      end
+      pcall(tshl.apply_fragment, self.bufnr, snip.lang, frag.text, row_map)
+    end
+  end
+end
 
-  return first_lnum + #lines - 1
+--- Render tool input block inside the tool fold (below the tool header).
+--- When insert_lnum is provided, insert there instead of appending. This is
+--- used by providers whose start event omits input that arrives on completion.
+---@param tool_name string
+---@param input table?
+---@param insert_lnum integer?
+---@param meta cc.OutputToolBlock? owning tool: its depth and indent place the body
+---@return integer? last_lnum 1-indexed last line written, or nil if nothing rendered
+function Output:_render_tool_input(tool_name, input, insert_lnum, meta)
+  local body = self:_tool_input_body(tool_name, input, meta)
+  if not body then return nil end
+  local first_lnum
+  if insert_lnum then
+    self:_insert_lines(insert_lnum, body.lines, body.levels, false)
+    first_lnum = insert_lnum
+  else
+    first_lnum = self:_append(body.lines, body.levels, false)
+  end
+  self:_highlight_input_body(body, first_lnum)
+  return first_lnum + #body.lines - 1
 end
 
 --- Update the summary/input for a tool whose start event carried no body.
@@ -1886,8 +1945,15 @@ function Output:subagent_tool_use(parent_id, block)
   if summary and summary ~= '' and not tool_body.SUMMARY_FOLD_ONLY[name] then
     header = header .. ' ' .. summary
   end
-  local sub, header_lnum = self:_subagent_insert(parent, { header },
-    { '>' .. depth }, true)
+  -- Header and input go in with one insert: inserting mid-buffer rebuilds
+  -- every line-keyed table, so two inserts did that work twice.
+  local body = self:_tool_input_body(name, block.input, { depth = depth, indent = indent })
+  local lines, levels = { header }, { '>' .. depth }
+  if body then
+    vim.list_extend(lines, body.lines)
+    vim.list_extend(levels, body.levels)
+  end
+  local sub, header_lnum = self:_subagent_insert(parent, lines, levels, true)
   local meta = {
     bufnr = self.bufnr,
     tool_use_id = block.id,
@@ -1895,17 +1961,13 @@ function Output:subagent_tool_use(parent_id, block)
     input = block.input,
     header_lnum = header_lnum,
     input_rendered = true,
-    input_end_lnum = header_lnum,
+    input_end_lnum = header_lnum + #lines - 1,
     depth = depth,
     indent = indent,
     parent_id = parent_id,
   }
   state.tool_blocks[block.id] = meta
-  local last_lnum = self:_render_tool_input(name, block.input, header_lnum + 1, meta)
-  if last_lnum then
-    meta.input_end_lnum = last_lnum
-    sub.end_lnum = math.max(sub.end_lnum, last_lnum)
-  end
+  if body then self:_highlight_input_body(body, header_lnum + 1) end
   sub.tool_count = sub.tool_count + 1
   sub.last = { kind = 'tool', tool_use_id = block.id }
   self:start_tool_timer(block.id)

@@ -22,6 +22,32 @@ function M.foldexpr(lnum)
   return state.fold_levels[lnum] or 0
 end
 
+local index_cache = {}
+
+--- Line-keyed lookups for foldtext, rebuilt once per buffer change. Every
+--- folded line evaluates foldtext on each redraw; scanning all tool groups
+--- and tool blocks per evaluation grew with session length. Header line
+--- numbers only move when the buffer changes, so changedtick keys it.
+---@return {groups: table<integer, table>, tools: table<integer, table>, top_tools: table<integer, true>, turns: table<string, table>}
+local function header_index(bufnr, state)
+  local tick = vim.api.nvim_buf_get_changedtick(bufnr)
+  local idx = index_cache[bufnr]
+  if idx and idx.state == state and idx.tick == tick then return idx end
+  idx = { state = state, tick = tick, groups = {}, tools = {}, top_tools = {}, turns = {} }
+  for _, g in ipairs(state.tool_groups or {}) do
+    if g.header_lnum and not idx.groups[g.header_lnum] then idx.groups[g.header_lnum] = g end
+  end
+  for _, block in pairs(state.tool_blocks or {}) do
+    if block.header_lnum then
+      idx.tools[block.header_lnum] = idx.tools[block.header_lnum] or block
+      if not block.parent_id then idx.top_tools[block.header_lnum] = true end
+    end
+  end
+  index_cache[bufnr] = idx
+  return idx
+end
+M._header_index = header_index
+
 --- Build fold context info table for the foldtext callback.
 ---@param bufnr integer
 ---@param foldstart integer 1-indexed
@@ -46,16 +72,11 @@ local function build_fold_info(bufnr, foldstart, foldend)
 
   -- Tool groups and tool headers are found by line number; their text is
   -- user-configurable (group label, icons) so it can't be pattern-matched.
-  local group, tool_block
+  local group, tool_block, idx
   if state then
-    for _, g in ipairs(state.tool_groups or {}) do
-      if g.header_lnum == foldstart then group = g; break end
-    end
-    if not group then
-      for _, block in pairs(state.tool_blocks or {}) do
-        if block.header_lnum == foldstart then tool_block = block; break end
-      end
-    end
+    idx = header_index(bufnr, state)
+    group = idx.groups[foldstart]
+    if not group then tool_block = idx.tools[foldstart] end
   end
 
   -- Detect role from header line content.
@@ -112,16 +133,16 @@ local function build_fold_info(bufnr, foldstart, foldend)
   end
 
   -- For user/agent turns, scan content to count tools and find preview text.
-  if state and (role == 'user' or role == 'agent') and foldend > foldstart then
+  -- Cached per buffer change, like the header index.
+  local turn = idx and idx.turns[foldstart .. ':' .. foldend]
+  if turn then
+    info.tool_count = turn.tool_count
+    info.first_text = turn.first_text
+  elseif state and (role == 'user' or role == 'agent') and foldend > foldstart then
     local tool_count = 0
     local last_block_text = nil
     local prev_was_text = false
-    local tool_headers = {}
-    for _, block in pairs(state.tool_blocks or {}) do
-      if not block.parent_id and block.header_lnum then
-        tool_headers[block.header_lnum] = true
-      end
-    end
+    local tool_headers = idx.top_tools
     local fold_lines = vim.fn.getline(foldstart + 1, foldend)
     for i, line in ipairs(fold_lines) do
       local lnum = foldstart + i
@@ -145,6 +166,7 @@ local function build_fold_info(bufnr, foldstart, foldend)
     end
     info.tool_count = tool_count
     info.first_text = last_block_text
+    idx.turns[foldstart .. ':' .. foldend] = { tool_count = tool_count, first_text = last_block_text }
   end
 
   return info
