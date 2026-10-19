@@ -262,21 +262,68 @@ function M.foldtext()
   return M.default_foldtext(info)
 end
 
+local function find_window(bufnr)
+  -- foldclosed requires a window showing this buffer; find one.
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(w) == bufnr then return w end
+  end
+  return nil
+end
+
+--- Sync one header's caret. Must run in a window showing the buffer. The
+--- extmark is replaced only when its character, row or column is wrong, so
+--- a refresh where nothing changed writes nothing.
+local function sync_caret(state, bufnr, lnum, wfl)
+  -- Prefer foldclosed() once the fold engine has evaluated this line
+  -- (authoritative in both directions, so user zo/zc is respected).
+  -- Fall back to the recorded fold-expr value when the engine hasn't
+  -- run yet (headless mode, right after buffer edits).
+  local raw = state.fold_levels[lnum]
+  local my_level = 0
+  if type(raw) == 'string' then
+    my_level = tonumber(raw:match('[>%<]?(%d+)')) or 0
+  elseif type(raw) == 'number' then
+    my_level = raw
+  end
+  local effective_level = vim.fn.foldlevel(lnum)
+  local is_folded
+  if effective_level == 0 and my_level > 0 then
+    is_folded = my_level > wfl
+  else
+    is_folded = vim.fn.foldclosed(lnum) ~= -1
+  end
+  local text = (is_folded and CARET_FOLDED or CARET_OPEN) .. ' '
+  -- Place the inline caret at the header's indent so the expanded view
+  -- aligns with the folded (foldtext) view. Indent, not fold depth: a
+  -- lone tool call sits at depth 3 but at the turn-text indent.
+  local header = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ''
+  local caret_col = #header:match('^ *')
+  local old_id = state.extmark_ids[lnum]
+  if old_id then
+    local ok, mark = pcall(vim.api.nvim_buf_get_extmark_by_id, bufnr, NS_CARETS, old_id,
+      { details = true })
+    local vt = ok and mark and mark[3] and mark[3].virt_text
+    if vt and mark[1] == lnum - 1 and mark[2] == caret_col and vt[1] and vt[1][1] == text then
+      return
+    end
+    pcall(vim.api.nvim_buf_del_extmark, bufnr, NS_CARETS, old_id)
+  end
+  local ok, id = pcall(vim.api.nvim_buf_set_extmark, bufnr, NS_CARETS, lnum - 1, caret_col, {
+    virt_text = { { text, 'CcCaret' } },
+    virt_text_pos = 'inline',
+  })
+  if ok then
+    state.extmark_ids[lnum] = id
+  end
+end
+
 --- Refresh caret extmarks to match current fold state.
 ---@param bufnr integer
 function M.refresh_carets(bufnr)
   local state = require('cc.output')._buf_state[bufnr]
   if not state then return end
   if not vim.api.nvim_buf_is_valid(bufnr) then return end
-
-  -- foldclosed requires a window showing this buffer; find one.
-  local winid = nil
-  for _, w in ipairs(vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_get_buf(w) == bufnr then
-      winid = w
-      break
-    end
-  end
+  local winid = find_window(bufnr)
   if not winid then return end
 
   vim.api.nvim_win_call(winid, function()
@@ -284,43 +331,39 @@ function M.refresh_carets(bufnr)
     local line_count = vim.api.nvim_buf_line_count(bufnr)
     for lnum, _ in pairs(state.fold_headers) do
       if lnum <= line_count then
-        -- Prefer foldclosed() once the fold engine has evaluated this line
-        -- (authoritative in both directions, so user zo/zc is respected).
-        -- Fall back to the recorded fold-expr value when the engine hasn't
-        -- run yet (headless mode, right after buffer edits).
-        local raw = state.fold_levels[lnum]
-        local my_level = 0
-        if type(raw) == 'string' then
-          my_level = tonumber(raw:match('[>%<]?(%d+)')) or 0
-        elseif type(raw) == 'number' then
-          my_level = raw
-        end
-        local effective_level = vim.fn.foldlevel(lnum)
-        local is_folded
-        if effective_level == 0 and my_level > 0 then
-          is_folded = my_level > wfl
-        else
-          is_folded = vim.fn.foldclosed(lnum) ~= -1
-        end
-        local char = is_folded and CARET_FOLDED or CARET_OPEN
-        local old_id = state.extmark_ids[lnum]
-        if old_id then
-          pcall(vim.api.nvim_buf_del_extmark, bufnr, NS_CARETS, old_id)
-        end
-        -- Place the inline caret at the header's indent so the expanded view
-        -- aligns with the folded (foldtext) view. Indent, not fold depth: a
-        -- lone tool call sits at depth 3 but at the turn-text indent.
-        local header = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ''
-        local caret_col = #header:match('^ *')
-        local ok, id = pcall(vim.api.nvim_buf_set_extmark, bufnr, NS_CARETS, lnum - 1, caret_col, {
-          virt_text = { { char .. ' ', 'CcCaret' } },
-          virt_text_pos = 'inline',
-        })
-        if ok then
-          state.extmark_ids[lnum] = id
-        end
+        sync_caret(state, bufnr, lnum, wfl)
       end
     end
+  end)
+end
+
+--- Refresh only the caret on header `lnum`, after rewriting that line.
+---@param bufnr integer
+---@param lnum integer 1-indexed
+function M.refresh_caret(bufnr, lnum)
+  local state = require('cc.output')._buf_state[bufnr]
+  if not state or not state.fold_headers[lnum] then return end
+  if not vim.api.nvim_buf_is_valid(bufnr) then return end
+  if lnum > vim.api.nvim_buf_line_count(bufnr) then return end
+  local winid = find_window(bufnr)
+  if not winid then return end
+  vim.api.nvim_win_call(winid, function()
+    sync_caret(state, bufnr, lnum, vim.wo[winid].foldlevel)
+  end)
+end
+
+---@type table<integer, true>
+local refresh_pending = {}
+
+--- Refresh carets once after the current batch of edits, however many
+--- edits ask for it.
+---@param bufnr integer
+function M.schedule_refresh_carets(bufnr)
+  if refresh_pending[bufnr] then return end
+  refresh_pending[bufnr] = true
+  vim.schedule(function()
+    refresh_pending[bufnr] = nil
+    M.refresh_carets(bufnr)
   end)
 end
 
