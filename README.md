@@ -100,8 +100,8 @@ Nearly every visible element is configurable:
   `CcStl*`, and more — all link to existing colorscheme groups by default,
   so your theme drives them. Override any with `vim.api.nvim_set_hl`.
 - **Layout knobs.** `layout = 'horizontal' | 'vertical'`, `prompt_height`,
-  per-window `line_numbers` and `wrap`, `default_fold_level`,
-  `max_tool_result_lines`, custom `foldtext` function.
+  per-window `line_numbers` and `wrap`, output `cursorline`,
+  `default_fold_level`, `max_tool_result_lines`, custom `foldtext` function.
 
 See [Configuration](#configuration) and [Highlights](#highlights) for the
 full list.
@@ -218,6 +218,10 @@ require('cc').setup({
     prompt = 'Generate a very short, descriptive kebab-case name (2-5 hyphenated lowercase words) for this user prompt. Return only the name — no commentary, no quotes, no trailing punctuation.\n\nPrompt: ${prompt}',
     timeout_ms = 30000,
     validate = nil,
+  },
+
+  cursorline = {
+    output = false, -- true highlights the cursor's screen row only
   },
 
   default_fold_level = 2,

@@ -50,6 +50,13 @@ local defaults = {
     validate = nil,
   },
 
+  -- 'cursorline' in the output window. Off by default: the cursor follows
+  -- the streaming line, so it would paint each paragraph as it arrives.
+  -- When on, only the cursor's screen row is highlighted.
+  cursorline = {
+    output = false,
+  },
+
   -- Folding: 0=turn headers, 1=agent text with tool groups and lone tools
   -- collapsed, 2=group tool headers and lone tool inputs, 3=grouped tool
   -- inputs and lone tool results, 4=all.
