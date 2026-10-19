@@ -332,6 +332,27 @@ T['focus_instance']['focuses the exact registered output buffer'] = function()
   eq(_G.child.lua_get('_G._fractional'), false)
 end
 
+T['focus_instance']['leaves a winfixbuf window instead of failing'] = function()
+  _G.child.lua([[
+    local cc = require('cc')
+    local output = vim.api.nvim_create_buf(false, true)
+    _G._registered_output = output
+    cc._register_test_instance(output, {
+      output = { bufnr = output }, prompt = { bufnr = vim.api.nvim_create_buf(false, true) },
+    })
+    vim.cmd('enew')
+    vim.cmd('vsplit')
+    vim.wo.winfixbuf = true
+    local pinned = vim.api.nvim_get_current_win()
+    _G._focus_ok = cc.focus_instance(output)
+    _G._focused = vim.api.nvim_get_current_buf()
+    _G._left_pinned = vim.api.nvim_get_current_win() ~= pinned
+  ]])
+  eq(_G.child.lua_get('_G._focus_ok'), true)
+  eq(_G.child.lua_get('_G._focused'), _G.child.lua_get('_G._registered_output'))
+  eq(_G.child.lua_get('_G._left_pinned'), true)
+end
+
 T['focus_instance']['lands on a pending permission prompt instead of denying it'] = function()
   _G.child.lua([[
     local cc = require('cc')

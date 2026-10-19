@@ -29,6 +29,24 @@ T['load_fixture']['renders a JSONL fixture'] = function()
   end
 end
 
+T['load_fixture']['opens beside a winfixbuf window, never in it'] = function()
+  _G.child.lua([[
+    vim.cmd('vsplit')
+    _G._sidebar = vim.api.nvim_get_current_win()
+    _G._sidebar_buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_win_set_buf(_G._sidebar, _G._sidebar_buf)
+    vim.wo[_G._sidebar].winfixbuf = true
+    require('cc').load_fixture('simple_text')
+    local inst = require('cc')._get_instance()
+    _G._result = {
+      sidebar_buf = vim.api.nvim_win_get_buf(_G._sidebar) == _G._sidebar_buf,
+      prompt_win = inst.prompt_winid ~= _G._sidebar,
+      output_win = inst.output_winid ~= _G._sidebar,
+    }
+  ]])
+  eq(_G.child.lua_get('_G._result'), { sidebar_buf = true, prompt_win = true, output_win = true })
+end
+
 T['load_fixture']['renders an NDJSON fixture'] = function()
   _G.child.lua([[require('cc').load_fixture('simple_text.ndjson')]])
   local lines = output_lines(_G.child)
