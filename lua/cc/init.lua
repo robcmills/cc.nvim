@@ -349,6 +349,29 @@ end
 -- Instance creation + teardown
 -- ---------------------------------------------------------------------------
 
+--- Before showing a cc buffer in the current window, leave it if 'winfixbuf'
+--- pins its buffer (e.g. a buffer-list sidebar): go to the previous window,
+--- else any other non-float window that isn't pinned, else split one off
+--- (splits don't inherit 'winfixbuf').
+local function leave_fixed_window()
+  if not vim.wo.winfixbuf then return end
+  local function usable(win)
+    return vim.api.nvim_win_is_valid(win) and not vim.wo[win].winfixbuf
+      and vim.api.nvim_win_get_config(win).relative == ''
+  end
+  local candidates = {}
+  local alt = vim.fn.winnr('#')
+  if alt > 0 then candidates[1] = vim.fn.win_getid(alt) end
+  vim.list_extend(candidates, vim.api.nvim_tabpage_list_wins(0))
+  for _, win in ipairs(candidates) do
+    if usable(win) then
+      vim.api.nvim_set_current_win(win)
+      return
+    end
+  end
+  vim.cmd('botright vsplit')
+end
+
 --- Create a new instance with layout: output above (primary), prompt below (companion).
 --- With `focus = false` the buffers are created and registered but no window
 --- is touched: the output stays a hidden listed buffer until the user (or
@@ -443,6 +466,7 @@ local function create_instance(opts)
     -- by the time their BufWinEnter handlers fire, both windows have
     -- already inherited cc's overrides (prompt directly via its own
     -- BufWinEnter, output indirectly via :split inheritance).
+    leave_fixed_window()
     vim.api.nvim_set_current_buf(prompt_buf)
     inst.prompt_winid = vim.api.nvim_get_current_win()
     inst.prompt:set_window(inst.prompt_winid)
@@ -2011,6 +2035,7 @@ function M.focus_instance(output_bufnr)
     if visible_win ~= -1 then
       vim.api.nvim_set_current_win(visible_win)
     else
+      leave_fixed_window()
       vim.api.nvim_set_current_buf(output_bufnr)
     end
   end
