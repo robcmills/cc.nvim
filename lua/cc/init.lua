@@ -422,6 +422,7 @@ local function create_instance(opts)
       'foldmethod', 'foldexpr', 'foldenable', 'foldtext', 'foldlevel',
       'fillchars', 'winhighlight',
       'number', 'relativenumber', 'signcolumn', 'wrap',
+      'cursorline', 'cursorlineopt',
     }
     local snap = {}
     for _, n in ipairs(names) do snap[n] = vim.wo[source][n] end

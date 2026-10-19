@@ -220,6 +220,7 @@ end
 local OUTPUT_WIN_OPTS = {
   'foldmethod', 'foldexpr', 'foldenable', 'foldtext', 'foldlevel',
   'fillchars', 'winhighlight', 'number', 'relativenumber', 'signcolumn', 'wrap',
+  'cursorline', 'cursorlineopt',
 }
 
 --- Install cc's fold engine once for a window showing this output. Keeping
@@ -314,6 +315,13 @@ function Output:_setup_window_opts_for_buffer()
       vim.wo[winid].relativenumber = false
       vim.wo[winid].signcolumn = 'no'
       vim.wo[winid].wrap = config.wrap == nil or config.wrap.output ~= false
+      -- The cursor follows the streaming line, and each paragraph is one
+      -- wrapped buffer line, so a global 'cursorline' paints the whole
+      -- paragraph and then jumps when the next one starts. When enabled,
+      -- highlight only the cursor's screen row.
+      local cursorline = config.cursorline ~= nil and config.cursorline.output == true
+      vim.wo[winid].cursorline = cursorline
+      if cursorline then vim.wo[winid].cursorlineopt = 'number,screenline' end
       -- If the cursor is at the last line, re-anchor the view so topline
       -- is computed correctly now that the window is focused and folds
       -- are about to be evaluated. Without this, pre-render done from an
