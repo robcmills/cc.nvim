@@ -397,6 +397,8 @@ do
   M.foldtext = ft.foldtext
   M.default_foldtext = ft.default_foldtext
   M.refresh_carets = ft.refresh_carets
+  M.refresh_caret = ft.refresh_caret
+  M.schedule_refresh_carets = ft.schedule_refresh_carets
 end
 
 --- Set the window displaying this output buffer (used to auto-scroll).
@@ -526,7 +528,7 @@ function Output:_append(lines, fold_levels, is_header)
   if was_following then
     self:_follow_tail()
   end
-  vim.schedule(function() M.refresh_carets(bufnr) end)
+  M.schedule_refresh_carets(bufnr)
   return first_lnum
 end
 
@@ -673,7 +675,7 @@ function Output:_insert_lines(start_lnum, lines, fold_levels, is_header)
   if was_following then
     self:_follow_tail()
   end
-  vim.schedule(function() M.refresh_carets(bufnr) end)
+  M.schedule_refresh_carets(bufnr)
 end
 
 --- Close any deferred new fold headers whose depth exceeds foldlevel in
@@ -938,13 +940,36 @@ end
 --- wrapping to more screen rows, the viewport's anchor drifts under the
 --- cursor. Wrap the mutation so we re-anchor to the tail when we were
 --- already following it.
+---
+--- Pass `lnum` when the mutation rewrites that one line: the view is then
+--- re-anchored only if the line's screen height changed, as
+--- flush_pending_delta does for the tail. A timer tick that keeps the
+--- header on the same rows, or rewrites one inside a closed fold, leaves
+--- the view alone.
 ---@param mutate fun()
-function Output:_with_tail_anchor(mutate)
+---@param lnum integer? the single line the mutation rewrites
+function Output:_with_tail_anchor(mutate, lnum)
   local was_following = self:_is_following_tail()
+  local before = was_following and lnum and self:_line_text_height(lnum) or nil
   mutate()
-  if was_following then
-    self:_follow_tail()
-  end
+  if not was_following then return end
+  if before ~= nil and self:_line_text_height(lnum) == before then return end
+  self:_follow_tail()
+end
+
+--- Screen rows line `lnum` takes in the output window (a closed fold
+--- counts once), or nil when the window doesn't show this buffer.
+---@param lnum integer 1-indexed
+---@return integer?
+function Output:_line_text_height(lnum)
+  if not self.winid or not vim.api.nvim_win_is_valid(self.winid) then return nil end
+  if vim.api.nvim_win_get_buf(self.winid) ~= self.bufnr then return nil end
+  local ok, height = pcall(vim.api.nvim_win_text_height, self.winid, {
+    start_row = lnum - 1,
+    end_row = lnum - 1,
+  })
+  if not ok or type(height) ~= 'table' then return nil end
+  return height.all
 end
 
 --- Agent text starts at `lnum`. The first text after a turn's last tool call
@@ -1414,8 +1439,8 @@ function Output:_update_tool_group_header(group)
   self:_with_tail_anchor(function()
     -- In-place rewrite of a fold header: see Output:_set_line.
     self:_set_line(group.header_lnum, tool_group_header(group.count))
-  end)
-  M.refresh_carets(bufnr)
+  end, group.header_lnum)
+  M.refresh_caret(bufnr, group.header_lnum)
 end
 
 --- Called on text_delta / thinking_delta within a text/thinking block.
@@ -1522,10 +1547,8 @@ function Output:_update_tool_header_summary(lnum, tool_name, summary, indent)
       new_text = new_text .. ' ' .. summary
     end
     self:_set_line(lnum, new_text)
-  end)
-  -- Replacing the line moves the inline caret extmark; refresh synchronously
-  -- so the caret stays visually anchored to the header.
-  M.refresh_carets(bufnr)
+  end, lnum)
+  M.refresh_caret(bufnr, lnum)
 end
 
 --- Render tool input block inside the tool fold (below the tool header).
@@ -1942,8 +1965,10 @@ function Output:subagent_thinking(parent_id, text)
   self:_subagent_prose(parent_id, text, 'thinking')
 end
 
---- Folded-header status for a tool: its current header line text, so a
---- running tool's live timer (and final duration once done) shows through.
+--- Folded-header status for a tool: its header text with the current
+--- elapsed time, so a running tool's live timer (and final duration once
+--- done) shows through. The timer comes from metadata: a header hidden in
+--- the closed fold isn't rewritten on every tick.
 ---@param bufnr integer
 ---@param tool_use_id string?
 ---@return string? status
@@ -1953,7 +1978,7 @@ local function tool_status(bufnr, tool_use_id)
   if meta and meta.header_lnum
       and meta.header_lnum <= vim.api.nvim_buf_line_count(bufnr) then
     local line = vim.api.nvim_buf_get_lines(bufnr, meta.header_lnum - 1, meta.header_lnum, false)[1]
-    return clip_status(line or '')
+    return clip_status(require('cc.output.timers').header_text(meta, line or ''))
   end
   return nil
 end
@@ -2241,7 +2266,7 @@ end
 function Output:set_fold_level(level)
   if self.winid and vim.api.nvim_win_is_valid(self.winid) then
     vim.wo[self.winid].foldlevel = level
-    vim.schedule(function() M.refresh_carets(self.bufnr) end)
+    M.schedule_refresh_carets(self.bufnr)
   end
 end
 
