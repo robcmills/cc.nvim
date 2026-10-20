@@ -2090,9 +2090,48 @@ function Output:render_permission_request(tool_name, input)
   if not in_group then self:_mark_trail(lnum) end
 end
 
+--- Input of a rendered tool call (top-level once its block stops streaming,
+--- subagent as soon as it renders).
+---@param tool_use_id string?
+---@return table?
+function Output:tool_input(tool_use_id)
+  local state = M._buf_state[self.bufnr]
+  local meta = state and tool_use_id and state.tool_blocks[tool_use_id]
+  return meta and meta.input or nil
+end
+
+--- Card for a tool call the auto-mode classifier blocked: header like a
+--- permission prompt, then the classifier's reason. The outcome rewrites the
+--- header (render_permission_outcome with kind 'denial').
+---@param tool_name string
+---@param input table?
+---@param reason string?
+function Output:render_permission_denial(tool_name, input, reason)
+  self:flush_pending_delta()
+  local summary = require('cc.output.tool_body').summarize_tool_input(tool_name, input)
+  local in_group = self:_in_tool_group()
+  local pad = string.rep(' ', TOOL_INDENT + (in_group and GROUP_INDENT or 0))
+  local level = in_group and TOOL_GROUP_DEPTH or 1
+  local text = pad .. '⛔ ' .. require('cc.config').options.permission_denials.label
+    .. ': ' .. tool_name
+  if summary ~= '' then
+    text = text .. ' — ' .. summary:gsub('\n', ' ')
+  end
+  local lines, levels = { text }, { level }
+  if type(reason) == 'string' and reason ~= '' then
+    for _, l in ipairs(vim.split(reason, '\n', { plain = true })) do
+      lines[#lines + 1] = pad .. '  ' .. l
+      levels[#levels + 1] = level
+    end
+  end
+  local lnum = self:_append(lines, levels, false)
+  if not in_group then self:_mark_trail(lnum) end
+end
+
 ---@param behavior 'allow'|'deny'|'remote'
 ---@param tool_name string
-function Output:render_permission_outcome(behavior, tool_name)
+---@param kind 'permission'|'denial'|nil
+function Output:render_permission_outcome(behavior, tool_name, kind)
   self:flush_pending_delta()
   local icon = behavior == 'allow' and '✓' or '✗'
   local verb = behavior == 'allow' and 'Allowed' or 'Denied'
@@ -2102,6 +2141,10 @@ function Output:render_permission_outcome(behavior, tool_name)
   end
   local bufnr = self:ensure_buffer()
   local prefix = '⚠ Permission: ' .. tool_name
+  if kind == 'denial' then
+    verb = behavior == 'allow' and 'Approved' or 'Dismissed'
+    prefix = '⛔ ' .. require('cc.config').options.permission_denials.label .. ': ' .. tool_name
+  end
   self:_with_tail_anchor(function()
     local line_count = vim.api.nvim_buf_line_count(bufnr)
     -- The prompt line is normally the tail, but the tool body and notices
@@ -2109,14 +2152,18 @@ function Output:render_permission_outcome(behavior, tool_name)
     -- after it. Replace the prompt line itself, wherever it is. Its indent
     -- depends on whether it sits in a tool group, so keep it.
     local lnum, indent = line_count, string.rep(' ', TOOL_INDENT)
+    local found = false
     for i = line_count, 1, -1 do
       local line = vim.api.nvim_buf_get_lines(bufnr, i - 1, i, false)[1] or ''
       local lead, rest = line:match('^(%s*)(.*)$')
       if rest == prefix or rest:sub(1, #prefix + 1) == prefix .. ' ' then
-        lnum, indent = i, lead
+        lnum, indent, found = i, lead, true
         break
       end
     end
+    -- A denial header is followed by its reason, so the tail fallback
+    -- would overwrite the wrong line.
+    if kind == 'denial' and not found then return end
     self:_set_line(lnum, indent .. icon .. ' ' .. verb .. ': ' .. tool_name)
   end)
 end

@@ -36,6 +36,7 @@ M.VERSION = '0.12.0'
 ---@field pending_permissions table<string|number, cc.PendingPermission>?
 ---@field permission_remote_enabling boolean? suppress duplicate enables before acknowledgement
 ---@field awaiting_permission boolean?
+---@field queued_prompts string[]? prompts held by `_submit_when_idle` until the current turn ends
 ---@field saved_output_view table? output winsaveview snapshot from the last close, restored on reopen
 ---@field saved_output_following_tail boolean? whether the output cursor was on the tail at the last close; reopen re-pins to the new tail instead of restoring saved_output_view
 ---@field saved_prompt_view table? prompt winsaveview snapshot from the last close, restored on reopen
@@ -1128,6 +1129,36 @@ function M.submit_for(inst, text)
   return true
 end
 
+--- Submit `text` now, or hold it until the current turn ends (Claude has no
+--- mid-turn submit; see submit_for). The router flushes on turn end.
+---@param inst cc.Instance
+---@param text string
+---@return boolean ok
+---@return string? err
+function M._submit_when_idle(inst, text)
+  local session = inst and inst.session
+  if session and (session.turn_active or session.is_streaming) then
+    inst.queued_prompts = inst.queued_prompts or {}
+    table.insert(inst.queued_prompts, text)
+    return true
+  end
+  return M.submit_for(inst, text)
+end
+
+--- Submit prompts held by `_submit_when_idle`, joined into one turn.
+---@param inst cc.Instance
+function M._flush_queued_prompts(inst)
+  local queued = inst and inst.queued_prompts
+  if not queued or #queued == 0 then return end
+  local session = inst.session
+  if session and (session.turn_active or session.is_streaming) then return end
+  inst.queued_prompts = nil
+  local ok, err = M.submit_for(inst, table.concat(queued, '\n\n'))
+  if not ok then
+    vim.notify('cc.nvim: queued prompt not sent: ' .. tostring(err), vim.log.levels.WARN)
+  end
+end
+
 --- Public: submit a prompt buffer's content to the agent and clear it.
 --- With `bufnr` (output or prompt) the target instance is submitted wherever
 --- it is, without notifications; without it, the instance owning the current
@@ -1933,7 +1964,7 @@ function M.list_instances()
       for _, entry in pairs(inst.pending_permissions or {}) do
         if entry.resolve then
           pending[#pending + 1] = {
-            request_id = entry.request_id, tool_name = entry.tool_name,
+            request_id = entry.request_id, kind = entry.kind, tool_name = entry.tool_name,
             input = vim.deepcopy(entry.input), opened_at = entry.opened_at,
           }
         end
