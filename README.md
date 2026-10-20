@@ -646,8 +646,9 @@ can say "blocked by auto mode". There is no CLI request to answer, so:
   your intent on retry. Mid-turn, it is held and submitted when the turn ends.
 - Dismiss, `event.resolve('deny', ...)` (e.g. a timeout stage), and teardown
   clear the waiting state and send nothing.
-- `event.enable_remote()` still enables Remote Control, but the CLI has
-  nothing pending, so the phone app has no prompt to show.
+- `event.enable_remote()` still enables Remote Control, but it does not reach
+  your phone: Claude's mobile push fires only while a prompt or question is
+  pending in the CLI, and a denial leaves nothing pending.
 
 ### Permission mode
 
