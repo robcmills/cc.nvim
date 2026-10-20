@@ -17,6 +17,22 @@ local function assert_hl_in_stack(child, row, col, group)
     group, row, col, table.concat(stack, ', ')), 2)
 end
 
+-- Like assert_hl_in_stack, for highlights placed as extmarks (diff lines).
+local function assert_hl_extmark(child, row, col, group)
+  local groups = child.lua(([[
+    local out = {}
+    for _, m in ipairs(vim.inspect_pos(_G._test_bufnr, %d, %d).extmarks) do
+      if m.opts.hl_group then out[#out + 1] = m.opts.hl_group end
+    end
+    return out
+  ]]):format(row - 1, col - 1))
+  for _, name in ipairs(groups) do
+    if name == group then return end
+  end
+  error(string.format('Highlight %q not in extmarks at (%d,%d). Groups: %s',
+    group, row, col, table.concat(groups, ', ')), 2)
+end
+
 local T = MiniTest.new_set({
   hooks = helpers.shared_child_hooks(),
 })
@@ -201,7 +217,7 @@ T['highlight_groups']['Codex paths and 6-space diffs are highlighted'] = functio
       local col = line:find(needle, 1, true)
       local is_body_path = group ~= 'CcDiffPath' or line:sub(1, 4) == '    '
       if col and is_body_path then
-        assert_hl_in_stack(_G.child, row, col, group)
+        assert_hl_extmark(_G.child, row, col, group)
         found = true
         break
       end
@@ -526,6 +542,80 @@ T['highlight_groups']['all default groups exist'] = function()
       error('Highlight group ' .. name .. ' is not defined')
     end
   end
+end
+
+
+-- Diff highlights used to be syntax matches on the diff indent (6, 8, 10
+-- columns), so agent prose with list items nested to those columns turned
+-- red or green. They are now extmarks on the diff rows themselves, which
+-- move with the text when a later call absorbs the tool into a group.
+T['highlight_groups']['diff highlights stay on diff rows'] = function()
+  _G.child.lua([==[
+    local Output = require('cc.output')
+    require('cc.config').setup({})
+    local output = Output.new(require('cc.session').new(), 'cc-test-diff-extmarks')
+    local bufnr = output:ensure_buffer()
+    vim.api.nvim_set_current_buf(bufnr)
+    output:render_user_turn('go')
+    output:begin_assistant_turn()
+    output:on_content_block_start({ type = 'text' })
+    output:on_delta('text', '- top\n  - nested\n    - deeper\n      - deepest\n        + plus')
+    output:on_content_block_stop({ type = 'text' })
+    output:begin_assistant_turn()
+    local edit = { type = 'tool_use', id = 'e1', name = 'Edit',
+      input = { file_path = 'a.lua', old_string = 'x = 1', new_string = 'x = 2' } }
+    output:on_content_block_start(edit)
+    output:on_content_block_stop(edit)
+    -- A second call groups the turn, re-indenting the Edit body by 2.
+    output:begin_assistant_turn()
+    local ls = { type = 'tool_use', id = 'b1', name = 'Bash', input = { command = 'ls' } }
+    output:on_content_block_start(ls)
+    output:on_content_block_stop(ls)
+    _G._test_bufnr = bufnr
+  ]==])
+  local lines = helpers.get_buffer_lines(_G.child)
+  local function diff_groups(row)
+    return _G.child.lua(([[
+      local seen = {}
+      local line = vim.api.nvim_buf_get_lines(_G._test_bufnr, %d, %d + 1, false)[1]
+      for col = 0, #line - 1 do
+        for _, m in ipairs(vim.inspect_pos(_G._test_bufnr, %d, col).extmarks) do
+          local g = m.opts.hl_group
+          if g and g:match('^CcDiff') then seen[g] = true end
+        end
+        for _, id in ipairs(vim.fn.synstack(%d + 1, col + 1)) do
+          local g = vim.fn.synIDattr(id, 'name')
+          if g:match('^CcDiff') then seen[g] = true end
+        end
+      end
+      return vim.tbl_keys(seen)
+    ]]):format(row, row, row, row))
+  end
+  local checked = 0
+  for i, line in ipairs(lines) do
+    if line:match('^%s+[-+] %a') then
+      eq(diff_groups(i - 1), {})
+      checked = checked + 1
+    end
+  end
+  eq(checked, 5)
+  local del, add
+  for i, line in ipairs(lines) do
+    if line:match('^%s+%-x = 1$') then del = i end
+    if line:match('^%s+%+x = 2$') then add = i end
+  end
+  assert_hl_extmark(_G.child, del, lines[del]:find('-', 1, true), 'CcDiffDelete')
+  assert_hl_extmark(_G.child, add, lines[add]:find('+', 1, true), 'CcDiffAdd')
+  -- The span starts at the glyph, not in the indent before it.
+  eq(diff_groups(del - 1), { 'CcDiffDelete' })
+  local indent_groups = _G.child.lua(([[
+    local out = {}
+    for _, m in ipairs(vim.inspect_pos(_G._test_bufnr, %d, %d).extmarks) do
+      if m.opts.hl_group then out[#out + 1] = m.opts.hl_group end
+    end
+    return out
+  ]]):format(del - 1, lines[del]:find('-', 1, true) - 2))
+  eq(vim.tbl_contains(indent_groups, 'CcDiffDelete'), false)
 end
 
 return T

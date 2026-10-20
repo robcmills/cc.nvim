@@ -90,6 +90,35 @@ local TOOL_LANGS = {
   ['mcp__claude-in-chrome__javascript_tool'] = { input = { text = 'javascript' } },
 }
 
+--- Highlight spans for diff lines whose glyph sits at 0-indexed column
+--- `glyph_col`: `+` and `-` lines and `@@ … @@` hunk headers, from the glyph
+--- to the end of the line. `idx` is 0-indexed into the body lines.
+---@param lines string[]
+---@param glyph_col integer
+---@param marks table[]? appended to and returned
+---@param first integer? first 1-indexed line to scan (default 1)
+---@param last integer? last 1-indexed line to scan (default #lines)
+---@return {idx: integer, col: integer, end_col: integer?, hl: string}[]
+local function diff_marks(lines, glyph_col, marks, first, last)
+  marks = marks or {}
+  for i = first or 1, last or #lines do
+    local line = lines[i]
+    if line:sub(1, glyph_col):match('^ *$') then
+      local rest = line:sub(glyph_col + 1)
+      local hl
+      if rest:match('^@@.*@@$') then
+        hl = 'CcDiffHunk'
+      elseif rest:sub(1, 1) == '+' then
+        hl = 'CcDiffAdd'
+      elseif rest:sub(1, 1) == '-' then
+        hl = 'CcDiffDelete'
+      end
+      if hl then marks[#marks + 1] = { idx = i - 1, col = glyph_col, hl = hl } end
+    end
+  end
+  return marks
+end
+
 --- Build a fragment covering every line of a YAML-ish body for top-level
 --- `yaml` highlighting. Each source row maps 1:1 to body_lines[i] at
 --- col_offset = 0; the surrounding renderer adds the buffer indent.
@@ -363,11 +392,12 @@ end
 M.omit_summary_params = omit_summary_params
 
 --- Default body formatter. Returns either `string[]` (lines only) or
---- `{ lines, snippets }` where `snippets[i] = { lang, fragment = {text, row_map} }`
---- and `row_map`'s body_idx is 0-indexed into `lines`.
+--- `{ lines, snippets, diff_marks? }` where `snippets[i] = { lang, fragment = {text, row_map} }`
+--- and `row_map`'s body_idx is 0-indexed into `lines`. Diff bodies also
+--- carry `diff_marks`, highlight spans for their +/-/@@ and path lines.
 ---@param tool_name string
 ---@param input table
----@return string[]|{ lines: string[], snippets: table[] }?
+---@return string[]|{ lines: string[], snippets: table[], diff_marks: table[]? }?
 function M.default_tool_body(tool_name, input)
   local summary_info = tool_input_summary(tool_name, input)
   local filtered = omit_summary_params(input, summary_info.omit_paths)
@@ -381,7 +411,7 @@ function M.default_tool_body(tool_name, input)
       if d.after  then table.insert(snippets, { lang = lang, fragment = d.after  }) end
       if d.before then table.insert(snippets, { lang = lang, fragment = d.before }) end
     end
-    return { lines = d.lines, snippets = snippets }
+    return { lines = d.lines, snippets = snippets, diff_marks = diff_marks(d.lines, d.glyph_col) }
   elseif tool_name == 'MultiEdit' then
     local d = require('cc.diff').render_multiedit_with_fragments(input.edits)
     local snippets = {}
@@ -392,7 +422,7 @@ function M.default_tool_body(tool_name, input)
         if frag.before then table.insert(snippets, { lang = lang, fragment = frag.before }) end
       end
     end
-    return { lines = d.lines, snippets = snippets }
+    return { lines = d.lines, snippets = snippets, diff_marks = diff_marks(d.lines, d.glyph_col) }
   elseif tool_name == 'Write' then
     local d = require('cc.diff').render_write_with_fragments(input.content)
     local snippets = {}
@@ -400,7 +430,7 @@ function M.default_tool_body(tool_name, input)
     if lang and d.after then
       table.insert(snippets, { lang = lang, fragment = d.after })
     end
-    return { lines = d.lines, snippets = snippets }
+    return { lines = d.lines, snippets = snippets, diff_marks = diff_marks(d.lines, d.glyph_col) }
   elseif tool_name == 'TodoWrite' and type(input.todos) == 'table' then
     local lines = {}
     for _, t in ipairs(input.todos) do
@@ -414,17 +444,21 @@ function M.default_tool_body(tool_name, input)
     -- indented diff, so build per-file TS fragments with body-relative maps.
     local lines = {}
     local snippets = {}
+    local marks = {}
     local diff = require('cc.diff')
     local tshl = require('cc.tshl')
     for _, ch in ipairs(input.changes) do
       local kind = type(ch.kind) == 'table' and ch.kind.type or tostring(ch.kind or 'update')
-      table.insert(lines, string.format('%s (%s)', tostring(ch.path or '?'), kind))
+      local path = tostring(ch.path or '?')
+      table.insert(lines, string.format('%s (%s)', path, kind))
+      marks[#marks + 1] = { idx = #lines - 1, col = 0, end_col = #path, hl = 'CcDiffPath' }
       if type(ch.diff) == 'string' and ch.diff ~= '' then
         local diff_start = #lines
         local diff_lines = vim.split(ch.diff, '\n', { plain = true })
         for _, dl in ipairs(diff_lines) do
           table.insert(lines, '  ' .. dl)
         end
+        diff_marks(lines, 2, marks, diff_start + 1, #lines)
         local lang = tshl.lang_for_path(ch.path)
         if lang then
           -- Within body_lines, source starts after "  " + the diff glyph.
@@ -438,7 +472,7 @@ function M.default_tool_body(tool_name, input)
         end
       end
     end
-    return { lines = lines, snippets = snippets }
+    return { lines = lines, snippets = snippets, diff_marks = marks }
   end
   local lines = render_yaml_ish(filtered, '')
   local snippets = {}

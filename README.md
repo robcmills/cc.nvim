@@ -1239,6 +1239,7 @@ tests/
 │   ├── highlight_spec.lua           # CcXxx highlight group defaults
 │   ├── caret_spec.lua               # ▾/▸ extmark sync with fold state
 │   ├── tool_timers_spec.lua         # shared tool clock, hidden/stale header writes
+│   ├── render_cost_spec.lua         # one-insert subagent tools, fold-close view, foldtext index, tail append
 │   ├── icons_spec.lua               # per-tool icon resolution + nerdfont detection
 │   ├── interactive_spec.lua         # AskUserQuestion, permissions, MCP elicitation
 │   ├── interrupt_spec.lua           # :CcStop control_request / control_response flow

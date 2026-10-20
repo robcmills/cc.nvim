@@ -135,20 +135,9 @@ function M.apply_buffer_syntax(bufnr)
     -- Permission request/outcome lines
     vim.cmd([[syntax match CcPermission /^\s\+[⚠✓✗]\s\+\%(Permission\|Allowed\|Denied\):.*$/ containedin=ALL]])
 
-    -- Diff lines inside a tool input. diff.lua indents them 8 spaces for a
-    -- lone tool call; inside a tool group the body sits 2 columns further in.
-    -- Codex FileChange bodies put a per-file path at the 4-space body indent
-    -- (6 grouped) and its unified diff 2 further, so they land at 6 or 8.
-    -- Anchor on those exact indents to avoid matching markdown bullets in
-    -- agent prose, which use a shallower indent.
-    for _, n in ipairs({ 6, 8, 10 }) do
-      vim.cmd(([[syntax match CcDiffAdd    /^ \{%d\}\zs+.*$/ containedin=ALL]]):format(n))
-      vim.cmd(([[syntax match CcDiffDelete /^ \{%d\}\zs-.*$/ containedin=ALL]]):format(n))
-      vim.cmd(([[syntax match CcDiffHunk   /^ \{%d\}\zs@@.*@@$/ containedin=ALL]]):format(n))
-    end
-    for _, n in ipairs({ 4, 6 }) do
-      vim.cmd(([[syntax match CcDiffPath   /^ \{%d\}\zs.*\ze (\%%(add\|delete\|move\|rename\|update\))$/ containedin=ALL]]):format(n))
-    end
+    -- Diff lines in tool inputs (CcDiffAdd/Delete/Hunk/Path) are extmarks
+    -- placed by Output:_highlight_input_body, not syntax: an indent-anchored
+    -- match also caught prose list items nested to the same column.
 
     -- TodoWrite item icons. Glyphs must match output.lua's todo_marker().
     vim.cmd([[syntax match CcTodoCompleted  /^\s\+\zs✓\ze\s/ containedin=ALL]])
