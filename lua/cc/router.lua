@@ -156,6 +156,13 @@ function Router:dispatch(msg)
     background_changed = self:_handle_task_notification(msg)
   end
 
+  -- Approvals of classifier denials wait for the turn to end.
+  if before_turn_active and not self.session.turn_active and self.instance
+      and self.instance.queued_prompts then
+    local inst = self.instance
+    vim.schedule(function() require('cc')._flush_queued_prompts(inst) end)
+  end
+
   -- Refresh statusline on events that change visible state.
   if t == 'system' or t == 'result' or t == 'control_response'
       or t == 'control_cancel_request'
@@ -207,6 +214,8 @@ function Router:_handle_system(msg)
     if msg.permissionMode and self.session then
       self.session.permission_mode = msg.permissionMode
     end
+  elseif sub == 'permission_denied' then
+    self:_handle_permission_denied(msg)
   elseif sub == 'task_notification' then
     self:_handle_task_notification(msg)
   elseif sub == 'task_started' or sub == 'task_progress' or sub == 'task_updated'
@@ -465,8 +474,9 @@ function Router:_handle_control_cancel(msg)
   pcall(entry.dismiss)
   self.output:render_permission_outcome('remote', entry.tool_name)
   if self.instance then
-    self.instance.awaiting_permission = false
-    self.instance.awaiting_input = false
+    local waiting = next(self.open_prompts) ~= nil
+    self.instance.awaiting_permission = waiting
+    self.instance.awaiting_input = waiting
     require('cc.statusline').refresh(self.instance)
   end
 end
@@ -494,8 +504,9 @@ function Router:_handle_control_response(msg)
       if behavior ~= 'allow' and behavior ~= 'deny' then behavior = 'remote' end
       self.output:render_permission_outcome(behavior, entry.tool_name)
       if self.instance then
-        self.instance.awaiting_permission = false
-        self.instance.awaiting_input = false
+        local waiting = next(self.open_prompts) ~= nil
+        self.instance.awaiting_permission = waiting
+        self.instance.awaiting_input = waiting
         require('cc.statusline').refresh(self.instance)
       end
     end
@@ -677,6 +688,64 @@ function Router:_handle_permission_request(request_id, req)
     end
   end, { provider = 'claude', instance = self.instance,
     request_id = request_id, pending = self.open_prompts })
+end
+
+--- Substitute ${name} placeholders; gsub's replacement is a function so `%`
+--- in values stays literal.
+---@param template string
+---@param values table<string, string>
+---@return string
+local function fill(template, values)
+  return (template:gsub('%${([%w_]+)}', function(key) return values[key] end))
+end
+
+---@param input table?
+---@return string
+local function input_json(input)
+  if type(input) ~= 'table' then return '{}' end
+  local ok, json = pcall(vim.json.encode, input)
+  if not ok then return '{}' end
+  -- cjson escapes '/' as '\/'; commands and paths read better without it.
+  return (json:gsub('\\/', '/'))
+end
+
+--- An auto-mode classifier block (system/permission_denied). The CLI has
+--- already denied the call and asks nothing, so this opens the permission
+--- prompt flow (float, hooks, timeout stages) for a request that exists only
+--- here. Approve submits a user message authorizing the exact call; Dismiss,
+--- timeouts, and teardown send nothing. Subagent blocks (agent_id) arrive on
+--- the parent stream and surface the same way.
+---@param msg table
+function Router:_handle_permission_denied(msg)
+  local opts = Config.options.permission_denials or {}
+  if opts.enabled == false or msg.decision_reason_type ~= 'classifier' then return end
+  local tool_use_id = msg.tool_use_id
+  local request_id = 'denial:' .. tostring(tool_use_id or msg.uuid or '')
+  if self.open_prompts[request_id] then return end
+  local tool_name = msg.tool_name or 'unknown'
+  local input = self.output:tool_input(tool_use_id)
+  local reason = msg.decision_reason
+  if type(reason) ~= 'string' or reason == '' then reason = msg.message end
+  local agent_id = type(msg.agent_id) == 'string' and msg.agent_id ~= '' and msg.agent_id or nil
+  local inst = self.instance
+
+  self.output:render_permission_denial(tool_name, input, reason)
+  require('cc.permission_prompt').request(tool_name, input, function(behavior, _, _, source)
+    self.output:render_permission_outcome(behavior or 'deny', tool_name, 'denial')
+    if behavior ~= 'allow' or source == 'closed' or not inst then return end
+    local text = fill(opts.approve_prompt or '', {
+      tool_name = tool_name,
+      input = input_json(input or self.output:tool_input(tool_use_id)),
+      reason = reason or '',
+      where = agent_id and (' inside subagent ' .. agent_id) or '',
+    })
+    local ok, err = require('cc')._submit_when_idle(inst, text)
+    if not ok then
+      vim.notify('cc.nvim: approval not sent: ' .. tostring(err), vim.log.levels.WARN)
+    end
+  end, { provider = 'claude', instance = inst, request_id = request_id,
+    pending = self.open_prompts, kind = 'denial', reason = reason,
+    tool_use_id = tool_use_id, agent_id = agent_id })
 end
 
 --- Build the `response` body for a can_use_tool control_response.

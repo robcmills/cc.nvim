@@ -1,6 +1,10 @@
 local M = {}
 
 ---@class cc.PermissionPromptEvent
+---@field kind 'permission'|'denial' 'denial' for a tool call the auto-mode classifier already blocked
+---@field reason string? classifier's reason (denials only)
+---@field tool_use_id string? blocked tool call (denials only)
+---@field agent_id string? subagent that made the blocked call (denials only)
 ---@field provider 'claude'|'codex'|string
 ---@field session_id string?
 ---@field session_name string?
@@ -121,6 +125,18 @@ local defaults = {
   -- Called once on any resolution, including remote answers and teardown.
   ---@type fun(event: cc.PermissionPromptEvent)?
   on_permission_resolved = nil,
+
+  -- Auto-mode classifier blocks (system/permission_denied). The CLI denies
+  -- these without asking; cc.nvim opens an Approve/Dismiss prompt through
+  -- the same hooks and timeouts as tool permission prompts, with
+  -- event.kind = 'denial'. Approve submits `approve_prompt` (now, or when
+  -- the current turn ends). Placeholders: ${tool_name}, ${input} (JSON),
+  -- ${reason}, ${where} (' inside subagent <id>' or '').
+  permission_denials = {
+    enabled = true,
+    label = 'Blocked by auto mode',
+    approve_prompt = 'Auto mode blocked this ${tool_name} call${where}. I approve it: run exactly this input, unchanged.\n\n```json\n${input}\n```',
+  },
 
   -- One-line summaries shown in the :CcPermissionMode picker. Keys are the
   -- CLI's mode names; override any entry to reword it.

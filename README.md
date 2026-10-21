@@ -264,6 +264,11 @@ require('cc').setup({
   on_permission_prompt = nil, -- function(event)
   permission_timeouts = {}, -- { { after = seconds, callback = function(event) end }, ... }
   on_permission_resolved = nil, -- function(event)
+  permission_denials = { -- auto-mode classifier blocks; see Permission prompts
+    enabled = true,
+    label = 'Blocked by auto mode',
+    approve_prompt = '...', -- ${tool_name} ${input} ${reason} ${where}
+  },
   -- One-line summaries shown in the :CcPermissionMode picker, keyed by mode.
   permission_mode_descriptions = { --[[ see lua/cc/config.lua for defaults ]] },
   prompt_height = 10,
@@ -554,7 +559,8 @@ Set `on_permission_prompt` to receive an event when this window opens,
 for example to send a desktop notification. The event contains `provider`,
 `session_id`, `session_name`, `prompt_bufnr`, `output_bufnr`,
 `output_bufname` (the basename shown by buffer-list integrations),
-`tool_name`, and `input`. Tool approval events also include `request_id`,
+`tool_name`, `input`, and `kind` (`permission`, or `denial` for an
+auto-mode block; see below). Tool approval events also include `request_id`,
 `opened_at` (epoch seconds), `elapsed` (seconds since opening), and these handles:
 
 - `event.resolve('allow'|'deny', message)` answers and dismisses the prompt,
@@ -622,6 +628,31 @@ input-shape rules — e.g. a specific Bash command prefix) when the CLI
 sends them, falling back to a coarse tool-name rule otherwise. The
 rules are sent back via `updatedPermissions` in the `can_use_tool`
 control response and live for the rest of the session.
+
+#### Auto-mode denials
+
+In auto mode the CLI denies a call outright when its classifier blocks it,
+and only falls back to a real prompt after repeated denials. cc.nvim treats
+each block (`system/permission_denied` with `decision_reason_type =
+"classifier"`) like a permission prompt: the instance shows as waiting, the
+output gets a `⛔ Blocked by auto mode` card with the tool, an input summary,
+and the classifier's reason, and the same float opens with `a` Approve and
+`d` / `q` / `<Esc>` Dismiss. Other denial kinds (rules, `dontAsk`) are ignored.
+Blocks inside a subagent surface on the parent session.
+
+The same `on_permission_prompt`, `permission_timeouts`, and
+`on_permission_resolved` callbacks run. Their events carry `kind = 'denial'`,
+`reason`, `tool_use_id`, and `agent_id` (subagent blocks), so a notification
+can say "blocked by auto mode". There is no CLI request to answer, so:
+
+- Approve (or `event.resolve('allow')`) submits `permission_denials.approve_prompt`,
+  a user message authorizing that exact tool and input so the classifier sees
+  your intent on retry. Mid-turn, it is held and submitted when the turn ends.
+- Dismiss, `event.resolve('deny', ...)` (e.g. a timeout stage), and teardown
+  clear the waiting state and send nothing.
+- `event.enable_remote()` still enables Remote Control, but it does not reach
+  your phone: Claude's mobile push fires only while a prompt or question is
+  pending in the CLI, and a denial leaves nothing pending.
 
 ### Permission mode
 

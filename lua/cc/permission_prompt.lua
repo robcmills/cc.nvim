@@ -9,6 +9,11 @@
 --   q/<Esc> Cancel (treated as Deny)
 -- Closing the window externally (BufWipeout) also resolves as Deny.
 -- The returned handle's dismiss() closes it without answering when resolved remotely.
+--
+-- context.kind = 'denial' reuses the same float, hooks, and timeout stages
+-- for a tool call the auto-mode classifier already blocked. There is no CLI
+-- request to answer: `a` approves (allow, variant 'approve') and `d`/`q`/<Esc>
+-- dismiss (deny, variant 'dismiss'); the caller decides what each sends.
 
 local M = {}
 
@@ -67,8 +72,9 @@ end
 --- Title for the float: tool name + description / summary suffix.
 ---@param tool_name string
 ---@param input table?
+---@param prefix string? defaults to '⚠ Permission'
 ---@return string
-local function build_title(tool_name, input)
+local function build_title(tool_name, input, prefix)
   local summary
   if type(input) == 'table' then
     if type(input.description) == 'string' and input.description ~= '' then
@@ -78,7 +84,7 @@ local function build_title(tool_name, input)
   if not summary or summary == '' then
     summary = tool_body.summarize_tool_input(tool_name, input)
   end
-  local title = '⚠ Permission: ' .. tool_name
+  local title = (prefix or '⚠ Permission') .. ': ' .. tool_name
   if summary and summary ~= '' then
     summary = summary:gsub('\n', ' ')
     if #summary > 100 then summary = summary:sub(1, 97) .. '...' end
@@ -107,6 +113,10 @@ local function build_event(tool_name, input, context)
   end
 
   return {
+    kind = context.kind or 'permission',
+    reason = context.reason,
+    tool_use_id = context.tool_use_id,
+    agent_id = context.agent_id,
     provider = context.provider or 'unknown',
     session_id = instance
       and (instance.last_session_id or (instance.session and instance.session.id))
@@ -143,6 +153,7 @@ end
 
 ---@class cc.PendingPermission
 ---@field request_id string|number
+---@field kind 'permission'|'denial'
 ---@field tool_name string
 ---@field input table?
 ---@field opened_at number
@@ -165,7 +176,8 @@ function M.request(tool_name, input, on_choice, context)
   local pending = context.pending or (inst and inst.pending_permissions) or {}
   if inst then inst.pending_permissions = pending end
   local entry = {
-    request_id = context.request_id, tool_name = tool_name, input = input,
+    request_id = context.request_id, kind = context.kind or 'permission',
+    tool_name = tool_name, input = input,
     opened_at = os.time(), remote_enabled_by_stage = false,
   }
   context.opened_at = entry.opened_at
@@ -208,7 +220,9 @@ function M.request(tool_name, input, on_choice, context)
   end
   entry.resolve = function(behavior, message)
     if behavior ~= 'allow' and behavior ~= 'deny' then return false end
-    return entry.finish(behavior, 'api', behavior == 'allow' and 'allow_once' or 'deny', message)
+    local variant = behavior == 'allow' and 'allow_once' or 'deny'
+    if entry.kind == 'denial' then variant = behavior == 'allow' and 'approve' or 'dismiss' end
+    return entry.finish(behavior, 'api', variant, message)
   end
   context.resolve = entry.resolve
   context.enable_remote = function(stage)
@@ -296,18 +310,33 @@ end
 --- differently for telemetry.
 ---@param tool_name string
 ---@param input table?
----@param on_choice fun(behavior: 'allow'|'deny', variant: 'allow_once'|'allow_always'|'deny'|'cancel')
+---@param on_choice fun(behavior: 'allow'|'deny', variant: 'allow_once'|'allow_always'|'deny'|'cancel'|'approve'|'dismiss')
 ---@param context table? request context, including provider and instance
 ---@return { bufnr: integer, winid: integer, dismiss: fun() }
 function M.ask(tool_name, input, on_choice, context)
+  local denial = context and context.kind == 'denial'
   local lines = body_lines(tool_name, input)
-  local title = build_title(tool_name, input)
-  local footer = ' [a]llow  [A]lways  [d]eny  [q]/<Esc> cancel '
+  local title, footer
+  if denial then
+    title = build_title(tool_name, input,
+      '⛔ ' .. require('cc.config').options.permission_denials.label)
+    footer = ' [a]pprove  [d]/[q]/<Esc> dismiss '
+  else
+    title = build_title(tool_name, input)
+    footer = ' [a]llow  [A]lways  [d]eny  [q]/<Esc> cancel '
+  end
+  local reason_lines = {}
+  if denial and type(context.reason) == 'string' and context.reason ~= '' then
+    for _, l in ipairs(vim.split(context.reason, '\n', { plain = true })) do
+      reason_lines[#reason_lines + 1] = { { l, 'WarningMsg' } }
+    end
+    reason_lines[#reason_lines + 1] = { { '' } }
+  end
 
   local screen_w = vim.o.columns
   local screen_h = vim.o.lines
   local width = math.min(120, math.max(60, math.floor(screen_w * 0.8)))
-  local height = math.max(5, math.min(#lines + 2, math.floor(screen_h * 0.7)))
+  local height = math.max(5, math.min(#lines + #reason_lines + 2, math.floor(screen_h * 0.7)))
   local row = math.max(0, math.floor((screen_h - height) / 2) - 1)
   local col = math.max(0, math.floor((screen_w - width) / 2))
 
@@ -320,6 +349,12 @@ function M.ask(tool_name, input, on_choice, context)
   local ft = filetype_for(tool_name)
   if ft ~= '' then
     pcall(function() vim.bo[bufnr].filetype = ft end)
+  end
+  -- The classifier's reason sits above the input as virtual lines so the
+  -- input keeps its filetype highlighting.
+  if #reason_lines > 0 then
+    vim.api.nvim_buf_set_extmark(bufnr, vim.api.nvim_create_namespace('cc_permission_reason'),
+      0, 0, { virt_lines = reason_lines, virt_lines_above = true })
   end
 
   local winid = vim.api.nvim_open_win(bufnr, true, {
@@ -377,23 +412,29 @@ function M.ask(tool_name, input, on_choice, context)
       { buffer = bufnr, silent = true, nowait = true,
         desc = 'cc.permission_prompt: ' .. desc })
   end
-  bind('a', 'allow', 'allow_once',   'Allow')
-  bind('A', 'allow', 'allow_always', 'Always Allow')
-  bind('d', 'deny',  'deny',         'Deny')
-  bind('q', 'deny',  'cancel',       'Cancel')
-  bind('<Esc>', 'deny', 'cancel',    'Cancel')
+  local cancel = denial and 'dismiss' or 'cancel'
+  if denial then
+    bind('a', 'allow', 'approve',      'Approve')
+    bind('d', 'deny',  'dismiss',      'Dismiss')
+  else
+    bind('a', 'allow', 'allow_once',   'Allow')
+    bind('A', 'allow', 'allow_always', 'Always Allow')
+    bind('d', 'deny',  'deny',         'Deny')
+  end
+  bind('q', 'deny',  cancel,         'Cancel')
+  bind('<Esc>', 'deny', cancel,      'Cancel')
 
   -- WinLeave covers the user wandering off (<C-w>w, mouse) and our own
   -- programmatic close; BufWipeout covers :bd / external wipeout.
   vim.api.nvim_create_autocmd('WinLeave', {
     buffer = bufnr,
     once = true,
-    callback = function() resolve('deny', 'cancel') end,
+    callback = function() resolve('deny', cancel) end,
   })
   vim.api.nvim_create_autocmd('BufWipeout', {
     buffer = bufnr,
     once = true,
-    callback = function() resolve('deny', 'cancel') end,
+    callback = function() resolve('deny', cancel) end,
   })
 
   local handle = { bufnr = bufnr, winid = winid, dismiss = dismiss }
