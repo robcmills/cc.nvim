@@ -432,6 +432,7 @@ end
 function M.refresh(instance)
   if not instance then return end
   require('cc.state_events').check(instance)
+  require('cc.name_events').check(instance)
   local cfg = require('cc.config').options.statusline or {}
   if not cfg.enabled then return end
   for winid, inst in pairs(winid_to_instance) do

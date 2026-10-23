@@ -45,6 +45,8 @@ M.VERSION = '0.12.0'
 ---@field auto_rename_in_flight boolean? true while the auto-rename subprocess is running
 ---@field auto_rename_handle userdata? libuv handle of the active auto-rename subprocess
 ---@field transient_rename_active boolean? true when pending_session_name holds a display-only placeholder that must not be persisted
+---@field last_emitted_name string? name carried by the last `User CcRenamed` (see cc.name_events)
+---@field last_emitted_name_transient boolean? whether that name was the auto-rename placeholder
 
 local instances = {} -- keyed by output bufnr
 local next_instance_id = 1
@@ -1590,6 +1592,7 @@ function M._apply_session_buf_names(inst, name)
   if inst.output and inst.output.set_buf_name then
     inst.output:set_buf_name('cc-' .. name)
   end
+  require('cc.name_events').check(inst)
 end
 
 --- The instance's effective title: the persisted name, else a queued

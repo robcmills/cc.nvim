@@ -941,6 +941,14 @@ vim.api.nvim_create_autocmd('User', {
 })
 ```
 
+Renames fire `User CcRenamed` instead, once per change of the name
+`list_instances()` reports, with `data = { bufnr, prompt_bufnr, name,
+previous, transient }`. `transient = true` marks auto-rename's placeholder
+(`auto_rename.placeholder`), shown while the title is generated; the real
+title follows as a second event with `transient = false`. `name` is `nil`
+when the placeholder is cleared because auto-rename failed. A resumed
+session fires once with its stored title.
+
 ### Delegation
 
 An agent that hands work to other agents shows `delegating` while any of
