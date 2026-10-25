@@ -269,6 +269,11 @@ require('cc').setup({
     label = 'Blocked by auto mode',
     approve_prompt = '...', -- ${tool_name} ${input} ${reason} ${where}
   },
+  peer_message_hold = { -- cross-session messages the CLI held; see Held messages
+    enabled = true,
+    held_format = '...', -- ${from} ${cause}
+    dropped_format = '...', -- ${from} ${outcome}
+  },
   -- One-line summaries shown in the :CcPermissionMode picker, keyed by mode.
   permission_mode_descriptions = { --[[ see lua/cc/config.lua for defaults ]] },
   prompt_height = 10,
@@ -654,6 +659,22 @@ can say "blocked by auto mode". There is no CLI request to answer, so:
   your phone: Claude's mobile push fires only while a prompt or question is
   pending in the CLI, and a denial leaves nothing pending.
 
+### Held messages
+
+The CLI holds a cross-session message (`SendMessage` from another session)
+instead of delivering it when the sender runs in a different permission
+class: `bypass` (`bypassPermissions`) or `prompting` (every other mode). The
+terminal UI asks you to approve it; the CLI offers no approval to an SDK host,
+so in cc.nvim a held message expires undelivered after a few minutes unless
+the two modes come to match. cc.nvim handles the CLI's
+`system/peer_message_hold` events: a hold or drop renders a notice in the
+output buffer and a WARN notification (`peer_message_hold.enabled = false`
+silences both), and `list_instances()` lists it in `peerHolds`. A message the
+CLI later releases leaves the list.
+
+To avoid holds, run both sessions in the same mode: `cc.open({ permission_mode
+= ... })` passes `--permission-mode` for that session only.
+
 ### Permission mode
 
 cc.nvim tracks the CLI's current permission mode (`default`,
@@ -900,6 +921,11 @@ reliable.
 agent tools, including callers using `nvim --remote-expr`.
 `awaiting_permission` is a boolean, and `pending_permissions` is a list of
 `{ request_id, tool_name, input, opened_at }` for pending tool approval floats.
+`permissionMode` is the CLI's live mode (from `init` and mode changes), or
+null before the first `init`. `peerHolds` is a list of
+`{ messageUuid, from, fromName, state, cause, outcome, at }` for cross-session
+messages the CLI held (`state = 'held'`) or dropped (`'dropped'`, with an
+`outcome` such as `expired`); see Held messages.
 These snapshots contain no callable handles. Use
 `require('cc').resolve_permission(request_id, 'allow'|'deny', message)` to answer
 by ID across instances. It returns `false` for an unknown/already resolved ID

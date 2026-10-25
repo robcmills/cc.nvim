@@ -33,9 +33,18 @@ local M = {}
 ---@field cache_read_input_tokens integer cumulative cache-read tokens
 ---@field context_tokens integer last API call's full input load (input + cache_creation + cache_read); approximates current context window usage
 ---@field context_window integer? authoritative context window for self.model, taken from result.modelUsage when the CLI provides it
+---@field peer_holds table<string, cc.PeerHold> cross-session messages the CLI parked or dropped, keyed by message_uuid; a released one is removed
 ---@field last_result_usage cc.Usage? snapshot of the previous result.usage (cumulative within the current engine) — diffed against the next result to derive the per-result delta we add to the cumulative session totals
 local Session = {}
 Session.__index = Session
+
+---@class cc.PeerHold
+---@field from string sender address
+---@field from_name string?
+---@field state 'held'|'dropped'
+---@field cause string? why it was held
+---@field outcome string? why it was dropped ('expired', 'refused', 'dropped', 'discarded')
+---@field at integer epoch-ms of the latest state
 
 ---@return integer
 local function now_ms()
@@ -80,6 +89,7 @@ function M.new()
     last_result_usage = nil,
     -- tool_use_id -> { name, input, result, is_error, start_time }
     tool_calls = {},
+    peer_holds = {},
   }, Session)
 end
 

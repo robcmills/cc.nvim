@@ -216,6 +216,8 @@ function Router:_handle_system(msg)
     end
   elseif sub == 'permission_denied' then
     self:_handle_permission_denied(msg)
+  elseif sub == 'peer_message_hold' then
+    self:_handle_peer_message_hold(msg)
   elseif sub == 'task_notification' then
     self:_handle_task_notification(msg)
   elseif sub == 'task_started' or sub == 'task_progress' or sub == 'task_updated'
@@ -746,6 +748,42 @@ function Router:_handle_permission_denied(msg)
   end, { provider = 'claude', instance = inst, request_id = request_id,
     pending = self.open_prompts, kind = 'denial', reason = reason,
     tool_use_id = tool_use_id, agent_id = agent_id })
+end
+
+--- A cross-session message the CLI parked (system/peer_message_hold). The
+--- CLI's approval dialog is TUI-only, so a hold here can only end in expiry
+--- unless the modes come to match; say so where the user is looking.
+--- `released` means it entered the queue and needs no notice.
+---@param msg table
+function Router:_handle_peer_message_hold(msg)
+  local key = msg.message_uuid or msg.uuid
+  if type(key) ~= 'string' then return end
+  local holds = self.session.peer_holds
+  if msg.state == 'released' then
+    holds[key] = nil
+    return
+  end
+  if msg.state ~= 'held' and msg.state ~= 'dropped' then return end
+  local from = msg.from_name or msg.from or 'another session'
+  local uv = vim.uv or vim.loop
+  local seconds, microseconds = uv.gettimeofday()
+  holds[key] = {
+    from = msg.from or '',
+    from_name = msg.from_name,
+    state = msg.state,
+    cause = msg.cause or (holds[key] and holds[key].cause),
+    outcome = msg.outcome,
+    at = seconds * 1000 + math.floor(microseconds / 1000),
+  }
+  local opts = Config.options.peer_message_hold or {}
+  if opts.enabled == false then return end
+  local template = msg.state == 'held' and opts.held_format or opts.dropped_format
+  if type(template) ~= 'string' or template == '' then return end
+  local text = fill(template, {
+    from = from, cause = msg.cause or 'unknown', outcome = msg.outcome or 'unknown',
+  })
+  self.output:render_notice(text)
+  vim.notify('cc.nvim: ' .. text, vim.log.levels.WARN)
 end
 
 --- Build the `response` body for a can_use_tool control_response.

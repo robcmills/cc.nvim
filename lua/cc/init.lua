@@ -1974,6 +1974,15 @@ function M.list_instances()
         end
       end
       table.sort(pending, function(a, b) return tostring(a.request_id) < tostring(b.request_id) end)
+      local holds = {}
+      for id, hold in pairs(session and session.peer_holds or {}) do
+        holds[#holds + 1] = {
+          messageUuid = id, from = hold.from, fromName = hold.from_name or vim.NIL,
+          state = hold.state, cause = hold.cause or vim.NIL, outcome = hold.outcome or vim.NIL,
+          at = hold.at,
+        }
+      end
+      table.sort(holds, function(a, b) return a.at < b.at end)
       snapshots[#snapshots + 1] = {
         awaiting_permission = inst.awaiting_permission == true,
         pending_permissions = pending,
@@ -1983,6 +1992,9 @@ function M.list_instances()
         name = inst.session_name or inst.pending_session_name or vim.NIL,
         provider = provider,
         model = (session and session.model) or vim.NIL,
+        -- The CLI's live mode, from init and status messages; nil until init.
+        permissionMode = (session and session.permission_mode) or vim.NIL,
+        peerHolds = holds,
         cwd = inst.cwd or '',
         pid = (inst.process and inst.process.pid) or vim.NIL,
         state = State.get(inst),

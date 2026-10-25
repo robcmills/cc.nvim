@@ -138,6 +138,19 @@ local defaults = {
     approve_prompt = 'Auto mode blocked this ${tool_name} call${where}. I approve it: run exactly this input, unchanged.\n\n```json\n${input}\n```',
   },
 
+  -- Cross-session messages the CLI parks instead of delivering
+  -- (system/peer_message_hold). Most holds are permission-mode parity: the
+  -- sender runs in another permission class. A headless host has no approval
+  -- surface, so a held message expires undelivered unless the modes come to
+  -- match. Each hold is shown as a notice and WARN, and listed in
+  -- list_instances().peerHolds. Placeholders: ${from} (name, else address),
+  -- ${cause}, ${outcome}.
+  peer_message_hold = {
+    enabled = true,
+    held_format = 'Held a message from ${from} (${cause}); cc.nvim cannot approve it, so it expires undelivered',
+    dropped_format = 'Message from ${from} was not delivered (${outcome})',
+  },
+
   -- One-line summaries shown in the :CcPermissionMode picker. Keys are the
   -- CLI's mode names; override any entry to reword it.
   permission_mode_descriptions = {
