@@ -16,6 +16,9 @@ function M.get(inst)
   local session = inst.session
   if session and session.interrupt_pending then return 'interrupting' end
   if session and session.turn_active then return 'working' end
+  -- A prompt timed out unanswered and the turn ended: the agent waits on the
+  -- user as surely as with an open prompt. Cleared by the next user turn.
+  if inst.blocked then return 'waiting' end
   -- A linked child is busy. Reads memory only, so the spinner path that
   -- reaches here through statusline.refresh never probes or messages peers.
   if require('cc.delegation').busy_count(inst) > 0 then return 'delegating' end

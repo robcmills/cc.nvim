@@ -173,4 +173,118 @@ T['duplicate denial for the same call opens one prompt'] = function()
   eq(_G.child.lua_get('#events'), 1)
 end
 
+T['every denial type fires CcPermissionDenied'] = function()
+  setup()
+  _G.child.lua([[
+    _G.denied = {}
+    vim.api.nvim_create_autocmd('User', { pattern = 'CcPermissionDenied',
+      callback = function(a) denied[#denied + 1] = a.data end })
+    stream_tool('t1', { command = 'echo denyrule' })
+    deny('t1', { decision_reason_type = 'rule', decision_reason = vim.NIL })
+    deny('t2')
+  ]])
+  eq(_G.child.lua_get('#denied'), 2)
+  eq(_G.child.lua_get('denied[1].decision_reason_type'), 'rule')
+  eq(_G.child.lua_get('denied[1].input.command'), 'echo denyrule')
+  eq(_G.child.lua_get('denied[1].session_name'), 'denial-session')
+  eq(_G.child.lua_get('denied[2].reason'), 'Pushing to a remote was not requested.')
+  -- Only the classifier block opens a prompt.
+  eq(_G.child.lua_get('#events'), 1)
+end
+
+T['a real prompt for the same call supersedes the denial float'] = function()
+  setup()
+  _G.child.lua([[
+    stream_tool('t1', { command = 'git push origin main', description = 'Push' })
+    deny('t1')
+    router:dispatch({ type = 'control_request', request_id = 'r1', request = {
+      subtype = 'can_use_tool', tool_name = 'Bash', tool_use_id = 't2',
+      input = { command = 'git push origin main', description = 'Push (retry)' } } })
+    vim.wait(50)
+  ]])
+  eq(_G.child.lua_get('resolved[1].source'), 'superseded')
+  eq(_G.child.lua_get('resolved[1].kind'), 'denial')
+  eq(_G.child.lua_get('router.open_prompts["denial:t1"] == nil'), true)
+  eq(_G.child.lua_get('router.open_prompts["r1"] ~= nil'), true)
+  eq(_G.child.lua_get('events[2].kind'), 'permission')
+  eq(_G.child.lua_get('#writes'), 0)
+  eq(_G.child.lua_get([[lines():find('replaced by a permission prompt', 1, true) ~= nil]]), true)
+  eq(_G.child.lua_get([[lines():find('Dismissed', 1, true) == nil]]), true)
+end
+
+T['a prompt for a different call does not supersede the denial'] = function()
+  setup()
+  _G.child.lua([[
+    stream_tool('t1', { command = 'git push origin main' })
+    deny('t1')
+    router:dispatch({ type = 'control_request', request_id = 'r1', request = {
+      subtype = 'can_use_tool', tool_name = 'Bash', tool_use_id = 't2',
+      input = { command = 'git push origin dev' } } })
+    vim.wait(50)
+  ]])
+  -- A second float closes the first (existing behavior), but never as superseded.
+  eq(_G.child.lua_get('resolved[1] == nil or resolved[1].source ~= "superseded"'), true)
+  eq(_G.child.lua_get([[lines():find('replaced by a permission prompt', 1, true) == nil]]), true)
+end
+
+T['a real prompt denied by timeout leaves the agent waiting until the next user turn'] = function()
+  setup([[{ permission_timeouts = {
+    { after = 0.03, callback = function(e) e.resolve('deny', 'Approval timeout.') end },
+  } }]])
+  _G.child.lua([[
+    inst.session.turn_active = true
+    router:dispatch({ type = 'control_request', request_id = 'r1', request = {
+      subtype = 'can_use_tool', tool_name = 'Bash', tool_use_id = 't1',
+      input = { command = 'ask-rob "x: need prod; approve?"' } } })
+    wait_resolved(); vim.wait(50)
+  ]])
+  eq(_G.child.lua_get('resolved[1].timed_out'), true)
+  eq(_G.child.lua_get('writes[1].response.response.behavior'), 'deny')
+  -- Mid-turn the agent is still working; once the turn ends it waits.
+  eq(_G.child.lua_get('require("cc.instance_state").get(inst)'), 'working')
+  _G.child.lua([[inst.session.turn_active = false]])
+  eq(_G.child.lua_get('require("cc.instance_state").get(inst)'), 'waiting')
+  eq(_G.child.lua_get('inst.blocked.tool_name'), 'Bash')
+  eq(_G.child.lua_get('inst.blocked.kind'), 'permission')
+  -- Rob replies from his phone: the replayed user message clears it.
+  _G.child.lua([[router:dispatch({ type = 'user', isReplay = true, uuid = 'remote-1',
+    message = { role = 'user', content = 'approved' } })]])
+  eq(_G.child.lua_get('inst.blocked == nil'), true)
+  eq(_G.child.lua_get('require("cc.instance_state").get(inst)'), 'working')
+end
+
+T['a local deny or a denial float timeout blocks nothing'] = function()
+  setup([[{ permission_timeouts = {
+    { after = 0.03, callback = function(e) e.resolve('deny', 'Approval timeout.') end },
+  } }]])
+  _G.child.lua([[deny('t1'); wait_resolved(); vim.wait(50)]])
+  eq(_G.child.lua_get('resolved[1].timed_out'), true)
+  eq(_G.child.lua_get('inst.blocked == nil'), true)
+  _G.child.lua([[
+    router:dispatch({ type = 'control_request', request_id = 'r2', request = {
+      subtype = 'can_use_tool', tool_name = 'Bash', tool_use_id = 't2', input = { command = 'ls' } } })
+    events[2].resolve('deny')
+    vim.wait(50)
+  ]])
+  eq(_G.child.lua_get('resolved[2].timed_out == nil'), true)
+  eq(_G.child.lua_get('inst.blocked == nil'), true)
+end
+
+T['enable_remote(bufnr) turns the bridge on once for that instance'] = function()
+  setup()
+  _G.child.lua([[
+    _G.rc = {}
+    inst.provider = { set_remote_control = function(_, enabled, name, cb)
+      rc[#rc + 1] = { enabled, name }; _G.rc_cb = cb; return 'rc-1' end }
+    _G.first = require('cc').enable_remote(inst.prompt.bufnr)
+    _G.second = require('cc').enable_remote(inst.output.bufnr)
+    rc_cb(true)
+    inst.session.remote_control_state = 'connected'
+    _G.third = require('cc').enable_remote(inst.output.bufnr)
+  ]])
+  eq(_G.child.lua_get('{ first, second, third }'), { true, false, false })
+  eq(_G.child.lua_get('rc'), { { true, 'denial-session' } })
+  eq(_G.child.lua_get('require("cc").enable_remote(99999)'), false)
+end
+
 return T

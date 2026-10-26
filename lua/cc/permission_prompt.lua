@@ -139,6 +139,7 @@ local function build_event(tool_name, input, context)
     remote_enabled_by_stage = context.remote_enabled_by_stage,
     behavior = context.behavior,
     source = context.source,
+    timed_out = context.timed_out,
   }
 end
 
@@ -205,6 +206,15 @@ function M.request(tool_name, input, on_choice, context)
     stop_timer()
     pending[entry.request_id] = nil
     if source ~= 'local' and handle and handle.dismiss then pcall(handle.dismiss) end
+    -- A real prompt denied by a timeout stage: nobody answered, so the agent
+    -- waits on the user until the next user turn (cc.instance_state). A
+    -- denial float's timeout sends the agent nothing, so it blocks nothing.
+    if entry.timed_out and behavior == 'deny' and entry.kind == 'permission' and inst then
+      inst.blocked = {
+        kind = entry.kind, tool_name = tool_name, input = input,
+        request_id = entry.request_id, at = os.time(),
+      }
+    end
     refresh()
     local function complete()
       on_choice(behavior, variant, message, source)
@@ -212,6 +222,7 @@ function M.request(tool_name, input, on_choice, context)
       context.behavior = behavior
       context.source = source
       context.remote_enabled_by_stage = entry.remote_enabled_by_stage
+      context.timed_out = entry.timed_out
       notify_callback('on_permission_resolved', options.on_permission_resolved,
         build_event(tool_name, input, context))
     end
@@ -222,6 +233,8 @@ function M.request(tool_name, input, on_choice, context)
     if behavior ~= 'allow' and behavior ~= 'deny' then return false end
     local variant = behavior == 'allow' and 'allow_once' or 'deny'
     if entry.kind == 'denial' then variant = behavior == 'allow' and 'approve' or 'dismiss' end
+    -- A resolve from inside a timeout stage callback is a timeout.
+    if context.stage then entry.timed_out = true end
     return entry.finish(behavior, 'api', variant, message)
   end
   context.resolve = entry.resolve
