@@ -1,4 +1,4 @@
--- Bridge stderr is informational; other stderr remains a warning.
+-- CLI stderr renders as output-buffer notices; popups only when disabled.
 local helpers = dofile('tests/helpers.lua')
 local MiniTest = require('mini.test')
 local eq = MiniTest.expect.equality
@@ -63,11 +63,20 @@ T['bridge line renders one notice without a warning'] = function()
   warnings({})
 end
 
-T['mixed chunk routes each line separately'] = function()
+T['mixed chunk renders each line as its own notice'] = function()
   setup_provider()
   feed('[bridge:sdk] a\nplain warning\n')
-  eq(notices(), { '  ── claude: [bridge:sdk] a ──' })
-  warnings({ 'plain warning' })
+  eq(notices(), { '  ── claude: [bridge:sdk] a ──', '  ── claude: plain warning ──' })
+  warnings({})
+end
+
+-- A WARN popup this wide raised a hit-enter prompt that wedged Neovim.
+T['long non-bridge line renders a notice, never a popup'] = function()
+  setup_provider()
+  local line = 'Ignoring 31 permissions.allow entries: ' .. string.rep('x', 300)
+  feed(line .. '\n')
+  eq(notices(), { '  ── claude: ' .. line .. ' ──' })
+  warnings({})
 end
 
 T['split remote-bridge prefix waits for the rest of the line'] = function()
@@ -80,11 +89,11 @@ T['split remote-bridge prefix waits for the rest of the line'] = function()
   warnings({})
 end
 
-T['disabled stderr notices preserve bridge warnings'] = function()
+T['disabled stderr notices fall back to warnings'] = function()
   setup_provider({ remote_control = { stderr_notice = false } })
-  feed('[bridge] foo\n')
+  feed('[bridge] foo\nplain warning\n')
   eq(notices(), {})
-  warnings({ '[bridge] foo' })
+  warnings({ '[bridge] foo', 'plain warning' })
 end
 
 T['exit flushes a trailing notice and forwards exit arguments'] = function()
@@ -99,25 +108,18 @@ T['exit flushes a trailing notice and forwards exit arguments'] = function()
   warnings({})
 end
 
-T['blank lines are dropped and trailing warnings flush once'] = function()
+T['blank lines are dropped and a trailing line flushes once'] = function()
   setup_provider()
   feed('\n\nfirst\n\nlast')
-  warnings({ 'first' })
+  eq(notices(), { '  ── claude: first ──' })
   _G.child.lua([[
     _G._test_capture(function()
       _G._test_process.on_exit(0, 0)
       _G._test_process.on_exit(0, 0)
     end)
   ]])
-  eq(notices(), {})
-  warnings({ 'first', 'last' })
-end
-
-T['embedded bridge prefixes remain warnings'] = function()
-  setup_provider()
-  feed('warning [bridge] foo\n[remote-bridge:other] bar\n')
-  eq(notices(), {})
-  warnings({ 'warning [bridge] foo', '[remote-bridge:other] bar' })
+  eq(notices(), { '  ── claude: first ──', '  ── claude: last ──' })
+  warnings({})
 end
 
 T['notice rendering is deferred from a fast callback'] = function()

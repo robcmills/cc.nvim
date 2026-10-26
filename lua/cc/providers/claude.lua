@@ -124,11 +124,14 @@ function M.attach(ctx)
   })
 
   local stderr_buffer = ''
+  -- Stderr goes to the session's output buffer, not a popup: a vim.notify
+  -- wider than the command line raises a hit-enter prompt, which blocks
+  -- Neovim's event loop (and every RPC client) until someone presses Enter.
   ---@param line string
   local function stderr_line(line)
     if line == '' then return end
     local cfg = Config.options.remote_control
-    if cfg.stderr_notice and (line:match('^%[bridge[^%]]*%]') or line:match('^%[remote%-bridge%]')) then
+    if cfg.stderr_notice then
       local notice = string.format(cfg.stderr_notice_format, line)
       vim.schedule(function() self.output:render_notice(notice) end)
     else

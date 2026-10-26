@@ -305,7 +305,7 @@ require('cc').setup({
   },
 
   remote_control = {
-    stderr_notice = true, -- route `[bridge…]` stderr lines to the output buffer; false keeps WARN popups
+    stderr_notice = true, -- route CLI stderr lines to the output buffer; false uses WARN popups
     stderr_notice_format = 'claude: %s', -- stderr line, prefix intact
     notice_format = 'Remote Control: %s', -- session_url
     disabled_notice = 'Remote Control disabled',
@@ -789,10 +789,12 @@ untouched.
 
 The CLI writes informational lines to stderr with a `[bridge]` prefix, for
 example `[bridge] no session-anchored default-branch evidence` when the repo
-has no `refs/remotes/origin/HEAD`. cc.nvim renders these as notices in the
-output buffer rather than popups (`remote_control.stderr_notice = false`
-restores the popups). That particular one is harmless for local work;
-`git remote set-head origin -a` in the repo silences it.
+has no `refs/remotes/origin/HEAD`. cc.nvim renders these, and every other
+stderr line, as notices in the output buffer rather than popups, since a
+popup wider than the command line stops Neovim at a hit-enter prompt
+(`remote_control.stderr_notice = false` restores the popups). That
+particular one is harmless for local work; `git remote set-head origin -a`
+in the repo silences it.
 
 ## Peeking at running Bash
 
