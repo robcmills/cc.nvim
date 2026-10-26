@@ -142,4 +142,36 @@ T['notice rendering is deferred from a fast callback'] = function()
   warnings({})
 end
 
+local UNTRUSTED = 'Ignoring 1 permissions.allow entry from .claude/settings.json: this workspace has not been trusted. Run Claude Code interactively here once and accept the trust dialog, or set projects["/private/tmp/repo"].hasTrustDialogAccepted: true in /Users/x/.claude.json.'
+
+T['untrusted workspace line shows the fix and fires one event'] = function()
+  setup_provider()
+  _G.child.lua([[
+    _G._test_events = {}
+    vim.api.nvim_create_autocmd('User', { pattern = 'CcUntrustedWorkspace',
+      callback = function(a) table.insert(_G._test_events, a.data) end })
+  ]])
+  feed(UNTRUSTED .. '\n' .. UNTRUSTED:gsub('1 permissions.allow entry', '2 hooks') .. '\n')
+  local lines = table.concat(notices(), '\n')
+  eq(lines:find("Fix: run `cd '/private/tmp/repo' && claude` in a terminal", 1, true) ~= nil, true)
+  eq(lines:find('Ignoring 2 hooks', 1, true) ~= nil, true)
+  eq(_G.child.lua_get('#_G._test_events'), 1)
+  eq(_G.child.lua_get('_G._test_events[1].root'), '/private/tmp/repo')
+  eq(_G.child.lua_get('_G._test_events[1].fix'), "cd '/private/tmp/repo' && claude")
+  -- Notices only: a popup this wide would raise a hit-enter prompt.
+  warnings({})
+end
+
+T['untrusted detection can be turned off'] = function()
+  setup_provider({ untrusted_workspace = { enabled = false } })
+  _G.child.lua([[
+    _G._test_events = {}
+    vim.api.nvim_create_autocmd('User', { pattern = 'CcUntrustedWorkspace',
+      callback = function(a) table.insert(_G._test_events, a.data) end })
+  ]])
+  feed(UNTRUSTED .. '\n')
+  eq(_G.child.lua_get('#_G._test_events'), 0)
+  eq(table.concat(notices(), '\n'):find('Fix: run', 1, true) == nil, true)
+end
+
 return T

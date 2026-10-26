@@ -32,6 +32,8 @@ M.VERSION = '0.12.0'
 ---@field pending_session_name string? rename requested before transcript exists; flushed by `_flush_pending_rename`
 ---@field cwd string working directory captured when the instance was created
 ---@field awaiting_input boolean? true while provider UI is waiting for a user response
+---@field blocked table? a prompt that timed out unanswered; cleared by the next user turn
+---@field untrusted { root: string, fix: string, line: string }? the CLI ignored this workspace's .claude settings
 ---@field permission_winid integer? floating window of the open permission prompt, if any; set/cleared by cc.permission_prompt
 ---@field pending_permissions table<string|number, cc.PendingPermission>?
 ---@field permission_remote_enabling boolean? suppress duplicate enables before acknowledgement
@@ -1109,6 +1111,7 @@ function M.submit_for(inst, text)
   require('cc.splash').clear(inst.output.bufnr)
   inst.output:follow_tail()
   inst.session:add_user_turn(text)
+  inst.blocked = nil
   inst.output:render_user_turn(text)
   require('cc.statusline_spinner').sync(inst)
   require('cc.statusline').refresh(inst)
@@ -1478,6 +1481,29 @@ local function apply_permission_mode(mode)
   vim.notify(
     'cc.nvim: permission_mode set to ' .. mode .. ' (applies to next :Cc / :CcNew)',
     vim.log.levels.INFO)
+end
+
+--- Public: turn Remote Control on for the live instance owning `bufnr`
+--- (output or prompt buffer), named like a manual enable. Returns true when an
+--- enable was sent; false when the bridge is already up or starting, the
+--- instance is gone, or its provider has no Remote Control.
+---@param bufnr integer
+---@return boolean
+function M.enable_remote(bufnr)
+  local inst = find_instance(bufnr)
+  if not inst or not inst.process or not inst.process:is_alive() then return false end
+  local P = inst.provider
+  if not P or not P.set_remote_control then return false end
+  local state = inst.session and inst.session.remote_control_state
+  if state == 'ready' or state == 'connected' or state == 'reconnecting'
+      or inst.permission_remote_enabling then return false end
+  inst.permission_remote_enabling = true
+  local id = P:set_remote_control(true, M._current_session_name(inst), function()
+    inst.permission_remote_enabling = nil
+    require('cc.statusline').refresh(inst)
+  end)
+  if not id then inst.permission_remote_enabling = nil; return false end
+  return true
 end
 
 --- Public: toggle the live Claude bridge, or arm the next new session.
@@ -1998,6 +2024,12 @@ function M.list_instances()
         cwd = inst.cwd or '',
         pid = (inst.process and inst.process.pid) or vim.NIL,
         state = State.get(inst),
+        -- Set while a prompt that timed out unanswered keeps the agent waiting.
+        blocked = inst.blocked and {
+          kind = inst.blocked.kind, toolName = inst.blocked.tool_name,
+          input = vim.deepcopy(inst.blocked.input), at = inst.blocked.at,
+        } or vim.NIL,
+        untrusted = inst.untrusted and { root = inst.untrusted.root, fix = inst.untrusted.fix } or vim.NIL,
         turnElapsedMs = State.turn_elapsed_ms(inst) or vim.NIL,
         backgroundTaskCount = (session and session.background_task_count
           and session:background_task_count()) or 0,

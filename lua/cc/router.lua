@@ -333,6 +333,7 @@ function Router:_handle_user(msg)
     require('cc.splash').clear(self.output.bufnr)
     self.output:follow_tail()
     self.session:add_user_turn(text)
+    if self.instance then self.instance.blocked = nil end
     self.output:render_user_turn(text)
     return false
   end
@@ -670,6 +671,7 @@ function Router:_handle_permission_request(request_id, req)
     return
   end
 
+  self:_supersede_denials(tool_name, input)
   self.output:render_permission_request(tool_name, input)
 
   require('cc.permission_prompt').request(tool_name, input, function(behavior, variant, message, source)
@@ -719,6 +721,7 @@ end
 --- the parent stream and surface the same way.
 ---@param msg table
 function Router:_handle_permission_denied(msg)
+  self:_emit_permission_denied(msg)
   local opts = Config.options.permission_denials or {}
   if opts.enabled == false or msg.decision_reason_type ~= 'classifier' then return end
   local tool_use_id = msg.tool_use_id
@@ -733,6 +736,7 @@ function Router:_handle_permission_denied(msg)
 
   self.output:render_permission_denial(tool_name, input, reason)
   require('cc.permission_prompt').request(tool_name, input, function(behavior, _, _, source)
+    if source == 'superseded' then return end
     self.output:render_permission_outcome(behavior or 'deny', tool_name, 'denial')
     if behavior ~= 'allow' or source == 'closed' or not inst then return end
     local text = fill(opts.approve_prompt or '', {
@@ -748,6 +752,69 @@ function Router:_handle_permission_denied(msg)
   end, { provider = 'claude', instance = inst, request_id = request_id,
     pending = self.open_prompts, kind = 'denial', reason = reason,
     tool_use_id = tool_use_id, agent_id = agent_id })
+end
+
+--- Fire `User CcPermissionDenied` for every system/permission_denied, of any
+--- decision type (classifier, rule, subcommandResults, ...), so a config can
+--- log or escalate blocks that never open a prompt. PreToolUse hook denials
+--- never reach the stream; the hook has to report those itself.
+---@param msg table
+function Router:_emit_permission_denied(msg)
+  local inst = self.instance
+  local input = self.output:tool_input(msg.tool_use_id)
+  local reason = msg.decision_reason
+  if type(reason) ~= 'string' or reason == '' then reason = nil end
+  local ok, err = pcall(vim.api.nvim_exec_autocmds, 'User', {
+    pattern = 'CcPermissionDenied',
+    modeline = false,
+    data = {
+      bufnr = self.output.bufnr,
+      prompt_bufnr = inst and inst.prompt and inst.prompt.bufnr or nil,
+      session_id = (inst and inst.last_session_id) or (self.session and self.session.id) or nil,
+      session_name = inst and (inst.session_name or inst.pending_session_name) or nil,
+      cwd = inst and inst.cwd or nil,
+      tool_name = msg.tool_name,
+      tool_use_id = msg.tool_use_id,
+      input = input,
+      decision_reason_type = msg.decision_reason_type,
+      reason = reason,
+      message = msg.message,
+      agent_id = type(msg.agent_id) == 'string' and msg.agent_id or nil,
+    },
+  })
+  if not ok then
+    self.output:render_notice('CcPermissionDenied handler failed: ' .. tostring(err))
+  end
+end
+
+---@param a table?
+---@param b table?
+---@return boolean true when two tool inputs name the same call (Bash by command)
+local function same_call(tool_name, a, b)
+  if type(a) ~= 'table' or type(b) ~= 'table' then return false end
+  if tool_name == 'Bash' then return a.command ~= nil and a.command == b.command end
+  local function strip(t)
+    local copy = vim.deepcopy(t)
+    copy.description = nil
+    return copy
+  end
+  return vim.deep_equal(strip(a), strip(b))
+end
+
+--- A real prompt for a call the classifier blocked earlier (a PermissionDenied
+--- hook asked the model to retry, a PreToolUse hook turned the retry into a
+--- prompt) replaces that block's Approve/Dismiss float: one prompt, one push.
+---@param tool_name string
+---@param input table?
+function Router:_supersede_denials(tool_name, input)
+  for _, entry in pairs(vim.tbl_values(self.open_prompts)) do
+    if entry.kind == 'denial' and entry.finish and entry.tool_name == tool_name
+        and same_call(tool_name, entry.input, input) then
+      entry.finish(nil, 'superseded')
+      self.output:render_notice(string.format(
+        Config.options.permission_denials.superseded_notice or '', tool_name))
+    end
+  end
 end
 
 --- A cross-session message the CLI parked (system/peer_message_hold). The

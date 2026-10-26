@@ -659,6 +659,50 @@ can say "blocked by auto mode". There is no CLI request to answer, so:
   your phone: Claude's mobile push fires only while a prompt or question is
   pending in the CLI, and a denial leaves nothing pending.
 
+To get a real prompt instead, route the retry through hooks: a
+`PermissionDenied` hook returns `{"hookSpecificOutput":
+{"hookEventName":"PermissionDenied","retry":true}}`, and a `PreToolUse` hook
+answers `"ask"` when the model retries that call. The retry then arrives as a
+normal permission prompt, which Remote Control does push. When a prompt
+arrives for the same tool and input as an open denial float (Bash compared
+by command, other tools by input without `description`), the float closes
+with `source = 'superseded'` and a notice
+(`permission_denials.superseded_notice`), so one block yields one prompt.
+
+Every `system/permission_denied`, of any decision type (classifier, deny
+rule, ...), fires `User CcPermissionDenied` with `data = { bufnr,
+prompt_bufnr, session_id, session_name, cwd, tool_name, tool_use_id, input,
+decision_reason_type, reason, message, agent_id }`, for logging blocks that
+open no prompt. A `PreToolUse` hook's deny never reaches the stream; the hook
+has to report it itself.
+
+#### Timed-out prompts
+
+A resolve from inside a timeout stage callback is a timeout:
+`on_permission_resolved` gets `timed_out = true`. When that resolve denies a
+real prompt (not a denial float, which sends nothing), the agent is left
+waiting on you, so the instance stays `waiting` after its turn ends, with the
+prompt in `list_instances()[i].blocked` (`{ kind, toolName, input, at }`).
+The next user turn, typed or sent through Remote Control, clears it.
+
+#### Untrusted workspace
+
+A session started where the trust dialog was never accepted ignores the
+repo's `.claude/settings.json` (allow rules, hooks, plugins). The CLI reports
+this only on stderr (`Ignoring 1 permissions.allow entry from
+.claude/settings.json: this workspace has not been trusted. ...`). cc.nvim
+renders it as a notice with a one-step fix (`cd <root> && claude`, then
+accept the dialog and restart the session), records
+`list_instances()[i].untrusted = { root, fix }`, and fires `User
+CcUntrustedWorkspace` once per process with `data = { bufnr, prompt_bufnr,
+cwd, root, fix, line, session_name }`. `root` is the path the CLI names in
+`projects["..."]`. cc.nvim never writes trust itself. `require('cc').enable_remote(ev.data.bufnr)`
+turns Remote Control on for that session from the handler, so a later push
+can reach your phone.
+`untrusted_workspace.enabled = false` turns this off (the line is then a
+plain stderr notice). A git worktree inherits its main checkout's trust
+(Claude Code 2.1.310).
+
 ### Held messages
 
 The CLI holds a cross-session message (`SendMessage` from another session)
@@ -938,7 +982,7 @@ The snapshot's `state`, `:CcStatus`, and statusline lifecycle share this precede
 | State | Meaning |
 | --- | --- |
 | `exited` | The provider process is no longer alive. |
-| `waiting` | The agent needs user input. |
+| `waiting` | The agent needs user input: an open prompt, or a prompt that timed out unanswered (see Timed-out prompts). |
 | `interrupting` | A turn interruption is pending. |
 | `working` | A turn is active. |
 | `delegating` | A linked child agent is busy (see Delegation below). |

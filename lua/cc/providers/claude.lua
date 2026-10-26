@@ -130,6 +130,13 @@ function M.attach(ctx)
   ---@param line string
   local function stderr_line(line)
     if line == '' then return end
+    if line:find('this workspace has not been trusted', 1, true) then
+      local trust = Config.options.untrusted_workspace or {}
+      if trust.enabled ~= false then
+        vim.schedule(function() self:_untrusted_workspace(line, ctx.cwd) end)
+        return
+      end
+    end
     local cfg = Config.options.remote_control
     if cfg.stderr_notice then
       local notice = string.format(cfg.stderr_notice_format, line)
@@ -167,6 +174,47 @@ function M.attach(ctx)
   self.router:set_process(self.process)
 
   return self
+end
+
+--- The CLI ignored the repo's .claude settings because the workspace was
+--- never trusted. Several lines can arrive (allow rules, hooks, ...); the
+--- first one per process shows the fix and fires `User CcUntrustedWorkspace`,
+--- the rest only show. Never writes trust: accepting it is the user's call.
+---@param line string
+---@param cwd string?
+function Claude:_untrusted_workspace(line, cwd)
+  local trust = Config.options.untrusted_workspace or {}
+  -- The CLI names the exact key it would trust: projects["<path>"].
+  local root = line:match('projects%["(.-)"%]') or cwd or vim.fn.getcwd()
+  local fix = 'cd ' .. vim.fn.shellescape(root) .. ' && claude'
+  if self._untrusted_reported then
+    self.output:render_notice(line)
+    return
+  end
+  self._untrusted_reported = true
+  local inst = self.instance
+  if inst then inst.untrusted = { root = root, fix = fix, line = line } end
+  local values = { line = line, fix = fix, root = root }
+  local text = (trust.notice_format or '${line}'):gsub('%${([%w_]+)}', function(key) return values[key] end)
+  -- A notice, never a vim.notify: a popup this wide raises a hit-enter
+  -- prompt that blocks Neovim's event loop (see stderr_line).
+  self.output:render_notice(text)
+  local ok, err = pcall(vim.api.nvim_exec_autocmds, 'User', {
+    pattern = 'CcUntrustedWorkspace',
+    modeline = false,
+    data = {
+      bufnr = self.output.bufnr,
+      prompt_bufnr = inst and inst.prompt and inst.prompt.bufnr or nil,
+      cwd = cwd or (self.process and self.process.opts.cwd) or nil,
+      root = root,
+      fix = fix,
+      line = line,
+      session_name = inst and (inst.session_name or inst.pending_session_name) or nil,
+    },
+  })
+  if not ok then
+    self.output:render_notice('CcUntrustedWorkspace handler failed: ' .. tostring(err))
+  end
 end
 
 --- Build the provider-specific one-shot command used by auto-rename.

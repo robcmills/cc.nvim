@@ -22,7 +22,8 @@ local M = {}
 ---@field disable_remote fun(): boolean true if a disable was sent
 ---@field remote_enabled_by_stage boolean? set on resolution
 ---@field behavior 'allow'|'deny'|nil resolved decision; nil if unknown remotely
----@field source 'local'|'remote'|'api'|'closed'|nil set on resolution
+---@field source 'local'|'remote'|'api'|'closed'|'superseded'|nil set on resolution
+---@field timed_out boolean? set on resolution when a timeout stage resolved it
 
 ---@class cc.PermissionTimeout
 ---@field after number seconds from opening or the preceding stage firing
@@ -136,6 +137,20 @@ local defaults = {
     enabled = true,
     label = 'Blocked by auto mode',
     approve_prompt = 'Auto mode blocked this ${tool_name} call${where}. I approve it: run exactly this input, unchanged.\n\n```json\n${input}\n```',
+    -- Shown when a real permission prompt for the same call replaces the
+    -- float (a hook routed the retry to a prompt). %s is the tool name.
+    superseded_notice = 'Auto-mode block of %s replaced by a permission prompt',
+  },
+
+  -- Workspace trust. A session started where the trust dialog was never
+  -- accepted ignores the repo's .claude/settings.json (allow rules, hooks,
+  -- plugins); the CLI says so only on stderr. cc.nvim shows a notice with a
+  -- one-step fix and fires `User CcUntrustedWorkspace` once per instance
+  -- (data: bufnr, prompt_bufnr, cwd, root, fix, line, session_name).
+  -- Placeholders: ${fix}, ${root}, ${line} (the CLI's stderr line).
+  untrusted_workspace = {
+    enabled = true,
+    notice_format = 'Untrusted workspace: ${root}/.claude settings (allow rules, hooks, plugins) are ignored. Fix: run `${fix}` in a terminal, accept the trust dialog, then restart this session.',
   },
 
   -- Cross-session messages the CLI parks instead of delivering
