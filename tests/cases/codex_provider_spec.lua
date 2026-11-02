@@ -974,4 +974,82 @@ T['fixture']['replays the captured live session'] = function()
   eq(text:find('hello', 1, true) ~= nil, true)
 end
 
+T['history cache'] = MiniTest.new_set({
+  hooks = {
+    -- Stub attach with a headless client that holds its thread/list reply
+    -- until _G._reply() so tests can observe calls made before it lands.
+    pre_case = function()
+      _G.child.lua([[
+        local codex = require('cc.providers.codex')
+        _G._cache_path = vim.fn.tempname() .. '/codex_threads.json'
+        codex._reset_thread_cache_for_tests(_G._cache_path)
+        _G._spawns = 0
+        _G._pending = {}
+        _G._threads = { { id = 't1', name = 'one', cwd = '/w', updatedAt = 10 } }
+        _G._orig_attach = codex.attach
+        codex.attach = function()
+          local client = {}
+          function client:spawn()
+            _G._spawns = _G._spawns + 1
+            self.on_ready()
+          end
+          function client:request(_, _, cb)
+            table.insert(_G._pending, function() cb({ data = _G._threads }) end)
+          end
+          function client:close() end
+          return client
+        end
+        _G._reply = function()
+          local pending = _G._pending
+          _G._pending = {}
+          for _, f in ipairs(pending) do f() end
+        end
+        _G._list = function(opts)
+          local got
+          codex.list_history(vim.tbl_extend('force', { cwd = '/w' }, opts or {}),
+            function(e) got = e end)
+          return got
+        end
+      ]])
+    end,
+    post_case = function()
+      _G.child.lua([[
+        local codex = require('cc.providers.codex')
+        codex.attach = _G._orig_attach
+        codex._reset_thread_cache_for_tests()
+      ]])
+    end,
+  },
+})
+
+T['history cache']['first cached listing waits for thread/list and fills the cache'] = function()
+  eq(_G.child.lua('return _G._list({ cached = true })'), vim.NIL)
+  _G.child.lua('_G._reply()')
+  eq(_G.child.lua('return vim.fn.filereadable(_G._cache_path)'), 1)
+  eq(_G.child.lua('return #_G._list({ cached = true })'), 1)
+end
+
+T['history cache']['cached listing answers at once and refreshes in the background'] = function()
+  _G.child.lua('_G._list({ cached = true }); _G._reply()')
+  _G.child.lua([[_G._threads = {
+    { id = 't2', name = 'two', cwd = '/w', updatedAt = 20 },
+    { id = 't1', name = 'one', cwd = '/w', updatedAt = 10 },
+  }]])
+  local entries = _G.child.lua('return _G._list({ cached = true })')
+  eq(#entries, 1)
+  eq(entries[1].session_id, 't1')
+  eq(entries[1].provider, 'codex')
+  -- A second open while the refresh is in flight does not spawn another.
+  _G.child.lua('_G._list({ cached = true })')
+  eq(_G.child.lua_get('_G._spawns'), 2)
+  _G.child.lua('_G._reply()')
+  eq(#_G.child.lua('return _G._list({ cached = true })'), 2)
+end
+
+T['history cache']['uncached listing ignores the cache'] = function()
+  _G.child.lua('_G._list({ cached = true }); _G._reply()')
+  eq(_G.child.lua('return _G._list()'), vim.NIL)
+  _G.child.lua('_G._reply()')
+end
+
 return T

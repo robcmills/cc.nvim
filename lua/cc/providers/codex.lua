@@ -408,6 +408,7 @@ function Codex:_on_thread_ready(result, resumed)
   end
   if resumed and self.output then
     restore_rollout_commands(thread)
+    self.output:begin_history_replay()
     self:_replay_turns(thread.turns or {})
     self.output:render_notice('resumed ' .. tostring(thread.id):sub(1, 8))
     self.output:finalize_history_replay()
@@ -1590,57 +1591,132 @@ end
 -- History (module-level: one-shot headless client)
 -- ---------------------------------------------------------------------------
 
---- List codex threads via a transient app-server (initialize → thread/list →
---- terminate). Asynchronous; cb receives provider-neutral entries.
----@param opts { all: boolean?, cwd: string?, limit: integer? }?
----@param cb fun(entries: table[])
-function M.list_history(opts, cb)
-  opts = opts or {}
+-- Threads from the last successful thread/list, persisted so the picker can
+-- open without waiting for an app-server to start. Unfiltered by cwd.
+-- Layout: stdpath('cache')/cc-nvim/codex_threads.json
+local THREAD_CACHE_VERSION = 1
+local default_thread_cache_path = vim.fn.stdpath('cache') .. '/cc-nvim/codex_threads.json'
+local thread_cache_path = default_thread_cache_path
+local refresh_in_flight = false
+
+---@return table[]? threads
+local function read_thread_cache()
+  local f = io.open(thread_cache_path, 'r')
+  if not f then return nil end
+  local data = f:read('*a')
+  f:close()
+  local ok, decoded = pcall(vim.json.decode, data, { luanil = { object = true, array = true } })
+  if not ok or type(decoded) ~= 'table' or decoded.version ~= THREAD_CACHE_VERSION
+      or type(decoded.threads) ~= 'table' then
+    return nil
+  end
+  return decoded.threads
+end
+
+---@param threads table[]
+local function write_thread_cache(threads)
+  local dir = vim.fn.fnamemodify(thread_cache_path, ':h')
+  if vim.fn.isdirectory(dir) ~= 1 then vim.fn.mkdir(dir, 'p') end
+  local tmp = thread_cache_path .. '.tmp'
+  local f = io.open(tmp, 'w')
+  if not f then return end
+  f:write(vim.json.encode({ version = THREAD_CACHE_VERSION, threads = threads }))
+  f:close()
+  if not vim.uv.fs_rename(tmp, thread_cache_path) then os.remove(tmp) end
+end
+
+--- Fetch threads via a transient app-server (initialize → thread/list →
+--- terminate) and refresh the cache. cb receives nil on failure.
+---@param limit integer
+---@param cb fun(threads: table[]?)
+local function fetch_threads(limit, cb)
   local client = M.attach({ headless = true })
   local finished = false
-  local function finish(entries)
+  local function finish(threads)
     if finished then return end
     finished = true
     pcall(function() client:close() end)
-    cb(entries)
+    cb(threads)
   end
 
   client.on_exit = function()
-    finish({})
+    finish(nil)
   end
   client.on_ready = function()
-    client:request('thread/list', { limit = opts.limit or 200 }, function(result, err)
+    client:request('thread/list', { limit = limit }, function(result, err)
       if err or not result then
         vim.notify('cc.nvim [codex]: thread/list failed: '
           .. tostring(err and err.message or 'no result'), vim.log.levels.ERROR)
-        finish({})
+        finish(nil)
         return
       end
-      local cwd = opts.cwd or vim.fn.getcwd()
-      local entries = {}
+      local threads = {}
       for _, t in ipairs(result.data or {}) do
-        if opts.all or t.cwd == cwd then
-          local title = (t.name and t.name ~= '' and t.name)
-            or (t.preview and t.preview ~= '' and t.preview:gsub('\n', ' '):sub(1, 120))
-            or '(empty)'
-          table.insert(entries, {
-            session_id = t.id,
-            title = title,
-            cwd = t.cwd,
-            mtime = t.updatedAt or t.createdAt or 0,
-            provider = 'codex',
-          })
-        end
+        local title = (t.name and t.name ~= '' and t.name)
+          or (t.preview and t.preview ~= '' and t.preview:gsub('\n', ' '):sub(1, 120))
+          or '(empty)'
+        table.insert(threads, {
+          session_id = t.id,
+          title = title,
+          cwd = t.cwd,
+          mtime = t.updatedAt or t.createdAt or 0,
+        })
       end
-      finish(entries)
+      write_thread_cache(threads)
+      finish(threads)
     end)
   end
 
   local ok, err = pcall(function() client:spawn() end)
   if not ok then
     vim.notify('cc.nvim: ' .. tostring(err), vim.log.levels.ERROR)
-    finish({})
+    finish(nil)
   end
+end
+
+--- List codex threads. Asynchronous; cb receives provider-neutral entries.
+--- With `opts.cached`, a previously fetched list is returned immediately and
+--- refreshed in the background for the next call, so a thread created since
+--- the last refresh shows up one picker open late. Without a cache, or
+--- without `opts.cached`, waits on a fresh thread/list.
+---@param opts { all: boolean?, cwd: string?, limit: integer?, cached: boolean? }?
+---@param cb fun(entries: table[])
+function M.list_history(opts, cb)
+  opts = opts or {}
+  local cwd = opts.cwd or vim.fn.getcwd()
+  local function entries_for(threads)
+    local entries = {}
+    for _, t in ipairs(threads or {}) do
+      if opts.all or t.cwd == cwd then
+        table.insert(entries, {
+          session_id = t.session_id,
+          title = t.title,
+          cwd = t.cwd,
+          mtime = t.mtime,
+          provider = 'codex',
+        })
+      end
+    end
+    return entries
+  end
+
+  local limit = opts.limit or 200
+  local cached = opts.cached and read_thread_cache()
+  if not cached then
+    fetch_threads(limit, function(threads) cb(entries_for(threads)) end)
+    return
+  end
+  cb(entries_for(cached))
+  if refresh_in_flight then return end
+  refresh_in_flight = true
+  fetch_threads(limit, function() refresh_in_flight = false end)
+end
+
+--- Test hook: override the thread cache path and reset refresh state.
+---@param path string?
+function M._reset_thread_cache_for_tests(path)
+  thread_cache_path = path or default_thread_cache_path
+  refresh_in_flight = false
 end
 
 ---@param entry table

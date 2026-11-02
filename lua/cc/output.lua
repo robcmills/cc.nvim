@@ -2387,6 +2387,17 @@ function Output:set_fold_level(level)
   end
 end
 
+--- Start a one-time history replay. Markdown ranges registered until
+--- finalize_history_replay are parsed once at the end instead of per block.
+function Output:begin_history_replay()
+  local bufnr = self.bufnr
+  if not (bufnr and bufnr > 0 and vim.api.nvim_buf_is_valid(bufnr)) then return end
+  local hl = require('cc.config').options.markdown_highlight
+  if hl and (hl.agent or hl.user) then
+    require('cc.md_highlight').begin_batch(bufnr)
+  end
+end
+
 --- Finish a one-time history replay while the prompt window may still have
 --- focus. Re-apply foldlevel now so newly-created expression folds begin in
 --- their configured default state, then redraw all windows before a later
@@ -2394,6 +2405,7 @@ end
 function Output:finalize_history_replay()
   local bufnr = self.bufnr
   if not (bufnr and bufnr > 0 and vim.api.nvim_buf_is_valid(bufnr)) then return end
+  require('cc.md_highlight').end_batch(bufnr)
   M._flush_pending_fold_closes(bufnr)
   self:commit_last_message()
   for _, winid in ipairs(vim.api.nvim_list_wins()) do

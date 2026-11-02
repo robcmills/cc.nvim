@@ -107,7 +107,9 @@ end
 --- Provider callbacks may be synchronous (Claude) or asynchronous (Codex);
 --- the aggregate callback fires once all requested providers have replied.
 --- Every returned entry is tagged with the provider needed to resume it.
----@param opts { all: boolean?, cwd: string?, limit: integer?, provider: string? }?
+--- `cached` lets a provider answer from its last listing and refresh in the
+--- background (Codex); Claude always reads local files.
+---@param opts { all: boolean?, cwd: string?, limit: integer?, provider: string?, cached: boolean? }?
 ---@param cb fun(entries: cc.HistoryEntry[])
 function M.list_history(opts, cb)
   opts = opts or {}
