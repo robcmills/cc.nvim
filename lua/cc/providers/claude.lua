@@ -503,6 +503,7 @@ function M.prerender_resume(inst, session_id)
     inst.output:render_notice(string.format(
       'earlier history hidden (%d records); showing last %d', start_idx - 1, max))
   end
+  inst.output:begin_history_replay()
   for i = start_idx, #records do
     inst.output:render_historical_record(records[i])
   end

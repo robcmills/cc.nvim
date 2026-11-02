@@ -96,4 +96,59 @@ T['md regions']['no region is pinned to EOF when the tool output has fences'] = 
   eq(markup_rows(find_row('Bash: Check fzf version'), find_row('Upgrade fzf') - 1), {})
 end
 
+-- Resume replay registers every range in one batch and parses once at the
+-- end. It must land on exactly the regions the per-block path produces.
+T['md regions']['batched history replay matches per-block registration'] = function()
+  local regions = _G.child.lua(string.format([[
+    local history = require('cc.history')
+    local Output = require('cc.output')
+    local Session = require('cc.session')
+    require('cc.config').setup({})
+    local records = history.read_transcript(%q)
+    local out = {}
+    for _, batched in ipairs({ false, true }) do
+      local output = Output.new(Session.new(), 'cc-test-output-' .. tostring(batched))
+      local bufnr = output:ensure_buffer()
+      vim.api.nvim_set_current_buf(bufnr)
+      if batched then output:begin_history_replay() end
+      for _, rec in ipairs(records) do output:render_historical_record(rec) end
+      output:finalize_history_replay()
+      local parser = vim.treesitter.highlighter.active[bufnr].tree
+      parser:parse(true)
+      local list = {}
+      for _, region in ipairs(parser:included_regions()) do
+        local r = region[1]
+        list[#list + 1] = string.format('%%d:%%d-%%d:%%d', r[1], r[2], r[4], r[5])
+      end
+      out[#out + 1] = list
+    end
+    return out
+  ]], helpers.fixtures_dir .. '/multi_turn.jsonl'))
+  eq(#regions[1] > 0, true)
+  eq(regions[2], regions[1])
+end
+
+T['md regions']['batched range ending on a deleted tail row is cut back'] = function()
+  local report = _G.child.lua([[
+    local md = require('cc.md_highlight')
+    local bufnr = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(bufnr)
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { 'header', '  **bold**', '' })
+    md.begin_batch(bufnr)
+    md.add_range(bufnr, 2, 3)
+    md.add_range(bufnr, 3, 3)
+    md.before_delete_row(bufnr, 2)
+    vim.api.nvim_buf_set_lines(bufnr, 2, 3, false, {})
+    vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, { '    tool body', '    more' })
+    md.end_batch(bufnr)
+    local list = {}
+    for _, region in ipairs(vim.treesitter.highlighter.active[bufnr].tree:included_regions()) do
+      local r = region[1]
+      list[#list + 1] = string.format('%d:%d-%d:%d', r[1], r[2], r[4], r[5])
+    end
+    return list
+  ]])
+  eq(report, { '1:0-1:10' })
+end
+
 return T

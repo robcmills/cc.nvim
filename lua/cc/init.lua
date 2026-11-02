@@ -1002,6 +1002,7 @@ function M.history(all_projects, provider_name, resume_opts)
   Providers.list_history({
     all = all_projects or false,
     provider = provider_name,
+    cached = true,
   }, function(entries)
     if #entries == 0 then
       local suffix = provider_name and (' for provider ' .. provider_name) or ''

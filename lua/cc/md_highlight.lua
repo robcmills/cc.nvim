@@ -26,6 +26,12 @@ local M = {}
 ---  shifts ranges within regions but does not reorder regions — so the
 ---  index stays valid unless before_delete_row drops an earlier region,
 ---  and that function re-points it.
+---@field batch cc.MdHl.Batch? open replay batch (begin_batch .. end_batch)
+
+---@class cc.MdHl.Batch
+---@field entries { start_id: integer, end_id: integer? }[] pending ranges in
+---  registration order; extmarks keep their rows aligned through buffer edits
+---@field streaming integer? index into entries of the in-flight streaming range
 
 ---@type table<integer, cc.MdHl.State>
 local buf_state = {}
@@ -34,6 +40,10 @@ local buf_state = {}
 -- to parse nothing until a real range is registered. Pass this zero-byte
 -- range whenever the live region list would otherwise be empty.
 local VOID_REGIONS = { { { 0, 0, 0, 0 } } }
+
+-- Batched ranges are tracked with extmarks until end_batch hands them to
+-- the parser in one set_included_regions + parse.
+local BATCH_NS = vim.api.nvim_create_namespace('cc.md_highlight.batch')
 
 local function regions_are_void(regions)
   if #regions ~= 1 then return false end
@@ -83,6 +93,100 @@ local function attach(bufnr)
   return buf_state[bufnr]
 end
 
+---@param bufnr integer
+---@param entry { start_id: integer, end_id: integer? }
+---@param row integer 0-indexed
+---@param col integer
+local function batch_set_end(bufnr, entry, row, col)
+  -- Left gravity on the end and right on the start match how tree-sitter
+  -- shifts an included range when text lands exactly on its boundary.
+  entry.end_id = vim.api.nvim_buf_set_extmark(bufnr, BATCH_NS, row, col,
+    { id = entry.end_id, right_gravity = false })
+end
+
+--- Track a range in the open batch. Returns its index in batch.entries.
+---@return integer
+local function batch_add(bufnr, batch, start_row, end_row, end_col)
+  local entry = { start_id = vim.api.nvim_buf_set_extmark(bufnr, BATCH_NS, start_row, 0, {}) }
+  batch_set_end(bufnr, entry, end_row, end_col)
+  batch.entries[#batch.entries + 1] = entry
+  return #batch.entries
+end
+
+--- Batch counterpart of before_delete_row's region fix-up: a range ending on
+--- `row` is cut back to the row above, one living only on `row` is dropped.
+local function batch_before_delete_row(bufnr, batch, row)
+  local kept, streaming = {}, nil
+  for i, entry in ipairs(batch.entries) do
+    local s = vim.api.nvim_buf_get_extmark_by_id(bufnr, BATCH_NS, entry.start_id, {})
+    local e = vim.api.nvim_buf_get_extmark_by_id(bufnr, BATCH_NS, entry.end_id, {})
+    local keep = true
+    if e[1] == row then
+      if s[1] < row then
+        local prev = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1] or ''
+        batch_set_end(bufnr, entry, row - 1, #prev)
+      else
+        keep = false
+        vim.api.nvim_buf_del_extmark(bufnr, BATCH_NS, entry.start_id)
+        vim.api.nvim_buf_del_extmark(bufnr, BATCH_NS, entry.end_id)
+      end
+    end
+    if keep then
+      kept[#kept + 1] = entry
+      if i == batch.streaming then streaming = #kept end
+    end
+  end
+  batch.entries = kept
+  batch.streaming = streaming
+end
+
+--- Start deferring region registration for a buffer. Between begin_batch
+--- and end_batch, add_range / begin_streaming / update_streaming record
+--- ranges as extmarks instead of re-parsing the whole region list on every
+--- call, which is quadratic in the number of prose blocks. Used for
+--- transcript replay, where nothing is displayed until the end anyway.
+---@param bufnr integer
+function M.begin_batch(bufnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) then return end
+  local state = attach(bufnr)
+  if not state or state.batch then return end
+  state.batch = { entries = {} }
+end
+
+--- Hand every batched range to the parser with one parse. No-op without
+--- an open batch.
+---@param bufnr integer
+function M.end_batch(bufnr)
+  local state = buf_state[bufnr]
+  local batch = state and state.batch
+  if not batch then return end
+  state.batch = nil
+  if not vim.api.nvim_buf_is_valid(bufnr) then return end
+
+  local regions = {}
+  local current = state.parser:included_regions() or {}
+  if not regions_are_void(current) then
+    for _, region in ipairs(current) do regions[#regions + 1] = region end
+  end
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  for i, entry in ipairs(batch.entries) do
+    local s = vim.api.nvim_buf_get_extmark_by_id(bufnr, BATCH_NS, entry.start_id, {})
+    local e = vim.api.nvim_buf_get_extmark_by_id(bufnr, BATCH_NS, entry.end_id, {})
+    if s[1] and e[1] and e[1] < line_count and e[1] >= s[1] then
+      -- Only the rows come from the marks. Every range spans whole lines,
+      -- and a later setbufline() of a boundary line collapses the marks'
+      -- columns, so read the end column from the line as it is now.
+      local last_line = vim.api.nvim_buf_get_lines(bufnr, e[1], e[1] + 1, false)[1] or ''
+      regions[#regions + 1] = { { s[1], 0, e[1], #last_line } }
+      if i == batch.streaming then state.streaming_idx = #regions end
+    end
+  end
+  vim.api.nvim_buf_clear_namespace(bufnr, BATCH_NS, 0, -1)
+  if #regions == 0 then return end
+  pcall(state.parser.set_included_regions, state.parser, regions)
+  pcall(state.parser.parse, state.parser, true)
+end
+
 --- Register an agent-prose range to be highlighted as markdown.
 ---@param bufnr integer
 ---@param start_lnum integer 1-indexed first line of agent prose
@@ -95,6 +199,10 @@ function M.add_range(bufnr, start_lnum, end_lnum)
   if not state then return end
 
   local last_line = vim.api.nvim_buf_get_lines(bufnr, end_lnum - 1, end_lnum, false)[1] or ''
+  if state.batch then
+    batch_add(bufnr, state.batch, start_lnum - 1, end_lnum - 1, #last_line)
+    return
+  end
   local new_region = { { start_lnum - 1, 0, end_lnum - 1, #last_line } }
 
   -- Read the parser's current regions (auto-adjusted by prior buffer edits)
@@ -129,6 +237,11 @@ function M.begin_streaming(bufnr, start_lnum)
   if not state then return end
 
   local last_line = vim.api.nvim_buf_get_lines(bufnr, start_lnum - 1, start_lnum, false)[1] or ''
+  if state.batch then
+    state.batch.streaming =
+      batch_add(bufnr, state.batch, start_lnum - 1, start_lnum - 1, #last_line)
+    return
+  end
   local new_region = { { start_lnum - 1, 0, start_lnum - 1, #last_line } }
 
   local current = state.parser:included_regions() or {}
@@ -150,8 +263,19 @@ end
 ---@param end_lnum integer 1-indexed last line currently belonging to the block
 function M.update_streaming(bufnr, end_lnum)
   local state = buf_state[bufnr]
-  if not state or not state.streaming_idx then return end
+  if not state then return end
   if not vim.api.nvim_buf_is_valid(bufnr) then return end
+  if state.batch then
+    local entry = state.batch.entries[state.batch.streaming or 0]
+    if not entry then return end
+    local start_row = vim.api.nvim_buf_get_extmark_by_id(bufnr, BATCH_NS, entry.start_id, {})[1]
+    local end_row = end_lnum - 1
+    if not start_row or end_row < start_row then return end
+    local last_line = vim.api.nvim_buf_get_lines(bufnr, end_row, end_row + 1, false)[1] or ''
+    batch_set_end(bufnr, entry, end_row, #last_line)
+    return
+  end
+  if not state.streaming_idx then return end
 
   -- LanguageTree:included_regions() returns the parser's internal _regions
   -- table by reference, NOT a copy. Mutating it directly (e.g. assigning to
@@ -186,7 +310,9 @@ end
 ---@param bufnr integer
 function M.end_streaming(bufnr)
   local state = buf_state[bufnr]
-  if state then state.streaming_idx = nil end
+  if not state then return end
+  state.streaming_idx = nil
+  if state.batch then state.batch.streaming = nil end
 end
 
 --- Shorten or drop the regions that end on buffer row `row` (0-indexed),
@@ -204,6 +330,7 @@ function M.before_delete_row(bufnr, row)
   local state = buf_state[bufnr]
   if not state then return end
   if not vim.api.nvim_buf_is_valid(bufnr) then return end
+  if state.batch then batch_before_delete_row(bufnr, state.batch, row) end
 
   local current = state.parser:included_regions() or {}
   if regions_are_void(current) then return end
