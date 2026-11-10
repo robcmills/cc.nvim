@@ -282,6 +282,11 @@ end
 ---@param input table?
 ---@return cc.ToolInputSummary
 local function tool_input_summary(tool_name, input)
+  if tool_name == 'advisor' then
+    -- No input; the header shows progress until the result rewrites it.
+    local cfg = require('cc.config').options.advisor or {}
+    return summary(cfg.running or '')
+  end
   if not input or type(input) ~= 'table' then
     return summary('')
   end

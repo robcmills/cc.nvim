@@ -117,6 +117,20 @@ function M.apply_buffer_syntax(bufnr)
     vim.cmd([[syntax match CcOutput  /^\s\+Output:\s*$/ containedin=ALL]])
     vim.cmd([[syntax match CcError   /^\s\+Error:\s*$/ containedin=ALL]])
 
+    -- Advisor result labels and the unavailable header (configurable text).
+    local advisor = require('cc.config').options.advisor or {}
+    local function vlit(text) return '\\V' .. vim.fn.escape(text, '\\/') .. '\\m' end
+    for _, label in ipairs({ advisor.guidance_label, advisor.reason_label }) do
+      if type(label) == 'string' and label ~= '' then
+        vim.cmd('syntax match CcOutput /^\\s\\+' .. vlit(label) .. '\\s*$/ containedin=ALL')
+      end
+    end
+    local unavailable = type(advisor.unavailable) == 'string'
+      and advisor.unavailable:match('^(.-)%$%{error_code%}') or advisor.unavailable
+    if type(unavailable) == 'string' and unavailable ~= '' then
+      vim.cmd('syntax match CcError /Advisor: ' .. vlit(unavailable) .. '.*$/ containedin=ALL')
+    end
+
     -- Subagent Activity: sub-header (live status is foldtext, not line text)
     vim.cmd([[syntax match CcActivity /^\s\+Activity:\s*$/ containedin=ALL]])
 

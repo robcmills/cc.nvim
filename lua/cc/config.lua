@@ -142,6 +142,21 @@ local defaults = {
     superseded_notice = 'Auto-mode block of %s replaced by a permission prompt',
   },
 
+  -- Advisor tool calls (server-side `advisor`; see
+  -- https://code.claude.com/docs/en/advisor). Each call renders as a tool
+  -- block: the header carries the status, and readable guidance or a decline
+  -- reason sits in a fold below it. Placeholder: ${error_code}.
+  advisor = {
+    running = 'reviewing the conversation',
+    reviewed = 'reviewed',
+    -- Guidance came back encrypted: Claude reads it, the client cannot.
+    redacted = 'reviewed (guidance encrypted)',
+    declined = 'declined to advise on this request',
+    unavailable = 'unavailable (${error_code})',
+    guidance_label = 'Guidance:',
+    reason_label = 'Reason:',
+  },
+
   -- Workspace trust. A session started where the trust dialog was never
   -- accepted ignores the repo's .claude/settings.json (allow rules, hooks,
   -- plugins); the CLI says so only on stderr. cc.nvim shows a notice with a
