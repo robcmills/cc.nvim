@@ -40,6 +40,8 @@ Stored session JSONL — one JSON object per line. Message types present:
 | `mcp_slack.jsonl` | MCP Slack read_channel tool | dead-code 16c55252 |
 | `websearch.jsonl` | WebSearch tool call | money 496b5bee |
 | `skill.jsonl` | Skill tool invocation | flaky-tests 4d616ab7 |
+| `advisor_resume.jsonl` | Advisor call (server_tool_use + redacted advisor_tool_result) | scratch af9cd5db, CLI 2.1.321 |
+| `advisor_with_bash_resume.jsonl` | Bash, advisor, Bash in one turn | scratch dea89a07, CLI 2.1.321 |
 | `thinking.jsonl` | (not extracted — thinking is in most assistant messages) | — |
 
 ## Notes
@@ -49,3 +51,13 @@ Stored session JSONL — one JSON object per line. Message types present:
 - No sensitive credentials in these fixtures (only tool names, file paths, code snippets)
 - `thinking.jsonl` not needed as a separate fixture — thinking blocks appear in most
   assistant messages in `multi_turn.jsonl` and others
+- Advisor fixtures (`advisor_*.jsonl`, `../ndjson/advisor_*.ndjson`): `advisor_redacted`,
+  `advisor_in_progress` (cut after the call), `advisor_two_calls` and `advisor_subagent`
+  are trimmed live captures. Every live result was `advisor_redacted_result`, so
+  `advisor_result_short`, `advisor_result_long`, `advisor_declined`, `advisor_declined_reason`
+  and `advisor_error` are `advisor_redacted` with only the result content replaced, using the
+  shapes the 2.1.321 CLI renderer handles (`advisor_result {text, stop_reason}`,
+  `stop_reason: "refusal"`, `advisor_tool_result_error {error_code}`).
+- Advisor fixtures are scrubbed: every `encrypted_content` and thinking `signature` is the
+  placeholder `REDACTED_FIXTURE_PLACEHOLDER`, session ids are fake fixed UUIDs, and `cwd`
+  is `/tmp/fixture`. Rendering never reads those values.

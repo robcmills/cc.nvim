@@ -269,6 +269,15 @@ require('cc').setup({
     label = 'Blocked by auto mode',
     approve_prompt = '...', -- ${tool_name} ${input} ${reason} ${where}
   },
+  advisor = { -- advisor tool header and fold labels; see Advisor
+    running = 'reviewing the conversation',
+    reviewed = 'reviewed',
+    redacted = 'reviewed (guidance encrypted)',
+    declined = 'declined to advise on this request',
+    unavailable = 'unavailable (${error_code})',
+    guidance_label = 'Guidance:',
+    reason_label = 'Reason:',
+  },
   peer_message_hold = { -- cross-session messages the CLI held; see Held messages
     enabled = true,
     held_format = '...', -- ${from} ${cause}
@@ -702,6 +711,17 @@ can reach your phone.
 `untrusted_workspace.enabled = false` turns this off (the line is then a
 plain stderr notice). A git worktree inherits its main checkout's trust
 (Claude Code 2.1.310).
+
+### Advisor
+
+Calls to Claude Code's [advisor tool](https://code.claude.com/docs/en/advisor)
+render as tool blocks named `Advisor`. The header reads `reviewing the
+conversation` while the advisor works, then shows the outcome: `reviewed`,
+`declined to advise on this request`, or `unavailable (<error_code>)`.
+Readable guidance or a decline reason sits in a `Guidance:` / `Reason:` fold
+under the header. Guidance the API returns encrypted
+(`advisor_redacted_result`) is readable only by Claude, so the header says
+`reviewed (guidance encrypted)` and nothing is shown. Strings live under `advisor` in the config.
 
 ### Held messages
 

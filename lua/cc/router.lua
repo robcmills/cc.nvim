@@ -1,5 +1,6 @@
 -- Dispatches SDK NDJSON messages to session (state) and output (render).
 
+local Advisor = require('cc.output.advisor')
 local ErrorNotice = require('cc.output.error_notice')
 local Config = require('cc.config')
 
@@ -243,6 +244,10 @@ function Router:_handle_subagent_message(parent_id, msg)
       if type(block) == 'table' then
         if t == 'assistant' and block.type == 'tool_use' then
           self.output:subagent_tool_use(parent_id, block)
+        elseif t == 'assistant' and Advisor.is_call(block) then
+          self.output:subagent_tool_use(parent_id, Advisor.as_tool_use(block))
+        elseif t == 'assistant' and block.type == 'advisor_tool_result' then
+          self.output:subagent_advisor_result(parent_id, block.tool_use_id, block.content)
         elseif t == 'assistant' and block.type == 'text' then
           self.output:subagent_text(parent_id, block.text)
         elseif t == 'assistant' and block.type == 'thinking' then
@@ -273,6 +278,15 @@ function Router:_handle_stream_event(msg)
   elseif et == 'content_block_start' then
     local idx = event.index or 0
     local block = event.content_block or {}
+    if block.type == 'advisor_tool_result' then
+      -- Arrives complete; the call it answers is already a tool block.
+      self.session:begin_block(idx, block)
+      self.session:record_tool_result(block.tool_use_id, block.content, false)
+      self.output:render_advisor_result(block.tool_use_id, block.content)
+      return
+    end
+    -- The advisor call renders as an ordinary tool (header, timer, group).
+    if Advisor.is_call(block) then block = Advisor.as_tool_use(block) end
     self.session:begin_block(idx, block)
     if block.type == 'tool_use' and block.id then
       self.session:begin_tool_call(block.id, block.name)

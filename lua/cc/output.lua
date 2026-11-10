@@ -34,13 +34,15 @@
 -- Carets (▸ folded, ▾ open) are inline virt_text extmarks at the start of
 -- header lines, synced to Vim's fold state on CursorMoved.
 
+local Advisor = require('cc.output.advisor')
+
 local M = {}
 
 local BUF_NAME_DEFAULT = 'cc-nvim-output'
 
 -- Display-name overrides for tool headers. Keeps icon lookup and summary
 -- logic keyed by the real tool name while presenting a friendlier label.
-local TOOL_DISPLAY_NAMES = { Agent = 'Subagent', FileChange = 'Edit' }
+local TOOL_DISPLAY_NAMES = { Agent = 'Subagent', FileChange = 'Edit', advisor = 'Advisor' }
 local function display_tool_name(name)
   return TOOL_DISPLAY_NAMES[name] or name or '?'
 end
@@ -144,6 +146,7 @@ M._buf_state = {}
 ---@field indent integer? header indent in columns: 2 for an ungrouped top-level tool, 4 grouped, parent + 4 when nested (default 2)
 ---@field running boolean? true while the tool's elapsed timer is ticking
 ---@field parent_id string? parent Agent tool_use_id when this tool ran inside a subagent
+---@field advisor_resolved boolean? an advisor call whose result has rendered
 
 ---@class cc.Output
 ---@field bufnr integer
@@ -1745,7 +1748,8 @@ end
 ---@param meta cc.OutputToolBlock
 ---@param content string|table
 ---@param is_error boolean?
-function Output:_render_tool_result_for(meta, content, is_error)
+---@param label string? fold label (default "Output:" / "Error:")
+function Output:_render_tool_result_for(meta, content, is_error, label)
   if meta and meta.tool_use_id then
     self:stop_tool_timer(meta.tool_use_id)
   end
@@ -1780,7 +1784,7 @@ function Output:_render_tool_result_for(meta, content, is_error)
   local indent = meta.indent or TOOL_INDENT
   local head_pad = string.rep(' ', indent + 2)
   local body_pad = string.rep(' ', indent + 4)
-  local lines = { head_pad .. (is_error and 'Error:' or 'Output:') }
+  local lines = { head_pad .. (label or (is_error and 'Error:' or 'Output:')) }
   local levels = { '>' .. (depth + 1) }
   -- Skip rendering content lines when the result is empty; otherwise
   -- vim.split('', '\n') yields {''} and we'd append a 6-space "blank"
@@ -1987,6 +1991,51 @@ function Output:subagent_tool_result(parent_id, tool_use_id, content, is_error)
   local meta = state.tool_blocks[tool_use_id]
   if not meta or meta.parent_id ~= parent_id then return end
   self:_render_tool_result_for(meta, content, is_error)
+end
+
+--- Render an advisor_tool_result for a call already shown as a tool block
+--- (see cc.output.advisor). The header takes the outcome; readable guidance
+--- or a decline reason goes in a fold below it. Encrypted guidance is never
+--- shown. Each call resolves once.
+---@param tool_use_id string
+---@param content table?
+function Output:render_advisor_result(tool_use_id, content)
+  self:flush_pending_delta()
+  local state = M._buf_state[self.bufnr]
+  local meta = state and state.tool_blocks[tool_use_id or '']
+  if not meta or meta.advisor_resolved then return end
+  meta.advisor_resolved = true
+  local outcome = require('cc.output.advisor').classify(content)
+  if outcome.summary then
+    self:_update_tool_header_summary(meta.header_lnum, meta.tool_name, outcome.summary, meta.indent)
+  end
+  if outcome.text then
+    self:_render_tool_result_for(meta, outcome.text, outcome.is_error, outcome.label)
+  else
+    -- No body: stop the timer here, which also re-adds the duration the
+    -- header rewrite above stripped.
+    self:stop_tool_timer(tool_use_id)
+  end
+  -- Unlike client tools, the advisor answers inside the same message, so
+  -- no new message start separates the call from the text after it. Add
+  -- the blank a continuation would (collapsed if one is already there).
+  if not meta.parent_id then
+    self:_mark_trail(self:_append({ '' }, { 1 }, false))
+  end
+end
+
+--- Render the result of an advisor call made inside a subagent.
+---@param parent_id string
+---@param tool_use_id string
+---@param content table?
+function Output:subagent_advisor_result(parent_id, tool_use_id, content)
+  local deferred, parent = self:_defer_subagent(parent_id, 'subagent_advisor_result',
+    { parent_id, tool_use_id, content })
+  if deferred or not parent then return end
+  local state = M._buf_state[self.bufnr]
+  local meta = state.tool_blocks[tool_use_id]
+  if not meta or meta.parent_id ~= parent_id then return end
+  self:render_advisor_result(tool_use_id, content)
 end
 
 --- Render a completed text or thinking block from a subagent.
@@ -2305,6 +2354,12 @@ function Output:render_historical_record(rec)
         elseif block.type == 'tool_use' then
           self:on_content_block_start(block)
           self:on_content_block_stop(block, { historical = true })
+        elseif Advisor.is_call(block) then
+          local call = Advisor.as_tool_use(block)
+          self:on_content_block_start(call)
+          self:on_content_block_stop(call, { historical = true })
+        elseif block.type == 'advisor_tool_result' then
+          self:render_advisor_result(block.tool_use_id, block.content)
         end
       end
     end
