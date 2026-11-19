@@ -2025,6 +2025,10 @@ function M.list_instances()
         cwd = inst.cwd or '',
         pid = (inst.process and inst.process.pid) or vim.NIL,
         state = State.get(inst),
+        -- Output not yet viewed, whatever the state. `state` reports `unread`
+        -- only when nothing busier applies; a `delegating` parent can have a
+        -- report waiting too, and a display may want to show that.
+        unseen = require('cc.seen').has_unseen_output(inst),
         -- Set while a prompt that timed out unanswered keeps the agent waiting.
         blocked = inst.blocked and {
           kind = inst.blocked.kind, toolName = inst.blocked.tool_name,

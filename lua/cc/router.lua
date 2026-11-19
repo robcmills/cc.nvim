@@ -82,13 +82,18 @@ local function is_interrupt_marker(content)
   return type(text) == 'string' and text:find('^%[Request interrupted by user') ~= nil
 end
 
+--- A task notification for a task still under way must not finish it (or,
+--- via Session:finish_background_task, cancel its launch in advance).
+---@param status string?
+---@return boolean
+local function is_final_status(status)
+  return status ~= 'running' and status ~= 'in_progress' and status ~= 'pending'
+end
+
 ---@param msg table
 ---@return boolean changed
 function Router:_handle_task_notification(msg)
-  local status = msg.status
-  if status == 'running' or status == 'in_progress' or status == 'pending' then
-    return false
-  end
+  if not is_final_status(msg.status) then return false end
   local tool_use_id = msg.tool_use_id or msg.toolUseId
   local task_id = msg.task_id or msg.taskId or msg.agent_id or msg.agentId
   return self.session:finish_background_task(tool_use_id, task_id)
@@ -352,7 +357,8 @@ function Router:_handle_user(msg)
     return false
   end
   if type(content) == 'string' then
-    if content:match('^%s*<task%-notification>') then
+    if content:match('^%s*<task%-notification>')
+        and is_final_status(content:match('<status>(.-)</status>')) then
       return self.session:finish_background_task(
         content:match('<tool%-use%-id>(.-)</tool%-use%-id>'),
         content:match('<task%-id>(.-)</task%-id>'))
@@ -376,8 +382,9 @@ function Router:_handle_user(msg)
       if not block.is_error and call
           and ((type(input) == 'table' and input.run_in_background == true)
             or call.name == 'Monitor') then
-        self.session:begin_background_task(tool_use_id, launched_task_id(msg, block))
-        changed = true
+        if self.session:begin_background_task(tool_use_id, launched_task_id(msg, block)) then
+          changed = true
+        end
       end
     end
   end

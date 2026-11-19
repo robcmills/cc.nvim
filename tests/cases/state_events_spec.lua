@@ -63,6 +63,35 @@ T['CcStateChanged']['fires when viewing clears unread'] = function()
   eq(events[2].previous, 'unread')
 end
 
+T['CcUnseenChanged'] = MiniTest.new_set()
+
+T['CcUnseenChanged']['fires when a delegating parent is viewed'] = function()
+  setup(_G.child)
+  _G.child.lua([[
+    _G._unseen_events = {}
+    vim.api.nvim_create_autocmd('User', {
+      group = vim.api.nvim_create_augroup('state_events_spec_unseen', { clear = true }),
+      pattern = 'CcUnseenChanged',
+      callback = function(ev) table.insert(_G._unseen_events, ev.data) end,
+    })
+    _G._inst.delegates = { ['1:2'] = { state = 'working', nvim_pid = vim.fn.getpid(), seq = 1 } }
+    _G._inst.session.turn_finished_at = math.huge
+    local Statusline = require('cc.statusline')
+    Statusline.refresh(_G._inst)
+    Statusline.refresh(_G._inst)
+    _G._inst.session.turn_finished_at = 1
+    require('cc.seen').mark_seen(_G._inst)
+  ]])
+  local events = _G.child.lua_get('_G._events')
+  eq(#events, 1)
+  eq(events[1].state, 'delegating')
+  local unseen = _G.child.lua_get('_G._unseen_events')
+  eq(#unseen, 2)
+  eq(unseen[1].unseen, true)
+  eq(unseen[1].bufnr, _G.child.lua_get('_G._output_bufnr'))
+  eq(unseen[2].unseen, false)
+end
+
 T['mark_unread'] = MiniTest.new_set()
 
 T['mark_unread']['flags unread by prompt bufnr until next viewed'] = function()

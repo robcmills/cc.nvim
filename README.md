@@ -1011,6 +1011,12 @@ The snapshot's `state`, `:CcStatus`, and statusline lifecycle share this precede
 | `starting` | The agent has no session ID yet. |
 | `ready` | The agent is idle with no unseen finished turn. |
 
+Each snapshot also carries `unseen`, a boolean that is true whenever the
+instance has output you have not viewed, whatever its `state`. `state` says
+`unread` only when nothing busier applies, so a `delegating` parent with a
+report waiting reports `unseen = true`; a display can show that as unread
+while the state still tells grandparents the parent is busy.
+
 Entering either the output or prompt buffer marks the instance seen, including
 navigation through `require('cc').focus_instance(output_bufnr)`. A turn finishing
 in the current instance is seen immediately while Neovim is focused; returning
@@ -1032,6 +1038,10 @@ vim.api.nvim_create_autocmd('User', {
   callback = function(ev) print(ev.data.bufnr, ev.data.previous, '->', ev.data.state) end,
 })
 ```
+
+`User CcUnseenChanged` fires when `unseen` flips, with `data = { bufnr,
+prompt_bufnr, unseen }`. It covers changes `CcStateChanged` misses, such as
+viewing a parent that stays `delegating`.
 
 Renames fire `User CcRenamed` instead, once per change of the name
 `list_instances()` reports, with `data = { bufnr, prompt_bufnr, name,
