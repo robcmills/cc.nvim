@@ -147,6 +147,122 @@ T['list_instances']['reports background tool lifecycle as monitoring'] = functio
   eq(_G.child.lua_get('_G._completed_count'), 0)
 end
 
+-- Captured order from session 03a2467e: an ask-rob launched with
+-- run_in_background finished so fast that its task notification reached the
+-- stream before the tool_result that launched it.
+local function background_race_setup(child)
+  child.lua([[
+    local session = require('cc.session').new()
+    local output = { render_tool_result = function() end }
+    _G._race_session = session
+    _G._race_router = require('cc.router').new({ session = session, output = output })
+    _G._race_inst = { session = session, process = { is_alive = function() return true end } }
+    _G._race_launch = function(tool_id, task_id)
+      session:begin_tool_call(tool_id, 'Bash')
+      session:finalize_tool_call(tool_id, { command = 'ask-rob x', run_in_background = true })
+      _G._race_router:dispatch({
+        type = 'user',
+        message = { role = 'user', content = { {
+          type = 'tool_result', tool_use_id = tool_id, is_error = false,
+          content = 'Command running in background with ID: ' .. task_id
+            .. '. Output is being written to: /tmp/x. You will be notified when it completes.',
+        } } },
+        toolUseResult = { stdout = '', stderr = '', backgroundTaskId = task_id },
+      })
+    end
+    _G._race_notify = function(tool_id, task_id)
+      _G._race_router:dispatch({
+        type = 'system', subtype = 'task_notification', task_id = task_id,
+        tool_use_id = tool_id, status = 'completed',
+        summary = 'Background command "Ask Rob" completed (exit code 0)',
+      })
+    end
+  ]])
+end
+
+T['list_instances']['a background task that finishes before its launch is not tracked'] = function()
+  background_race_setup(_G.child)
+  _G.child.lua([[
+    _G._race_notify('toolu_01Ezp74HmW5Cu7CbLUzBWFqy', 'bdq0ghwmr')
+    _G._race_launch('toolu_01Ezp74HmW5Cu7CbLUzBWFqy', 'bdq0ghwmr')
+    _G._race_count = _G._race_session:background_task_count()
+    _G._race_state = require('cc.instance_state').get(_G._race_inst)
+    -- The remembered finish was consumed: an unrelated task still tracks.
+    _G._race_launch('toolu_later', 'blater')
+    _G._race_later = _G._race_session:background_task_count()
+    _G._race_notify('toolu_later', 'blater')
+    _G._race_after = _G._race_session:background_task_count()
+    _G._race_left = #_G._race_session.early_finishes
+  ]])
+  eq(_G.child.lua_get('_G._race_count'), 0)
+  eq(_G.child.lua_get('_G._race_state') ~= 'monitoring', true)
+  eq(_G.child.lua_get('_G._race_later'), 1)
+  eq(_G.child.lua_get('_G._race_after'), 0)
+  eq(_G.child.lua_get('_G._race_left'), 0)
+end
+
+T['list_instances']['an early user-message task notification cancels the launch'] = function()
+  background_race_setup(_G.child)
+  _G.child.lua([[
+    _G._race_router:dispatch({ type = 'user', message = { role = 'user', content =
+      '<task-notification>\n<task-id>bn3fswtq6</task-id>\n'
+      .. '<tool-use-id>toolu_01GoJ88YVpuRdXbu1DLVMXVp</tool-use-id>\n'
+      .. '<status>completed</status>\n</task-notification>' } })
+    _G._race_launch('toolu_01GoJ88YVpuRdXbu1DLVMXVp', 'bn3fswtq6')
+  ]])
+  eq(_G.child.lua_get('_G._race_session:background_task_count()'), 0)
+end
+
+T['list_instances']['a running-status notification does not cancel the launch'] = function()
+  background_race_setup(_G.child)
+  _G.child.lua([[
+    _G._race_router:dispatch({
+      type = 'system', subtype = 'task_notification', task_id = 'brun',
+      tool_use_id = 'toolu_run', status = 'running',
+    })
+    _G._race_launch('toolu_run', 'brun')
+  ]])
+  eq(_G.child.lua_get('_G._race_session:background_task_count()'), 1)
+end
+
+T['list_instances']['early finishes are bounded'] = function()
+  _G.child.lua([[
+    local session = require('cc.session').new()
+    for i = 1, 100 do session:finish_background_task('toolu_' .. i, 'task_' .. i) end
+    _G._bounded = #session.early_finishes
+    _G._oldest_dropped = session:begin_background_task('toolu_1', 'task_1')
+  ]])
+  eq(_G.child.lua_get('_G._bounded') <= 32, true)
+  eq(_G.child.lua_get('_G._oldest_dropped'), true)
+end
+
+T['list_instances']['unseen is reported alongside delegating'] = function()
+  _G.child.lua([[
+    local cc = require('cc')
+    local output_bufnr = vim.api.nvim_create_buf(false, true)
+    local session = require('cc.session').new()
+    session.id = 'parent-sid'
+    session.turn_finished_at = math.huge
+    cc._register_test_instance(output_bufnr, {
+      session = session,
+      provider = { name = 'claude' },
+      process = { pid = 1, is_alive = function() return true end },
+      output = { bufnr = output_bufnr },
+      prompt = { bufnr = vim.api.nvim_create_buf(false, true) },
+      cwd = '/tmp',
+      -- pid 1 is alive and never this Neovim, so reconcile keeps the child.
+      delegates = { ['1:2'] = { state = 'working', nvim_pid = 1, seq = 1 } },
+    })
+    for _, snap in ipairs(cc.list_instances()) do
+      if snap.outputBufnr == output_bufnr then _G._parent_snap = snap end
+    end
+    _G._parent_json = vim.json.encode(_G._parent_snap)
+  ]])
+  local snap = _G.child.lua_get('_G._parent_snap')
+  eq(snap.state, 'delegating')
+  eq(snap.unseen, true)
+end
+
 T['list_instances']['Claude permission requests set and clear awaiting_input'] = function()
   _G.child.lua([[
     local prompt = require('cc.permission_prompt')

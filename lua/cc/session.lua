@@ -24,6 +24,7 @@ local M = {}
 ---@field turn_started_at integer? ms timestamp from vim.uv.now() while turn_active
 ---@field turn_finished_at integer? epoch-ms timestamp of the latest finished turn
 ---@field background_tasks table<string, { task_id: string? }> background tools awaiting completion notification, keyed by tool-use id
+---@field early_finishes string[] ids (tool-use or task) whose completion arrived before their launch, oldest first; see begin_background_task
 ---@field last_modified_at integer epoch-ms timestamp of the latest conversation activity
 ---@field interrupt_pending boolean
 ---@field cost_usd number
@@ -77,6 +78,7 @@ function M.new()
     turn_started_at = nil,
     turn_finished_at = nil,
     background_tasks = {},
+    early_finishes = {},
     last_modified_at = wall_time_ms(),
     interrupt_pending = false,
     cost_usd = 0,
@@ -99,27 +101,72 @@ function Session:touch()
   self.last_modified_at = wall_time_ms()
 end
 
---- Track a tool whose result says it will complete asynchronously.
+-- A task that ends almost at once can have its completion notification
+-- arrive before the tool_result that launches it. The unmatched finish is
+-- remembered here so the late begin is dropped instead of tracked forever.
+-- Bounded, and each entry is consumed by the begin it cancels.
+local EARLY_FINISH_LIMIT = 32
+
+local function valid_id(id)
+  return type(id) == 'string' and id ~= '' and id or nil
+end
+
+---@param self cc.Session
+---@param ... string?
+local function remember_early_finish(self, ...)
+  for i = 1, select('#', ...) do
+    local id = select(i, ...)
+    if valid_id(id) and not vim.tbl_contains(self.early_finishes, id) then
+      table.insert(self.early_finishes, id)
+    end
+  end
+  while #self.early_finishes > EARLY_FINISH_LIMIT do
+    table.remove(self.early_finishes, 1)
+  end
+end
+
+--- Remove any of the given ids from the early-finish list.
+---@param self cc.Session
+---@return boolean found whether any id was listed
+local function consume_early_finish(self, ...)
+  local found = false
+  for n = 1, select('#', ...) do
+    local id = select(n, ...)
+    for i = #self.early_finishes, 1, -1 do
+      if valid_id(id) and self.early_finishes[i] == id then
+        table.remove(self.early_finishes, i)
+        found = true
+      end
+    end
+  end
+  return found
+end
+
+--- Track a tool whose result says it will complete asynchronously. Skipped
+--- when its completion already arrived (see remember_early_finish).
 ---@param tool_use_id string?
 ---@param task_id string?
+---@return boolean begun
 function Session:begin_background_task(tool_use_id, task_id)
-  if type(tool_use_id) ~= 'string' or tool_use_id == '' then return end
-  self.background_tasks[tool_use_id] = {
-    task_id = type(task_id) == 'string' and task_id ~= '' and task_id or nil,
-  }
+  if not valid_id(tool_use_id) then return false end
+  task_id = valid_id(task_id)
+  if consume_early_finish(self, tool_use_id, task_id) then return false end
+  self.background_tasks[tool_use_id] = { task_id = task_id }
+  return true
 end
 
 --- Remove a completed asynchronous tool by either identifier supplied by
---- Claude's task notification.
+--- Claude's task notification. An unmatched completion is remembered so a
+--- launch that arrives after it is ignored.
 ---@param tool_use_id string?
 ---@param task_id string?
 ---@return boolean changed
 function Session:finish_background_task(tool_use_id, task_id)
-  if type(tool_use_id) == 'string' and self.background_tasks[tool_use_id] then
+  if valid_id(tool_use_id) and self.background_tasks[tool_use_id] then
     self.background_tasks[tool_use_id] = nil
     return true
   end
-  if type(task_id) == 'string' and task_id ~= '' then
+  if valid_id(task_id) then
     for id, task in pairs(self.background_tasks) do
       if task.task_id == task_id then
         self.background_tasks[id] = nil
@@ -127,6 +174,7 @@ function Session:finish_background_task(tool_use_id, task_id)
       end
     end
   end
+  remember_early_finish(self, tool_use_id, task_id)
   return false
 end
 

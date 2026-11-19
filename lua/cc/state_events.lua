@@ -2,9 +2,29 @@
 -- external UIs can subscribe instead of polling `list_instances()`.
 -- State is derived on demand (instance_state.get), so there is no single
 -- setter to hook. Instead `check` runs from the paths that already follow
--- every state mutation: statusline.refresh and seen.mark_seen.
+-- every state mutation: statusline.refresh and seen.mark_seen. The same
+-- paths fire `User CcUnseenChanged` when unseen output appears or is viewed.
 
 local M = {}
+
+--- Fire `User CcUnseenChanged` when has_unseen_output flips. A `delegating`
+--- parent can gain or lose unseen output without a state change, so
+--- displays that show it need their own signal.
+---@param inst cc.Instance
+local function check_unseen(inst)
+  local unseen = require('cc.seen').has_unseen_output(inst)
+  if unseen == (inst.last_emitted_unseen or false) then return end
+  inst.last_emitted_unseen = unseen
+  vim.api.nvim_exec_autocmds('User', {
+    pattern = 'CcUnseenChanged',
+    modeline = false,
+    data = {
+      bufnr = inst.output.bufnr,
+      prompt_bufnr = inst.prompt and inst.prompt.bufnr or nil,
+      unseen = unseen,
+    },
+  })
+end
 
 ---@param inst cc.Instance?
 function M.check(inst)
@@ -13,6 +33,7 @@ function M.check(inst)
     vim.schedule(function() M.check(inst) end)
     return
   end
+  check_unseen(inst)
   local state = require('cc.instance_state').get(inst)
   local previous = inst.last_emitted_state
   if state == previous then return end
