@@ -21,7 +21,7 @@ local function respond_success(process, request_id, response_body, instance)
   })
   if instance then
     -- Other prompts (e.g. an auto-mode denial) may still be open.
-    local waiting = next(instance.pending_permissions or {}) ~= nil
+    local waiting = require('cc.permission_prompt').has_live(instance.pending_permissions)
     instance.awaiting_permission = waiting
     instance.awaiting_input = waiting
     require('cc.statusline').refresh(instance)

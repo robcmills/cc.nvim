@@ -498,7 +498,7 @@ function Router:_handle_control_cancel(msg)
   pcall(entry.dismiss)
   self.output:render_permission_outcome('remote', entry.tool_name)
   if self.instance then
-    local waiting = next(self.open_prompts) ~= nil
+    local waiting = require('cc.permission_prompt').has_live(self.open_prompts)
     self.instance.awaiting_permission = waiting
     self.instance.awaiting_input = waiting
     require('cc.statusline').refresh(self.instance)
@@ -528,7 +528,7 @@ function Router:_handle_control_response(msg)
       if behavior ~= 'allow' and behavior ~= 'deny' then behavior = 'remote' end
       self.output:render_permission_outcome(behavior, entry.tool_name)
       if self.instance then
-        local waiting = next(self.open_prompts) ~= nil
+        local waiting = require('cc.permission_prompt').has_live(self.open_prompts)
         self.instance.awaiting_permission = waiting
         self.instance.awaiting_input = waiting
         require('cc.statusline').refresh(self.instance)
@@ -890,10 +890,7 @@ end
 function Router:_refresh_awaiting()
   local inst = self.instance
   if not inst then return end
-  local live = false
-  for _, entry in pairs(self.open_prompts) do
-    if not entry.deferred then live = true; break end
-  end
+  local live = require('cc.permission_prompt').has_live(self.open_prompts)
   inst.awaiting_permission = live
   inst.awaiting_input = live
   require('cc.statusline').refresh(inst)

@@ -184,6 +184,17 @@ local function owns_buffer(instance, bufnr)
     or (instance.prompt and instance.prompt.bufnr == bufnr) or false
 end
 
+--- Whether a pending map holds anything still waiting on the user (a
+--- deferred request already answered the agent; it waits in the queue).
+---@param pending table?
+---@return boolean
+function M.has_live(pending)
+  for _, e in pairs(pending or {}) do
+    if not e.deferred then return true end
+  end
+  return false
+end
+
 --- Instances with a pending request, weakly held.
 local waiting = setmetatable({}, { __mode = 'k' })
 local augroup
@@ -248,10 +259,7 @@ function M.request(tool_name, input, on_choice, context)
     if not inst then return end
     -- A deferred request is already answered as far as the agent knows: it
     -- waits in the queue, not on the agent.
-    local live = false
-    for _, e in pairs(pending) do
-      if not e.deferred then live = true; break end
-    end
+    local live = M.has_live(pending)
     if not live then waiting[inst] = nil end
     inst.awaiting_permission = live
     inst.awaiting_input = inst.awaiting_permission
@@ -334,6 +342,12 @@ function M.request(tool_name, input, on_choice, context)
     if handle and handle.dismiss then pcall(handle.dismiss) end
     handle, entry.dismiss = nil, nil
     entry.deferred, entry.deferred_at = true, os.time()
+    -- Out of the CLI's request-id space: a late cancel or remote answer for
+    -- the original id must not reach the queued entry.
+    pending[entry.request_id] = nil
+    entry.request_id = 'deferred:' .. tostring(entry.request_id)
+    context.request_id = entry.request_id
+    pending[entry.request_id] = entry
     refresh()
     local deferrals = options.permission_deferrals or {}
     on_choice('deny', 'defer', message or deferrals.message, 'defer')

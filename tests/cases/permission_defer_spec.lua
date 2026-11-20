@@ -42,7 +42,10 @@ local function setup(opts)
         input = { command = command or 'ask-rob "x"' },
       } })
     end
-    _G.entry = function(id) return inst.pending_permissions and inst.pending_permissions[id] end
+    _G.entry = function(id)
+      local p = inst.pending_permissions or {}
+      return p[id] or p['deferred:' .. id]
+    end
     _G.defer = function(id, command)
       open_request(id, command)
       assert(vim.wait(2000, function() return #writes >= 1 and entry(id) and entry(id).deferred end, 5))
@@ -63,14 +66,14 @@ T['a deferral answers the CLI and keeps the request queued'] = function()
   eq(_G.child.lua_get('resolved[1].deferred'), true)
   local snap = _G.child.lua_get([[require('cc').list_instances()[1].pending_permissions[1] ]])
   eq(snap.deferred, true)
-  eq(snap.request_id, 'd1')
+  eq(snap.request_id, 'deferred:d1')
 end
 
 T['approving a deferred request messages the agent and lets the exact retry through once'] = function()
   setup()
   _G.child.lua([[
     defer('d2')
-    assert(require('cc').resolve_permission('d2', 'allow'))
+    assert(require('cc').resolve_permission('deferred:d2', 'allow'))
   ]])
   eq(_G.child.lua_get('entry("d2")'), vim.NIL)
   eq(_G.child.lua_get('#sent'), 1)
@@ -93,7 +96,7 @@ T['the one-time allow matches only the exact call'] = function()
   setup()
   _G.child.lua([[
     defer('d3', 'ask-rob "one"')
-    require('cc').resolve_permission('d3', 'allow')
+    require('cc').resolve_permission('deferred:d3', 'allow')
     open_request('other', 'ask-rob "two"')
   ]])
   eq(_G.child.lua_get('#writes'), 1)
@@ -104,7 +107,7 @@ T['an expired one-time allow prompts again'] = function()
   setup([[{ permission_deferrals = { preapproval_ttl = -1 } }]])
   _G.child.lua([[
     defer('d4')
-    require('cc').resolve_permission('d4', 'allow')
+    require('cc').resolve_permission('deferred:d4', 'allow')
     open_request('late')
   ]])
   eq(_G.child.lua_get('#writes'), 1)
@@ -115,7 +118,7 @@ T['denying a deferred request tells the agent and arms nothing'] = function()
   setup()
   _G.child.lua([[
     defer('d5')
-    require('cc').resolve_permission('d5', 'deny')
+    require('cc').resolve_permission('deferred:d5', 'deny')
     open_request('again')
   ]])
   eq(_G.child.lua_get([[sent[1]:find('I declined your deferred Bash call', 1, true) ~= nil]]), true)
@@ -139,7 +142,7 @@ T['teardown drops deferred entries and one-time allows without messages'] = func
   _G.child.lua([[
     defer('d7')
     defer('d8', 'ask-rob "y"')
-    require('cc').resolve_permission('d8', 'allow')
+    require('cc').resolve_permission('deferred:d8', 'allow')
     require('cc.permission_prompt').close_pending(inst)
   ]])
   eq(_G.child.lua_get('entry("d7")'), vim.NIL)
@@ -157,6 +160,20 @@ T['defer refuses a denial float and a second deferral'] = function()
     _G.denial_defer = ctx.defer()
   ]])
   eq(_G.child.lua_get('denial_defer'), false)
+end
+
+T['a late cancel or remote answer for the original id leaves the deferred entry queued'] = function()
+  setup()
+  _G.child.lua([[
+    defer('d9')
+    router:_handle_control_cancel({ request_id = 'd9' })
+    router:dispatch({ type = 'control_response', response = {
+      request_id = 'd9', subtype = 'success', response = { behavior = 'deny' } } })
+  ]])
+  eq(_G.child.lua_get('entry("d9").deferred'), true)
+  eq(_G.child.lua_get('#sent'), 0)
+  eq(_G.child.lua_get('#writes'), 1)
+  eq(_G.child.lua_get('inst.awaiting_permission'), false)
 end
 
 return T
