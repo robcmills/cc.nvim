@@ -693,10 +693,24 @@ function Router:_handle_permission_request(request_id, req)
   end
 
   self:_supersede_denials(tool_name, input)
+  self:_supersede_deferred(tool_name, input)
   self.output:render_permission_request(tool_name, input)
+  if self:_take_preapproval(tool_name, input) then
+    self.output:render_permission_outcome('allow', tool_name)
+    if self.process then
+      self.process:write({ type = 'control_response', response = {
+        request_id = request_id, subtype = 'success',
+        response = self:_build_permission_response(
+          'allow', 'allow_once', tool_name, input, tool_use_id, suggestions),
+      } })
+    end
+    self:_refresh_awaiting()
+    return
+  end
 
   require('cc.permission_prompt').request(tool_name, input, function(behavior, variant, message, source)
-    self.output:render_permission_outcome(behavior or 'remote', tool_name)
+    self.output:render_permission_outcome(
+      source == 'defer' and 'deferred' or behavior or 'remote', tool_name)
     if source == 'remote' or source == 'closed' then return end
     local response_body = self:_build_permission_response(
       behavior, variant, tool_name, input, tool_use_id, suggestions)
@@ -712,7 +726,8 @@ function Router:_handle_permission_request(request_id, req)
       })
     end
   end, { provider = 'claude', instance = self.instance,
-    request_id = request_id, pending = self.open_prompts })
+    request_id = request_id, pending = self.open_prompts,
+    on_deferred_answer = function(behavior) self:_answer_deferred(behavior, tool_name, input) end })
 end
 
 --- Substitute ${name} placeholders; gsub's replacement is a function so `%`
@@ -835,6 +850,76 @@ function Router:_supersede_denials(tool_name, input)
       self.output:render_notice(string.format(
         Config.options.permission_denials.superseded_notice or '', tool_name))
     end
+  end
+end
+
+--- A live prompt for a call that was deferred earlier (the agent retried
+--- before the user answered) replaces the queued entry.
+---@param tool_name string
+---@param input table?
+function Router:_supersede_deferred(tool_name, input)
+  for _, entry in pairs(vim.tbl_values(self.open_prompts)) do
+    if entry.deferred and entry.finish and entry.tool_name == tool_name
+        and same_call(tool_name, entry.input, input) then
+      entry.finish(nil, 'superseded')
+    end
+  end
+end
+
+--- Consume a one-time allow armed by approving a deferred request.
+---@param tool_name string
+---@param input table?
+---@return boolean
+function Router:_take_preapproval(tool_name, input)
+  local list = self.instance and self.instance.preapproved
+  if not list then return false end
+  local now = os.time()
+  for i = #list, 1, -1 do
+    local p = list[i]
+    if p.expires < now then
+      table.remove(list, i)
+    elseif p.tool_name == tool_name and same_call(tool_name, p.input, input) then
+      table.remove(list, i)
+      return true
+    end
+  end
+  return false
+end
+
+--- Recompute the waiting flag after answering a request without a prompt.
+function Router:_refresh_awaiting()
+  local inst = self.instance
+  if not inst then return end
+  local live = false
+  for _, entry in pairs(self.open_prompts) do
+    if not entry.deferred then live = true; break end
+  end
+  inst.awaiting_permission = live
+  inst.awaiting_input = live
+  require('cc.statusline').refresh(inst)
+end
+
+--- The user answered a deferred request: tell the agent, and on approval
+--- let its retry of that exact call through once.
+---@param behavior 'allow'|'deny'
+---@param tool_name string
+---@param input table?
+function Router:_answer_deferred(behavior, tool_name, input)
+  local inst = self.instance
+  if not inst then return end
+  local opts = Config.options.permission_deferrals or {}
+  if behavior == 'allow' then
+    inst.preapproved = inst.preapproved or {}
+    table.insert(inst.preapproved, {
+      tool_name = tool_name, input = vim.deepcopy(input),
+      expires = os.time() + (opts.preapproval_ttl or 3600),
+    })
+  end
+  local template = behavior == 'allow' and opts.approved_prompt or opts.denied_prompt
+  local text = fill(template or '', { tool_name = tool_name, input = input_json(input) })
+  local ok, err = require('cc')._submit_when_idle(inst, text)
+  if not ok then
+    vim.notify('cc.nvim: deferred answer not sent: ' .. tostring(err), vim.log.levels.WARN)
   end
 end
 

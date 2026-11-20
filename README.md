@@ -588,6 +588,13 @@ auto-mode block; see below). Tool approval events also include `request_id`,
 - `event.disable_remote()` disables Remote Control for the instance, including
   from the resolved callback. Returns whether a request was sent.
 
+`permission_float = 'visible'` stops a float from opening over whatever you
+are doing. It opens on its own only when the current window shows that
+instance's output or prompt. Otherwise the request waits: the instance shows
+as waiting, `on_permission_prompt` fires, and the timeout stages run. The
+float opens when you enter the instance or call `focus_instance`. The
+default, `'always'`, opens it as soon as the request arrives.
+
 `permission_timeouts` is an ordered list of `{ after = seconds, callback = function(event) }`.
 Each delay starts when the preceding stage fires; the first starts when the
 prompt opens. Fractional seconds are supported. Stage events add a 1-based
@@ -597,7 +604,9 @@ stages, and resolution or instance teardown stops and closes their timers.
 `on_permission_resolved(event)` runs once for every resolved tool approval.
 It adds `behavior` (`allow` or `deny`), `source` (`local` for float choices,
 `remote` for bridge answers, `api` for either resolve API, or `closed` for
-process exit/instance teardown), and `remote_enabled_by_stage` (boolean).
+process exit/instance teardown), `variant` (the choice, such as
+`allow_once`, `allow_always`, `deny`, `approve` or `dismiss`), and
+`remote_enabled_by_stage` (boolean).
 Remote cancellation does not contain the actual decision, so `behavior` is
 nil when it is unknown; an echoed remote response supplies it when available.
 Teardown reports `deny` without sending an answer to the exiting process.
@@ -635,13 +644,46 @@ and elicitation dialogs retain their own handling.
 | `a` | Allow once |
 | `A` | Always Allow for this session |
 | `d` | Deny |
-| `q` / `<Esc>` | Cancel (treated as Deny) |
+| `q` / `<Esc>` | Later: hide the float, keep the request pending |
+
+Nothing but `a`, `A` and `d` answers. Moving focus off the float (`<C-w>w`,
+a click, a command that switches windows) or wiping its buffer only hides
+it, so a prompt you never saw can't read as your denial. A hidden request
+stays pending, with its timeout stages running. Entering that instance's
+output or prompt buffer reopens it, unless you put it off with `q`/`<Esc>`;
+`require('cc').focus_instance()` reopens it either way.
 
 `A` persists by echoing the CLI's `permission_suggestions` (precise
 input-shape rules — e.g. a specific Bash command prefix) when the CLI
 sends them, falling back to a coarse tool-name rule otherwise. The
 rules are sent back via `updatedPermissions` in the `can_use_tool`
 control response and live for the rest of the session.
+
+#### Deferring an unanswered prompt
+
+A timeout stage can defer a Claude tool prompt instead of denying it:
+
+```lua
+{ after = 900, callback = function(event)
+    if not event.defer() then event.resolve('deny', 'Approval timeout') end
+end }
+```
+
+`event.defer(message)` answers the CLI at once with a deny carrying
+`message` (default `permission_deferrals.message`: "Deferred, not denied:
+…"), so the agent moves on. The request stays queued:
+`list_instances()` reports it with `deferred = true`, and it no longer counts
+as waiting. The output shows `⏸ Deferred (queued for you)`.
+
+Answer it later with `require('cc').resolve_permission(request_id, ...)`.
+cc.nvim sends the agent `permission_deferrals.approved_prompt` or
+`denied_prompt` as a message, now or when its turn ends. An approval also
+arms a one-time allow: the agent's next permission request for exactly that
+call (Bash by command) is answered allow with no prompt, once, within
+`preapproval_ttl` seconds. If the agent retries before you answer, the live
+prompt replaces the deferred entry. Teardown drops deferred entries and
+unused allows. `defer` returns `false` for denial floats, Codex, and a
+request already answered.
 
 #### Auto-mode denials
 
@@ -651,7 +693,7 @@ each block (`system/permission_denied` with `decision_reason_type =
 "classifier"`) like a permission prompt: the instance shows as waiting, the
 output gets a `⛔ Blocked by auto mode` card with the tool, an input summary,
 and the classifier's reason, and the same float opens with `a` Approve and
-`d` / `q` / `<Esc>` Dismiss. Other denial kinds (rules, `dontAsk`) are ignored.
+`d` Dismiss (`q` / `<Esc>` hide it for later). Other denial kinds (rules, `dontAsk`) are ignored.
 Blocks inside a subagent surface on the parent session.
 
 The same `on_permission_prompt`, `permission_timeouts`, and

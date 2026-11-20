@@ -158,7 +158,7 @@ end
 T['footer shows key hints'] = function()
   open(_G.child, [[ 'Bash', { command = 'true' } ]])
   local s = float_state(_G.child)
-  for _, frag in ipairs({ '[a]llow', '[A]lways', '[d]eny', 'cancel' }) do
+  for _, frag in ipairs({ '[a]llow', '[A]lways', '[d]eny', 'later' }) do
     if not s.footer:find(frag, 1, true) then
       error('footer missing fragment ' .. frag .. ': ' .. tostring(s.footer))
     end
@@ -218,12 +218,19 @@ T['pressing d resolves deny'] = function()
   eq(_G.child.lua_get('_G._test_choice.variant'), 'deny')
 end
 
-T['pressing q resolves deny (cancel)'] = function()
-  open(_G.child, [[ 'Bash', { command = 'true' } ]])
+T['pressing q hides without answering'] = function()
+  _G.child.lua([==[
+    _G._test_choice, _G._test_hidden = nil, nil
+    require('cc.config').setup({})
+    require('cc.permission_prompt').ask('Bash', { command = 'true' }, function(behavior, variant)
+      _G._test_choice = { behavior = behavior, variant = variant }
+    end, { on_hide = function(reason) _G._test_hidden = reason end })
+  ]==])
   _G.child.type_keys('q')
-  _G.child.lua([[vim.wait(50, function() return _G._test_choice ~= nil end)]])
-  eq(_G.child.lua_get('_G._test_choice.behavior'), 'deny')
-  eq(_G.child.lua_get('_G._test_choice.variant'), 'cancel')
+  _G.child.lua([[vim.wait(50)]])
+  eq(_G.child.lua_get('_G._test_choice'), vim.NIL)
+  eq(_G.child.lua_get('_G._test_hidden'), 'key')
+  eq(_G.child.lua_get([[vim.api.nvim_win_get_config(0).relative]]), '')
 end
 
 T['Edit input renders as a diff'] = function()
