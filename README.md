@@ -597,7 +597,9 @@ stages, and resolution or instance teardown stops and closes their timers.
 `on_permission_resolved(event)` runs once for every resolved tool approval.
 It adds `behavior` (`allow` or `deny`), `source` (`local` for float choices,
 `remote` for bridge answers, `api` for either resolve API, or `closed` for
-process exit/instance teardown), and `remote_enabled_by_stage` (boolean).
+process exit/instance teardown), `variant` (the choice, such as
+`allow_once`, `allow_always`, `deny`, `approve` or `dismiss`), and
+`remote_enabled_by_stage` (boolean).
 Remote cancellation does not contain the actual decision, so `behavior` is
 nil when it is unknown; an echoed remote response supplies it when available.
 Teardown reports `deny` without sending an answer to the exiting process.
@@ -635,7 +637,14 @@ and elicitation dialogs retain their own handling.
 | `a` | Allow once |
 | `A` | Always Allow for this session |
 | `d` | Deny |
-| `q` / `<Esc>` | Cancel (treated as Deny) |
+| `q` / `<Esc>` | Later: hide the float, keep the request pending |
+
+Nothing but `a`, `A` and `d` answers. Moving focus off the float (`<C-w>w`,
+a click, a command that switches windows) or wiping its buffer only hides
+it, so a prompt you never saw can't read as your denial. A hidden request
+stays pending, with its timeout stages running. Entering that instance's
+output or prompt buffer reopens it, unless you put it off with `q`/`<Esc>`;
+`require('cc').focus_instance()` reopens it either way.
 
 `A` persists by echoing the CLI's `permission_suggestions` (precise
 input-shape rules — e.g. a specific Bash command prefix) when the CLI
@@ -651,7 +660,7 @@ each block (`system/permission_denied` with `decision_reason_type =
 "classifier"`) like a permission prompt: the instance shows as waiting, the
 output gets a `⛔ Blocked by auto mode` card with the tool, an input summary,
 and the classifier's reason, and the same float opens with `a` Approve and
-`d` / `q` / `<Esc>` Dismiss. Other denial kinds (rules, `dontAsk`) are ignored.
+`d` Dismiss (`q` / `<Esc>` hide it for later). Other denial kinds (rules, `dontAsk`) are ignored.
 Blocks inside a subagent surface on the parent session.
 
 The same `on_permission_prompt`, `permission_timeouts`, and

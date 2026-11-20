@@ -2104,8 +2104,8 @@ function M.focus_instance(output_bufnr)
     return false
   end
 
-  -- A pending permission prompt resolves as deny on WinLeave, so focusing
-  -- the output window would answer it. Land on the float instead.
+  -- Focusing the output window would hide an open permission float. Land on
+  -- the float instead.
   if inst.permission_winid and vim.api.nvim_win_is_valid(inst.permission_winid) then
     vim.api.nvim_set_current_win(inst.permission_winid)
     return true
@@ -2123,6 +2123,9 @@ function M.focus_instance(output_bufnr)
       vim.api.nvim_set_current_buf(output_bufnr)
     end
   end
+  -- An explicit focus reopens a prompt waiting on the user, even one put
+  -- off with q/<Esc>.
+  require('cc.permission_prompt').show_pending(inst)
   return true
 end
 

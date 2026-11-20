@@ -6,14 +6,16 @@
 --   a       Allow (once)
 --   A       Always Allow (persists via updatedPermissions)
 --   d       Deny
---   q/<Esc> Cancel (treated as Deny)
--- Closing the window externally (BufWipeout) also resolves as Deny.
+--   q/<Esc> Later: hide the float, leave the request pending
+-- Leaving the float (WinLeave) or wiping its buffer also only hides it: focus
+-- loss is never an answer. A hidden request reopens through `show_pending`
+-- (focus_instance, entering the instance's buffers) or `entry.show()`.
 -- The returned handle's dismiss() closes it without answering when resolved remotely.
 --
 -- context.kind = 'denial' reuses the same float, hooks, and timeout stages
 -- for a tool call the auto-mode classifier already blocked. There is no CLI
--- request to answer: `a` approves (allow, variant 'approve') and `d`/`q`/<Esc>
--- dismiss (deny, variant 'dismiss'); the caller decides what each sends.
+-- request to answer: `a` approves (allow, variant 'approve') and `d`
+-- dismisses (deny, variant 'dismiss'); the caller decides what each sends.
 
 local M = {}
 
@@ -138,6 +140,7 @@ local function build_event(tool_name, input, context)
     disable_remote = context.disable_remote,
     remote_enabled_by_stage = context.remote_enabled_by_stage,
     behavior = context.behavior,
+    variant = context.variant,
     source = context.source,
     timed_out = context.timed_out,
   }
@@ -162,6 +165,48 @@ end
 ---@field resolve fun(behavior: 'allow'|'deny', message: string?): boolean
 ---@field finish fun(behavior: 'allow'|'deny'|nil, source: string, variant: string?, message: string?, deferred: boolean?): boolean
 ---@field dismiss fun()?
+---@field seq integer arrival order across all requests, for oldest-first lists
+---@field hidden 'key'|'focus'|nil why the float was hidden; nil while open or never shown
+---@field show fun(): boolean open the float for a pending request with none open
+---@field is_open fun(): boolean
+
+local next_seq = 0
+
+---@param instance cc.Instance
+---@param bufnr integer
+---@return boolean
+local function owns_buffer(instance, bufnr)
+  return (instance.output and instance.output.bufnr == bufnr)
+    or (instance.prompt and instance.prompt.bufnr == bufnr) or false
+end
+
+--- Instances with a pending request, weakly held.
+local waiting = setmetatable({}, { __mode = 'k' })
+local augroup
+
+--- Arriving at an agent with a request waiting on the user shows it (one
+--- hidden when focus moved away, or never shown). Scheduled: a float can't
+--- open while another window is closing.
+local function watch(instance)
+  waiting[instance] = true
+  if augroup then return end
+  augroup = vim.api.nvim_create_augroup('cc.permission_prompt', { clear = true })
+  vim.api.nvim_create_autocmd('BufEnter', {
+    group = augroup,
+    callback = function(ev)
+      for inst in pairs(waiting) do
+        if owns_buffer(inst, ev.buf) then
+          vim.schedule(function()
+            if owns_buffer(inst, vim.api.nvim_get_current_buf()) then
+              M.show_pending(inst, { auto = true })
+            end
+          end)
+          return
+        end
+      end
+    end,
+  })
+end
 
 --- Own a request independently of its float. Providers encode answers in
 --- on_choice; remote/closed completions must not send another answer.
@@ -181,6 +226,8 @@ function M.request(tool_name, input, on_choice, context)
     tool_name = tool_name, input = input,
     opened_at = os.time(), remote_enabled_by_stage = false,
   }
+  next_seq = next_seq + 1
+  entry.seq = next_seq
   context.opened_at = entry.opened_at
   context.started_at = vim.uv.hrtime()
   local resolved, timer, handle = false, nil, nil
@@ -195,6 +242,7 @@ function M.request(tool_name, input, on_choice, context)
 
   local function refresh()
     if not inst then return end
+    if next(pending) == nil then waiting[inst] = nil end
     inst.awaiting_permission = next(pending) ~= nil
     inst.awaiting_input = inst.awaiting_permission
     require('cc.statusline').refresh(inst)
@@ -220,6 +268,7 @@ function M.request(tool_name, input, on_choice, context)
       on_choice(behavior, variant, message, source)
       context.stage = nil
       context.behavior = behavior
+      context.variant = variant
       context.source = source
       context.remote_enabled_by_stage = entry.remote_enabled_by_stage
       context.timed_out = entry.timed_out
@@ -267,6 +316,7 @@ function M.request(tool_name, input, on_choice, context)
   end
   context.set_handle = function(value) handle = value end
   pending[entry.request_id] = entry
+  if inst then watch(inst) end
   refresh()
 
   -- Arm one timer at a time. A late event loop or a slow callback must not
@@ -289,10 +339,35 @@ function M.request(tool_name, input, on_choice, context)
       end
     end))
   end
-  handle = M.ask(tool_name, input, function(behavior, variant)
-    entry.finish(behavior, 'local', variant)
-  end, context)
-  entry.dismiss = handle and handle.dismiss
+  -- The float comes and goes; the request stays pending until answered.
+  -- Hiding it (q/<Esc>, focus moving away) only drops the handle.
+  context.on_hide = function(reason)
+    handle = nil
+    entry.dismiss = nil
+    entry.hidden = reason
+    refresh()
+    -- Moving from the float into the agent's own windows is a choice to
+    -- work there: don't reopen on that BufEnter. Moving elsewhere is not,
+    -- so arriving back at the agent reopens it.
+    if reason == 'focus' and inst then
+      vim.schedule(function()
+        if owns_buffer(inst, vim.api.nvim_get_current_buf()) and entry.hidden == 'focus' then
+          entry.hidden = 'key'
+        end
+      end)
+    end
+  end
+  entry.is_open = function() return handle ~= nil end
+  entry.show = function()
+    if resolved or handle then return false end
+    entry.hidden = nil
+    handle = M.ask(tool_name, input, function(behavior, variant)
+      entry.finish(behavior, 'local', variant)
+    end, context)
+    entry.dismiss = handle and handle.dismiss
+    return handle ~= nil
+  end
+  entry.show()
   -- ask can resolve synchronously, including from on_permission_prompt.
   if resolved then
     if context.source ~= 'local' and handle and handle.dismiss then pcall(handle.dismiss) end
@@ -313,14 +388,46 @@ function M.close_pending(instance)
   instance.permission_remote_enabling = nil
 end
 
---- Open the float and resolve once via `on_choice`.
+--- Pending requests of an instance, oldest first.
+---@param instance cc.Instance
+---@return cc.PendingPermission[]
+function M.pending_list(instance)
+  local list = {}
+  for _, entry in pairs(instance and instance.pending_permissions or {}) do
+    if entry.show then list[#list + 1] = entry end
+  end
+  table.sort(list, function(a, b) return (a.seq or 0) < (b.seq or 0) end)
+  return list
+end
+
+--- Open the oldest pending request with no float. `opts.auto` (entering the
+--- instance's buffers) skips requests the user put off with q/<Esc>; an
+--- explicit focus reopens those too.
+---@param instance cc.Instance
+---@param opts { auto: boolean? }?
+---@return boolean shown
+function M.show_pending(instance, opts)
+  if not instance then return false end
+  local winid = instance.permission_winid
+  if winid and vim.api.nvim_win_is_valid(winid) then return false end
+  local auto = opts and opts.auto
+  for _, entry in ipairs(M.pending_list(instance)) do
+    if not entry.is_open() and not (auto and entry.hidden == 'key') then
+      return entry.show()
+    end
+  end
+  return false
+end
+
+--- Open the float and resolve once via `on_choice`. Hiding it (q/<Esc>,
+--- WinLeave, BufWipeout) answers nothing: it calls `context.on_hide(reason)`
+--- with 'key' or 'focus' and leaves the request to its owner.
 ---
---- `variant` distinguishes the four user choices so callers can build
+--- `variant` distinguishes the user choices so callers can build
 --- different response payloads. `'allow_once'` is the plain Allow (no
 --- persistence); `'allow_always'` means the caller should add the rule to
 --- the CLI's permission context via `updatedPermissions`; `'deny'` is an
---- explicit deny; `'cancel'` is treated as a deny but classified
---- differently for telemetry.
+--- explicit deny.
 ---@param tool_name string
 ---@param input table?
 ---@param on_choice fun(behavior: 'allow'|'deny', variant: 'allow_once'|'allow_always'|'deny'|'cancel'|'approve'|'dismiss')
@@ -333,10 +440,10 @@ function M.ask(tool_name, input, on_choice, context)
   if denial then
     title = build_title(tool_name, input,
       '⛔ ' .. require('cc.config').options.permission_denials.label)
-    footer = ' [a]pprove  [d]/[q]/<Esc> dismiss '
+    footer = ' [a]pprove  [d]ismiss  [q]/<Esc> later '
   else
     title = build_title(tool_name, input)
-    footer = ' [a]llow  [A]lways  [d]eny  [q]/<Esc> cancel '
+    footer = ' [a]llow  [A]lways  [d]eny  [q]/<Esc> later '
   end
   local reason_lines = {}
   if denial and type(context.reason) == 'string' and context.reason ~= '' then
@@ -390,7 +497,7 @@ function M.ask(tool_name, input, on_choice, context)
   vim.wo[winid].signcolumn = 'no'
 
   -- Expose the float so `cc.focus_instance` can land on it instead of the
-  -- output window; focusing the output would fire WinLeave and deny.
+  -- output window; focusing the output would hide it.
   local instance = context and context.instance
   if instance then instance.permission_winid = winid end
 
@@ -420,40 +527,54 @@ function M.ask(tool_name, input, on_choice, context)
     end
   end
 
-  local function bind(key, behavior, variant, desc)
-    vim.keymap.set('n', key, function() resolve(behavior, variant) end,
+  -- Close without answering. The request stays pending with its owner.
+  local function hide(reason)
+    if resolved then return end
+    dismiss()
+    if context and context.on_hide then context.on_hide(reason) end
+  end
+
+  local function bind(key, fn, desc)
+    vim.keymap.set('n', key, fn,
       { buffer = bufnr, silent = true, nowait = true,
         desc = 'cc.permission_prompt: ' .. desc })
   end
-  local cancel = denial and 'dismiss' or 'cancel'
-  if denial then
-    bind('a', 'allow', 'approve',      'Approve')
-    bind('d', 'deny',  'dismiss',      'Dismiss')
-  else
-    bind('a', 'allow', 'allow_once',   'Allow')
-    bind('A', 'allow', 'allow_always', 'Always Allow')
-    bind('d', 'deny',  'deny',         'Deny')
+  local function answer(behavior, variant)
+    return function() resolve(behavior, variant) end
   end
-  bind('q', 'deny',  cancel,         'Cancel')
-  bind('<Esc>', 'deny', cancel,      'Cancel')
+  if denial then
+    bind('a', answer('allow', 'approve'), 'Approve')
+    bind('d', answer('deny', 'dismiss'), 'Dismiss')
+  else
+    bind('a', answer('allow', 'allow_once'), 'Allow')
+    bind('A', answer('allow', 'allow_always'), 'Always Allow')
+    bind('d', answer('deny', 'deny'), 'Deny')
+  end
+  bind('q', function() hide('key') end, 'Later')
+  bind('<Esc>', function() hide('key') end, 'Later')
 
-  -- WinLeave covers the user wandering off (<C-w>w, mouse) and our own
-  -- programmatic close; BufWipeout covers :bd / external wipeout.
+  -- Focus moving away (<C-w>w, a mouse click, a command that switches
+  -- windows) and :bd only hide the float: a prompt Rob never saw must not
+  -- read as his answer.
   vim.api.nvim_create_autocmd('WinLeave', {
     buffer = bufnr,
     once = true,
-    callback = function() resolve('deny', cancel) end,
+    callback = function() hide('focus') end,
   })
   vim.api.nvim_create_autocmd('BufWipeout', {
     buffer = bufnr,
     once = true,
-    callback = function() resolve('deny', cancel) end,
+    callback = function() hide('focus') end,
   })
 
   local handle = { bufnr = bufnr, winid = winid, dismiss = dismiss }
   if context and context.set_handle then context.set_handle(handle) end
-  notify_callback('on_permission_prompt', require('cc.config').options.on_permission_prompt,
-    build_event(tool_name, input, context))
+  -- Once per request: reopening a hidden float is not a new prompt.
+  if not (context and context.notified) then
+    if context then context.notified = true end
+    notify_callback('on_permission_prompt', require('cc.config').options.on_permission_prompt,
+      build_event(tool_name, input, context))
+  end
 
   return handle
 end
