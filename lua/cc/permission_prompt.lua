@@ -367,7 +367,17 @@ function M.request(tool_name, input, on_choice, context)
     entry.dismiss = handle and handle.dismiss
     return handle ~= nil
   end
-  entry.show()
+  -- 'visible': don't pop a float over another agent or file; the request
+  -- waits until the user arrives at this instance.
+  local looking = not inst or options.permission_float ~= 'visible'
+    or owns_buffer(inst, vim.api.nvim_get_current_buf())
+  if looking then
+    entry.show()
+  else
+    context.notified = true
+    notify_callback('on_permission_prompt', options.on_permission_prompt,
+      build_event(tool_name, input, context))
+  end
   -- ask can resolve synchronously, including from on_permission_prompt.
   if resolved then
     if context.source ~= 'local' and handle and handle.dismiss then pcall(handle.dismiss) end

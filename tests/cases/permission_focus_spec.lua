@@ -6,11 +6,12 @@ local MiniTest = require('mini.test')
 local eq = MiniTest.expect.equality
 local T = MiniTest.new_set({ hooks = helpers.shared_child_hooks() })
 
-local function setup()
-  _G.child.lua([==[
+local function setup(float_mode)
+  _G.child.lua(([==[
     local config = require('cc.config')
     _G.prompts, _G.resolved, _G.writes = 0, {}, {}
     config.setup({
+      permission_float = %q,
       statusline = { enabled = false },
       on_permission_prompt = function() _G.prompts = _G.prompts + 1 end,
       on_permission_resolved = function(e) resolved[#resolved + 1] = e end,
@@ -47,7 +48,7 @@ local function setup()
       return vim.api.nvim_win_get_config(0).relative ~= ''
     end
     _G.entry = function(id) return inst.pending_permissions and inst.pending_permissions[id] end
-  ]==])
+  ]==]):format(float_mode or 'always'))
 end
 
 T['moving focus off the float leaves the request pending'] = function()
@@ -120,6 +121,37 @@ T['focus_instance reopens a prompt put off with q'] = function()
   _G.child.type_keys('d')
   _G.child.lua([[vim.wait(200, function() return #writes == 1 end)]])
   eq(_G.child.lua_get('writes[1].response.response.behavior'), 'deny')
+end
+
+T["'visible' queues a prompt for an agent you are not looking at"] = function()
+  setup('visible')
+  _G.child.lua([[
+    open_request('v1')
+    vim.wait(20)
+  ]])
+  eq(_G.child.lua_get('is_float()'), false)
+  eq(_G.child.lua_get('prompts'), 1)
+  eq(_G.child.lua_get('inst.awaiting_permission'), true)
+  eq(_G.child.lua_get('entry("v1").is_open()'), false)
+  _G.child.lua([[
+    vim.api.nvim_win_set_buf(main_win, inst.output.bufnr)
+    vim.wait(50)
+  ]])
+  eq(_G.child.lua_get('is_float()'), true)
+  eq(_G.child.lua_get('prompts'), 1)
+  _G.child.type_keys('a')
+  _G.child.lua([[vim.wait(200, function() return #writes == 1 end)]])
+  eq(_G.child.lua_get('writes[1].response.response.behavior'), 'allow')
+end
+
+T["'visible' opens at once when you are looking at the agent"] = function()
+  setup('visible')
+  _G.child.lua([[
+    vim.api.nvim_win_set_buf(main_win, inst.output.bufnr)
+    vim.wait(20)
+    open_request('v2')
+  ]])
+  eq(_G.child.lua_get('is_float()'), true)
 end
 
 return T

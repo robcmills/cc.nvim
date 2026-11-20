@@ -127,6 +127,14 @@ local defaults = {
   ---@type fun(event: cc.PermissionPromptEvent)?
   on_permission_resolved = nil,
 
+  -- When a permission float opens on its own. 'always': as soon as the
+  -- request arrives, over whatever window is current. 'visible': only when
+  -- the current window shows that instance's output or prompt; otherwise
+  -- the request waits (statusline, on_permission_prompt, timeout stages all
+  -- run) until you enter the instance or call focus_instance.
+  ---@type 'always'|'visible'
+  permission_float = 'always',
+
   -- Auto-mode classifier blocks (system/permission_denied). The CLI denies
   -- these without asking; cc.nvim opens an Approve/Dismiss prompt through
   -- the same hooks and timeouts as tool permission prompts, with

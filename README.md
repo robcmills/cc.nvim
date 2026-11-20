@@ -588,6 +588,13 @@ auto-mode block; see below). Tool approval events also include `request_id`,
 - `event.disable_remote()` disables Remote Control for the instance, including
   from the resolved callback. Returns whether a request was sent.
 
+`permission_float = 'visible'` stops a float from opening over whatever you
+are doing. It opens on its own only when the current window shows that
+instance's output or prompt. Otherwise the request waits: the instance shows
+as waiting, `on_permission_prompt` fires, and the timeout stages run. The
+float opens when you enter the instance or call `focus_instance`. The
+default, `'always'`, opens it as soon as the request arrives.
+
 `permission_timeouts` is an ordered list of `{ after = seconds, callback = function(event) }`.
 Each delay starts when the preceding stage fires; the first starts when the
 prompt opens. Fractional seconds are supported. Stage events add a 1-based
