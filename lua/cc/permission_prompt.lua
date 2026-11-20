@@ -534,8 +534,22 @@ function M.ask(tool_name, input, on_choice, context)
 
   local screen_w = vim.o.columns
   local screen_h = vim.o.lines
-  local width = math.min(120, math.max(60, math.floor(screen_w * 0.8)))
-  local height = math.max(5, math.min(#lines + #reason_lines + 2, math.floor(screen_h * 0.7)))
+  local width = math.min(120, math.max(60, math.floor(screen_w * 0.8)), screen_w - 4)
+  -- Wrapped rows, not lines: a long command wraps, and a height counted in
+  -- lines cuts its tail off.
+  local rows = #reason_lines + 2
+  for _, l in ipairs(lines) do
+    rows = rows + math.max(1, math.ceil(vim.fn.strdisplaywidth(l) / width))
+  end
+  local height = math.max(5, math.min(rows, math.floor(screen_h * 0.7)))
+  -- Neovim clips an over-long title from the left; cut it at the right.
+  if vim.fn.strdisplaywidth(title) > width - 4 then
+    local cut = vim.fn.strcharpart(title, 0, width - 5)
+    while vim.fn.strdisplaywidth(cut) > width - 5 do
+      cut = vim.fn.strcharpart(cut, 0, vim.fn.strchars(cut) - 1)
+    end
+    title = cut .. '…'
+  end
   local row = math.max(0, math.floor((screen_h - height) / 2) - 1)
   local col = math.max(0, math.floor((screen_w - width) / 2))
 
