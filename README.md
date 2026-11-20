@@ -659,6 +659,32 @@ sends them, falling back to a coarse tool-name rule otherwise. The
 rules are sent back via `updatedPermissions` in the `can_use_tool`
 control response and live for the rest of the session.
 
+#### Deferring an unanswered prompt
+
+A timeout stage can defer a Claude tool prompt instead of denying it:
+
+```lua
+{ after = 900, callback = function(event)
+    if not event.defer() then event.resolve('deny', 'Approval timeout') end
+end }
+```
+
+`event.defer(message)` answers the CLI at once with a deny carrying
+`message` (default `permission_deferrals.message`: "Deferred, not denied:
+…"), so the agent moves on. The request stays queued:
+`list_instances()` reports it with `deferred = true`, and it no longer counts
+as waiting. The output shows `⏸ Deferred (queued for you)`.
+
+Answer it later with `require('cc').resolve_permission(request_id, ...)`.
+cc.nvim sends the agent `permission_deferrals.approved_prompt` or
+`denied_prompt` as a message, now or when its turn ends. An approval also
+arms a one-time allow: the agent's next permission request for exactly that
+call (Bash by command) is answered allow with no prompt, once, within
+`preapproval_ttl` seconds. If the agent retries before you answer, the live
+prompt replaces the deferred entry. Teardown drops deferred entries and
+unused allows. `defer` returns `false` for denial floats, Codex, and a
+request already answered.
+
 #### Auto-mode denials
 
 In auto mode the CLI denies a call outright when its classifier blocks it,

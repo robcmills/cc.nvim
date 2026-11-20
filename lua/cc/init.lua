@@ -1997,6 +1997,7 @@ function M.list_instances()
           pending[#pending + 1] = {
             request_id = entry.request_id, kind = entry.kind, tool_name = entry.tool_name,
             input = vim.deepcopy(entry.input), opened_at = entry.opened_at,
+            deferred = entry.deferred == true, deferred_at = entry.deferred_at or vim.NIL,
           }
         end
       end

@@ -136,6 +136,8 @@ local function build_event(tool_name, input, context)
     elapsed = context.started_at and (vim.uv.hrtime() - context.started_at) / 1e9 or nil,
     stage = context.stage,
     resolve = context.resolve,
+    defer = context.defer,
+    deferred = context.deferred,
     enable_remote = context.enable_remote and function() return context.enable_remote(stage) end or nil,
     disable_remote = context.disable_remote,
     remote_enabled_by_stage = context.remote_enabled_by_stage,
@@ -163,12 +165,14 @@ end
 ---@field opened_at number
 ---@field remote_enabled_by_stage boolean
 ---@field resolve fun(behavior: 'allow'|'deny', message: string?): boolean
----@field finish fun(behavior: 'allow'|'deny'|nil, source: string, variant: string?, message: string?, deferred: boolean?): boolean
+---@field finish fun(behavior: 'allow'|'deny'|nil, source: string, variant: string?, message: string?, later: boolean?): boolean
 ---@field dismiss fun()?
 ---@field seq integer arrival order across all requests, for oldest-first lists
 ---@field hidden 'key'|'focus'|nil why the float was hidden; nil while open or never shown
 ---@field show fun(): boolean open the float for a pending request with none open
 ---@field is_open fun(): boolean
+---@field deferred boolean? answered to the CLI with a deferral; still queued for the user
+---@field deferred_at number? os.time() of the deferral
 
 local next_seq = 0
 
@@ -242,14 +246,51 @@ function M.request(tool_name, input, on_choice, context)
 
   local function refresh()
     if not inst then return end
-    if next(pending) == nil then waiting[inst] = nil end
-    inst.awaiting_permission = next(pending) ~= nil
+    -- A deferred request is already answered as far as the agent knows: it
+    -- waits in the queue, not on the agent.
+    local live = false
+    for _, e in pairs(pending) do
+      if not e.deferred then live = true; break end
+    end
+    if not live then waiting[inst] = nil end
+    inst.awaiting_permission = live
     inst.awaiting_input = inst.awaiting_permission
     require('cc.statusline').refresh(inst)
   end
 
-  entry.finish = function(behavior, source, variant, message, deferred)
+  local function report(behavior, variant, source)
+    context.behavior = behavior
+    context.variant = variant
+    context.source = source
+    context.deferred = entry.deferred
+    context.remote_enabled_by_stage = entry.remote_enabled_by_stage
+    context.timed_out = entry.timed_out
+    notify_callback('on_permission_resolved', options.on_permission_resolved,
+      build_event(tool_name, input, context))
+  end
+
+  -- The second answer to a deferred request goes to the agent as a message
+  -- (context.on_deferred_answer); the CLI's request is long gone. Teardown
+  -- ('closed') and a live prompt for the same call ('superseded') drop it.
+  local function finish_deferred(behavior, source, variant, later)
+    resolved = true
+    pending[entry.request_id] = nil
+    if handle and handle.dismiss then pcall(handle.dismiss) end
+    refresh()
+    local function complete()
+      if source ~= 'closed' and source ~= 'superseded' and behavior
+          and context.on_deferred_answer then
+        context.on_deferred_answer(behavior)
+      end
+      report(behavior, variant, source)
+    end
+    if later then vim.schedule(complete) else complete() end
+    return true
+  end
+
+  entry.finish = function(behavior, source, variant, message, later)
     if resolved then return false end
+    if entry.deferred then return finish_deferred(behavior, source, variant, later) end
     resolved = true
     stop_timer()
     pending[entry.request_id] = nil
@@ -267,15 +308,9 @@ function M.request(tool_name, input, on_choice, context)
     local function complete()
       on_choice(behavior, variant, message, source)
       context.stage = nil
-      context.behavior = behavior
-      context.variant = variant
-      context.source = source
-      context.remote_enabled_by_stage = entry.remote_enabled_by_stage
-      context.timed_out = entry.timed_out
-      notify_callback('on_permission_resolved', options.on_permission_resolved,
-        build_event(tool_name, input, context))
+      report(behavior, variant, source)
     end
-    if deferred then vim.schedule(complete) else complete() end
+    if later then vim.schedule(complete) else complete() end
     return true
   end
   entry.resolve = function(behavior, message)
@@ -287,6 +322,24 @@ function M.request(tool_name, input, on_choice, context)
     return entry.finish(behavior, 'api', variant, message)
   end
   context.resolve = entry.resolve
+  -- Answer the CLI now with a deny carrying `message`, so the agent moves
+  -- on, but keep the request queued for the user. Claude tool prompts only.
+  context.defer = function(message)
+    if resolved or entry.deferred or entry.kind ~= 'permission'
+        or context.provider ~= 'claude' then
+      return false
+    end
+    if context.stage then entry.timed_out = true end
+    stop_timer()
+    if handle and handle.dismiss then pcall(handle.dismiss) end
+    handle, entry.dismiss = nil, nil
+    entry.deferred, entry.deferred_at = true, os.time()
+    refresh()
+    local deferrals = options.permission_deferrals or {}
+    on_choice('deny', 'defer', message or deferrals.message, 'defer')
+    report('deny', 'defer', 'defer')
+    return true
+  end
   context.enable_remote = function(stage)
     if resolved or not inst or not inst.provider or not inst.provider.set_remote_control then
       return false
@@ -396,6 +449,7 @@ function M.close_pending(instance)
     if entry.finish then entry.finish('deny', 'closed') end
   end
   instance.permission_remote_enabling = nil
+  instance.preapproved = nil
 end
 
 --- Pending requests of an instance, oldest first.
@@ -422,7 +476,8 @@ function M.show_pending(instance, opts)
   if winid and vim.api.nvim_win_is_valid(winid) then return false end
   local auto = opts and opts.auto
   for _, entry in ipairs(M.pending_list(instance)) do
-    if not entry.is_open() and not (auto and entry.hidden == 'key') then
+    if not entry.is_open() and not entry.deferred
+        and not (auto and entry.hidden == 'key') then
       return entry.show()
     end
   end

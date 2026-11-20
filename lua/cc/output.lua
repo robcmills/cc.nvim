@@ -2282,6 +2282,9 @@ function Output:render_permission_outcome(behavior, tool_name, kind)
   if behavior == 'remote' then
     icon = '⇄'
     verb = 'Answered remotely'
+  elseif behavior == 'deferred' then
+    icon = '⏸'
+    verb = 'Deferred (queued for you)'
   end
   local bufnr = self:ensure_buffer()
   local prefix = '⚠ Permission: ' .. tool_name

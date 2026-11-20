@@ -135,6 +135,21 @@ local defaults = {
   ---@type 'always'|'visible'
   permission_float = 'always',
 
+  -- `event.defer(message)` (from a timeout stage, say) answers a Claude tool
+  -- prompt with a deny carrying `message`, so the agent moves on, but keeps
+  -- the request queued (list_instances: deferred = true). Answering it later
+  -- through resolve_permission or its float sends the agent
+  -- `approved_prompt` or `denied_prompt` (now, or when its turn ends). An
+  -- approval also lets the agent's retry of that exact call through once,
+  -- without a prompt, within `preapproval_ttl` seconds. Placeholders:
+  -- ${tool_name}, ${input} (JSON).
+  permission_deferrals = {
+    message = 'Deferred, not denied: the user has not answered this permission prompt yet, so it is queued for them. Continue other work. If they approve, you will get a message; then retry the exact same call and it will run without another prompt. If they decline, you will be told.',
+    approved_prompt = 'I approved your deferred ${tool_name} call. Retry exactly this input now, unchanged; it is allowed once without a prompt.\n\n```json\n${input}\n```',
+    denied_prompt = 'I declined your deferred ${tool_name} call. Do not retry it.\n\n```json\n${input}\n```',
+    preapproval_ttl = 3600,
+  },
+
   -- Auto-mode classifier blocks (system/permission_denied). The CLI denies
   -- these without asking; cc.nvim opens an Approve/Dismiss prompt through
   -- the same hooks and timeouts as tool permission prompts, with
